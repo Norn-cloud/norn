@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PlanSpreadTarget.spread_target_valid.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanSpreadTarget.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A top-down spread target carries non-negative measures, a valid YYYY-MM ISO month, positive bucket count, total weight, and quantum, exact total quanta, valid deterministic remainder cutoff, and an integer-quanta remainder strictly below bucket_count.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PlanSpreadTarget.spread_target_valid",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A top-down spread target carries non-negative measures, a valid YYYY-MM ISO month, positive bucket count, total weight, and quantum, exact total quanta, valid deterministic remainder cutoff, and an integer-quanta remainder strictly below bucket_count.",
+    "response": {
+      "expression": "(((((((((((((((((((((len(self.plan_month) == 7) and (date(self.period_month_date) == date(self.plan_month + '-01'))) and (self.bucket_count >= 1)) and (self.allocation_quantum_cost > 0)) and (self.target_total_quanta >= 0)) and (self.target_total_weight >= 1)) and (self.target_receipts_cost == (self.target_total_quanta * self.allocation_quantum_cost))) and (self.target_remainder_quanta >= 0)) and (self.target_remainder_quanta < self.bucket_count)) and (self.remainder_cutoff_frac >= 0)) and (self.remainder_cutoff_frac < self.target_total_weight)) and (((((self.rounding_rule == 'largest_remainder') and (self.target_remainder_quanta > 0)) and (self.remainder_cutoff_bucket >= 1)) and (self.remainder_cutoff_bucket <= self.bucket_count)) or ((((self.rounding_rule != 'largest_remainder') or (self.target_remainder_quanta == 0)) and (self.remainder_cutoff_frac == 0)) and (self.remainder_cutoff_bucket == 0)))) and (self.target_sales_retail >= 0)) and (self.target_sales_cost >= 0)) and (self.target_receipts_cost >= 0)) and (self.target_receipts_retail >= 0)) and (self.target_markdowns_cost >= 0)) and (self.target_markdowns_retail >= 0)) and (self.target_eom_stock_cost >= 0)) and (self.target_fine_metal_g >= (self.target_fine_metal_g - self.target_fine_metal_g))) and (self.target_rounding_remainder_cost == (self.target_remainder_quanta * self.allocation_quantum_cost))) and ((self.rounding_rule != 'exact_no_remainder') or (self.target_remainder_quanta == 0))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanSpreadTarget"
+      ],
+      "root": {
+        "id": "plan.PlanSpreadTarget",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanSpreadTarget"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanSpreadTarget.spread_target_valid.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

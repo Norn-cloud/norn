@@ -10,6 +10,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
 | `norn.link.frappe-hrms.workforce` | 34 | 34 | 0 | 0 | 0 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
+| `norn.link.plan.canon` | 15 | 1 | 5 | 9 | 0 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
 | `norn.link.supply-lab.canon` | 20 | 2 | 2 | 16 | 0 |
 
@@ -199,6 +200,38 @@ None.
 ### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
 
 - `norn.odoo.account.move.button.draft`
+
+## `norn.link.plan.canon`
+
+`norn.ontology-pack.plan` → `norn.ontology-pack.canon`
+
+### Maps
+
+- `norn.plan.guard.amount.nonpositive` subsumed_by `norn.finance.guard.amount.nonpositive`
+
+### Residual (system-specific)
+
+- `norn.plan.active.baseline`
+- `norn.plan.actual.variance`
+- `norn.plan.otb.po.binding`
+- `norn.plan.po.destination`
+- `norn.plan.sku.profile`
+
+### Missing from the canon
+
+- `norn.plan.guard.otb.exceeded`
+- `norn.plan.guard.spread.drift`
+- `norn.plan.line`
+- `norn.plan.line.planned.eom.stock.cost`
+- `norn.plan.line.planned.receipts.cost`
+- `norn.plan.otb.envelope`
+- `norn.plan.published.forecast`
+- `norn.plan.spread.target`
+- `norn.plan.version`
+
+### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
+
+None.
 
 ## `norn.link.shopify.canon`
 

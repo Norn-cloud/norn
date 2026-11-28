@@ -1,0 +1,68 @@
+{
+  "artifactId": "plan.version.submit.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Submit a plan version for approval",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.version.submit",
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "plan_version_id",
+      "objectKind": "plan.PlanVersion",
+      "transition": "submit"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Submit a plan version for approval",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.PlanVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.version.submit.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

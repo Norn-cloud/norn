@@ -1,0 +1,236 @@
+{
+  "artifactId": "plan.pos_sale.restate.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Restate an existing POS sale contribution",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.pos_sale.restate",
+    "derive": [
+      {
+        "expression": "slice.sale.store_id",
+        "field": "store_id",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.sale.sku_id",
+        "field": "sku_id",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.sale.unit",
+        "field": "unit",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.sale.currency",
+        "field": "currency",
+        "inputRequired": false
+      },
+      {
+        "expression": "'costed'",
+        "field": "cost_status",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.cost.cost_ref",
+        "field": "costed_ref",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.cost.unit_cost",
+        "field": "applied_unit_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.sold_qty * slice.cost.unit_cost",
+        "field": "cogs_amount",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.net_revenue - (input.sold_qty * slice.cost.unit_cost)",
+        "field": "gross_margin",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "gross_margin_rate",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.PosSale.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "sale_id",
+      "objectKind": "supply.PosSale",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "applied_unit_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        },
+        "cogs_amount": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "cost_status": {
+          "enum": [
+            "costed",
+            "missing_cost"
+          ],
+          "type": "string"
+        },
+        "costed_ref": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "gross_margin": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "gross_margin_rate": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "net_revenue": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sale_id": {
+          "type": "string"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "sold_at": {
+          "type": "string"
+        },
+        "sold_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "sale_id",
+        "store_id",
+        "sku_id",
+        "sold_qty",
+        "unit",
+        "net_revenue",
+        "applied_unit_cost",
+        "cogs_amount",
+        "gross_margin",
+        "gross_margin_rate",
+        "cost_status",
+        "costed_ref",
+        "currency",
+        "sold_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "sale_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sale_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((slice.sale.cost_status == 'costed') and (slice.sale.currency == slice.cost.currency)) and (input.sold_qty > 0)) and (input.net_revenue >= 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sale_id"
+          }
+        },
+        "name": "sale",
+        "objectType": "supply.PosSale"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "sale",
+            "property": "sku_id"
+          }
+        },
+        "name": "cost",
+        "objectType": "supply.UnitCost"
+      }
+    ],
+    "title": "Restate an existing POS sale contribution",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.PosSale"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.pos_sale.restate.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

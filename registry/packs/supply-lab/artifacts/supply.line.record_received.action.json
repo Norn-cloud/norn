@@ -118,7 +118,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(((((slice.order.status == 'submitted') or (slice.order.status == 'partially_received')) and (slice.line.po_id == input.po_id)) and (slice.line.sku_id == input.sku_id)) and (slice.line.unit == input.unit)) and (slice.line.ordered_qty == input.ordered_qty)"
+      "((((((slice.order.status == 'submitted') or (slice.order.status == 'partially_received')) or ((slice.order.status == 'cancelled') and (input.received_qty >= slice.line.received_qty))) and (slice.line.po_id == input.po_id)) and (slice.line.sku_id == input.sku_id)) and (slice.line.unit == input.unit)) and (slice.line.ordered_qty == input.ordered_qty)"
     ],
     "scopeRequired": [
       "orgId",

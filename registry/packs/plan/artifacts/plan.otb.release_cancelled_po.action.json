@@ -1,0 +1,204 @@
+{
+  "artifactId": "plan.otb.release_cancelled_po.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Release unreceived OTB on PO cancellation",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.otb.release_cancelled_po",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "received_qty"
+        },
+        "filter": {
+          "line_id": "line_id"
+        },
+        "maxItems": 100,
+        "name": "shipped_receipts_qty",
+        "objectType": "supply.ShipmentReceipt"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "slice.order_line.received_qty",
+        "field": "next_received_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.received_qty * slice.order_line.unit_price",
+        "field": "next_recognized_receipt_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "next_unreceived_authorized_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "(slice.order_line.ordered_qty - slice.order_line.received_qty) * slice.order_line.unit_price",
+        "field": "next_cancelled_released_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.received_qty * slice.order_line.unit_price",
+        "field": "next_otb_consumed_cost",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.OtbPoBinding.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "binding_id",
+      "objectKind": "plan.OtbPoBinding",
+      "setFields": {
+        "as_of": "as_of",
+        "cancelled_released_cost": "next_cancelled_released_cost",
+        "otb_consumed_cost": "next_otb_consumed_cost",
+        "received_qty": "next_received_qty",
+        "recognized_receipt_cost": "next_recognized_receipt_cost",
+        "unreceived_authorized_cost": "next_unreceived_authorized_cost"
+      },
+      "transition": "cancel"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "line_id": {
+          "type": "string"
+        },
+        "next_cancelled_released_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "next_otb_consumed_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "next_received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "next_recognized_receipt_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "next_unreceived_authorized_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "po_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "po_id",
+        "line_id",
+        "as_of",
+        "next_received_qty",
+        "next_recognized_receipt_cost",
+        "next_unreceived_authorized_cost",
+        "next_cancelled_released_cost",
+        "next_otb_consumed_cost"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((slice.binding.po_id == input.po_id) and (slice.binding.line_id == input.line_id)) and (slice.order_line.po_id == input.po_id)) and (slice.order.status == 'cancelled')) and (slice.order_line.received_qty == aggregates.shipped_receipts_qty)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "binding_id"
+          }
+        },
+        "name": "binding",
+        "objectType": "plan.OtbPoBinding"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "po_id"
+          }
+        },
+        "name": "order",
+        "objectType": "supply.PurchaseOrder"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "line_id"
+          }
+        },
+        "name": "order_line",
+        "objectType": "supply.OrderLine"
+      }
+    ],
+    "title": "Release unreceived OTB on PO cancellation",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.OtbPoBinding"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb.release_cancelled_po.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

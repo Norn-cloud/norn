@@ -1,0 +1,295 @@
+{
+  "artifactId": "plan.OtbEnvelope.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Open-to-Buy budget envelope",
+  "namespace": "plan",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "envelope_id"
+          ]
+        },
+        {
+          "name": "envelope_grain",
+          "properties": [
+            "plan_version_id",
+            "entity_id",
+            "store_id",
+            "category",
+            "brand",
+            "plan_month"
+          ]
+        },
+        {
+          "name": "active_grain",
+          "properties": [
+            "entity_id",
+            "store_id",
+            "category",
+            "brand",
+            "plan_month",
+            "currency",
+            "active_grain_slot"
+          ]
+        }
+      ],
+      "implements": [
+        "plan.PlanTarget"
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "resting",
+              "state": "active"
+            },
+            {
+              "outcome": "completed",
+              "state": "closed"
+            }
+          ],
+          "immutable": [
+            "closed"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "closed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "activate_planned",
+              "to": "active"
+            },
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "submit_override",
+              "to": "pending_override"
+            },
+            {
+              "from": [
+                "pending_override"
+              ],
+              "id": "approve_override",
+              "to": "active"
+            },
+            {
+              "from": [
+                "draft",
+                "pending_override",
+                "active"
+              ],
+              "id": "close",
+              "to": "closed"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "plan_version",
+          "target": "plan.PlanVersion"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "plan_line",
+          "target": "plan.PlanLine"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "owner_entity",
+          "target": "supply.LegalEntity"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "store",
+          "target": "supply.Store"
+        }
+      ],
+      "name": "plan.OtbEnvelope",
+      "properties": [
+        {
+          "id": "envelope_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_version_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "plan_line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "store_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "category",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "brand",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_month",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "envelope_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "planned"
+              },
+              {
+                "value": "unplanned"
+              }
+            ]
+          }
+        },
+        {
+          "id": "approved_budget_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "override_reason",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "requested_by",
+          "protected": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "active_grain_slot",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "pending_override"
+              },
+              {
+                "value": "active"
+              },
+              {
+                "value": "closed"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.OtbEnvelope.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

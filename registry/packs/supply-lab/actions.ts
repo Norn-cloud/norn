@@ -261,8 +261,10 @@ export const AddLine = Norn.action({
 
 /**
  * Record a line's cumulative accepted quantity (the ERP's Purchase Order Item
- * `received_qty`) while its order is open; the stored row ratio is derived, never
- * typed by the caller.
+ * `received_qty`) while its order is open, or monotonically reconcile already-
+ * committed physical `ShipmentReceipt`s after `supply.po.cancel` so an order
+ * cancelled between dock receipt and line reconciliation never strands OTB.
+ * The stored row ratio is derived, never typed by the caller.
  */
 export const RecordLineReceived = Norn.action({
   id: "supply.line.record_received", title: "Record a line's received quantity", version: "0.1.0",
@@ -278,11 +280,15 @@ export const RecordLineReceived = Norn.action({
     Schema.Struct({
       input: LineInput,
       slice: Schema.Struct({
-        line: Schema.Struct({ po_id: Schema.String, sku_id: Schema.String, unit: Schema.String, ordered_qty: Norn.decimal(6) }),
+        line: Schema.Struct({ po_id: Schema.String, sku_id: Schema.String, unit: Schema.String, ordered_qty: Norn.decimal(6), received_qty: Norn.decimal(6) }),
         order: Schema.Struct({ status: Schema.String }),
       }),
     }),
-    (ctx) => (ctx.slice.order.status === "submitted" || ctx.slice.order.status === "partially_received")
+    (ctx) => (
+      ctx.slice.order.status === "submitted"
+      || ctx.slice.order.status === "partially_received"
+      || (ctx.slice.order.status === "cancelled" && ctx.input.received_qty >= ctx.slice.line.received_qty)
+    )
       && ctx.slice.line.po_id === ctx.input.po_id && ctx.slice.line.sku_id === ctx.input.sku_id
       && ctx.slice.line.unit === ctx.input.unit && ctx.slice.line.ordered_qty === ctx.input.ordered_qty,
     { root: "context" },

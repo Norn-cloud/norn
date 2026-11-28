@@ -1,0 +1,167 @@
+{
+  "artifactId": "plan.otb.update_partial_receipt.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Recognize subsequent partial receipt on an OTB PO binding",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.otb.update_partial_receipt",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "received_qty"
+        },
+        "filter": {
+          "line_id": "line_id"
+        },
+        "maxItems": 100,
+        "name": "shipped_receipts_qty",
+        "objectType": "supply.ShipmentReceipt"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "slice.order_line.received_qty",
+        "field": "received_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.received_qty * slice.order_line.unit_price",
+        "field": "recognized_receipt_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.binding.authorized_cost - (slice.order_line.received_qty * slice.order_line.unit_price)",
+        "field": "unreceived_authorized_cost",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.OtbPoBinding.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "binding_id",
+      "objectKind": "plan.OtbPoBinding",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "line_id": {
+          "type": "string"
+        },
+        "received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "recognized_receipt_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "unreceived_authorized_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "binding_id",
+        "line_id",
+        "as_of",
+        "received_qty",
+        "recognized_receipt_cost",
+        "unreceived_authorized_cost"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((slice.binding.status == 'partially_received') and (slice.binding.line_id == input.line_id)) and (slice.order.status == 'partially_received')) and (slice.order_line.received_qty > slice.binding.received_qty)) and (slice.order_line.received_qty < slice.binding.ordered_qty)) and (slice.order_line.received_qty == aggregates.shipped_receipts_qty)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "binding_id"
+          }
+        },
+        "name": "binding",
+        "objectType": "plan.OtbPoBinding"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "line_id"
+          }
+        },
+        "name": "order_line",
+        "objectType": "supply.OrderLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "order_line",
+            "property": "po_id"
+          }
+        },
+        "name": "order",
+        "objectType": "supply.PurchaseOrder"
+      }
+    ],
+    "title": "Recognize subsequent partial receipt on an OTB PO binding",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.OtbPoBinding"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb.update_partial_receipt.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

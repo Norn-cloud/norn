@@ -1,0 +1,57 @@
+{
+  "artifactId": "plan.PlanVersion.spreads_sealed_before_approval.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanVersion.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.PlanSpreadTarget.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A plan version cannot be approved or locked while any top-down PlanSpreadTarget under it remains unsealed.",
+  "namespace": "plan",
+  "payload": {
+    "condition": "((self.status == 'approved') or (self.status == 'locked')) or (self.status == 'superseded')",
+    "id": "plan.PlanVersion.spreads_sealed_before_approval",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A plan version cannot be approved or locked while any top-down PlanSpreadTarget under it remains unsealed.",
+    "response": {
+      "expression": "all(self.spread_targets as b0, b0.status == 'sealed')",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanVersion"
+      ],
+      "root": {
+        "id": "plan.PlanVersion",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanVersion"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanVersion.spreads_sealed_before_approval.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

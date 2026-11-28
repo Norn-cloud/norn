@@ -62,7 +62,8 @@
             {
               "from": [
                 "draft",
-                "submitted"
+                "submitted",
+                "partially_received"
               ],
               "id": "cancel",
               "to": "cancelled"

@@ -1,0 +1,93 @@
+{
+  "artifactId": "plan.PlanLine.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Merchandise plan line labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "سطر الخطة",
+          "en": "Plan line"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.PlanLine"
+        }
+      },
+      {
+        "label": {
+          "ar": "قطعة",
+          "en": "Each"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanLine",
+          "property": "unit",
+          "value": "each"
+        }
+      },
+      {
+        "label": {
+          "ar": "كيلوغرام",
+          "en": "Kilogram"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanLine",
+          "property": "unit",
+          "value": "kg"
+        }
+      },
+      {
+        "label": {
+          "ar": "لتر",
+          "en": "Litre"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanLine",
+          "property": "unit",
+          "value": "l"
+        }
+      },
+      {
+        "label": {
+          "ar": "غرام",
+          "en": "Gram"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanLine",
+          "property": "unit",
+          "value": "g"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanLine.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

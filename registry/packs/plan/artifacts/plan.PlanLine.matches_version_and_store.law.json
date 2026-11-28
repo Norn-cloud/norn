@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PlanLine.matches_version_and_store.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A plan line must match its plan version and store legal entity and currency, and fall inside its plan version's effective window.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PlanLine.matches_version_and_store",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A plan line must match its plan version and store legal entity and currency, and fall inside its plan version's effective window.",
+    "response": {
+      "expression": "(((((self.entity_id == self.plan_version.entity_id) and (self.currency == self.plan_version.currency)) and (self.entity_id == self.store.entity_id)) and (self.currency == self.store.currency)) and (timestamp(self.period_start) >= timestamp(self.plan_version.effective_from))) and (timestamp(self.period_start) < timestamp(self.plan_version.effective_to))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanLine"
+      ],
+      "root": {
+        "id": "plan.PlanLine",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanLine"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanLine.matches_version_and_store.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

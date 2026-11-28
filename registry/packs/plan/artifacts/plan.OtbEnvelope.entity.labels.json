@@ -1,0 +1,123 @@
+{
+  "artifactId": "plan.OtbEnvelope.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Open-to-Buy budget envelope labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "مظروف الميزانية المتاحة للشراء",
+          "en": "OTB envelope"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.OtbEnvelope"
+        }
+      },
+      {
+        "label": {
+          "ar": "مخطط",
+          "en": "Planned"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbEnvelope",
+          "property": "envelope_kind",
+          "value": "planned"
+        }
+      },
+      {
+        "label": {
+          "ar": "استثناء غير مخطط",
+          "en": "Unplanned override"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbEnvelope",
+          "property": "envelope_kind",
+          "value": "unplanned"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة",
+          "en": "Draft"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbEnvelope",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "بانتظار اعتماد الاستثناء",
+          "en": "Pending override approval"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbEnvelope",
+          "property": "status",
+          "value": "pending_override"
+        }
+      },
+      {
+        "label": {
+          "ar": "نشط",
+          "en": "Active"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbEnvelope",
+          "property": "status",
+          "value": "active"
+        }
+      },
+      {
+        "label": {
+          "ar": "مغلق",
+          "en": "Closed"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbEnvelope",
+          "property": "status",
+          "value": "closed"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.OtbEnvelope.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

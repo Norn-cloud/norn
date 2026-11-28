@@ -1,0 +1,223 @@
+{
+  "artifactId": "plan.otb_envelope.create_planned.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Create a planned OTB budget envelope",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.otb_envelope.create_planned",
+    "createLinks": [
+      {
+        "link": "plan_version",
+        "targetIdField": "plan_version_id",
+        "targetType": "plan.PlanVersion"
+      },
+      {
+        "link": "plan_line",
+        "targetIdField": "plan_line_id",
+        "targetType": "plan.PlanLine"
+      },
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      },
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "requested_by",
+        "inputRequired": false
+      },
+      {
+        "expression": "'planned'",
+        "field": "envelope_kind",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.envelope_id",
+        "field": "active_grain_slot",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.plan_line.planned_receipts_cost",
+        "field": "approved_budget_cost",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.OtbEnvelope.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "envelope_id",
+      "objectKind": "plan.OtbEnvelope",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "active_grain_slot": {
+          "type": "string"
+        },
+        "approved_budget_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "envelope_id": {
+          "type": "string"
+        },
+        "envelope_kind": {
+          "enum": [
+            "planned",
+            "unplanned"
+          ],
+          "type": "string"
+        },
+        "period_start": {
+          "type": "string"
+        },
+        "plan_line_id": {
+          "type": "string"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "requested_by": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "envelope_id",
+        "plan_version_id",
+        "plan_line_id",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "period_start",
+        "currency",
+        "envelope_kind",
+        "approved_budget_cost",
+        "requested_by",
+        "active_grain_slot"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "envelope_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "envelope_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((((((((slice.version.status == 'approved') or (slice.version.status == 'locked')) and (slice.owner_entity.status == 'active')) and (slice.store.status == 'active')) and (input.plan_version_id == slice.plan_line.plan_version_id)) and (input.entity_id == slice.plan_line.entity_id)) and (input.store_id == slice.plan_line.store_id)) and (input.category == slice.plan_line.category)) and (input.brand == slice.plan_line.brand)) and (input.plan_month == slice.plan_line.plan_month)) and (input.currency == slice.plan_line.currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "version",
+        "objectType": "plan.PlanVersion"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_line_id"
+          }
+        },
+        "name": "plan_line",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Create a planned OTB budget envelope",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.OtbEnvelope"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb_envelope.create_planned.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

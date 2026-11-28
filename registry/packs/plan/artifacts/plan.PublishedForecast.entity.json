@@ -1,0 +1,355 @@
+{
+  "artifactId": "plan.PublishedForecast.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Published plan-grain forecast",
+  "namespace": "plan",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "forecast_id"
+          ]
+        },
+        {
+          "name": "forecast_pin",
+          "properties": [
+            "plan_line_id",
+            "model_version",
+            "forecast_revision"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "resting",
+              "state": "published"
+            },
+            {
+              "outcome": "completed",
+              "state": "superseded"
+            }
+          ],
+          "immutable": [
+            "published",
+            "superseded"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "superseded"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "publish",
+              "to": "published"
+            },
+            {
+              "from": [
+                "published"
+              ],
+              "id": "supersede",
+              "to": "superseded"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "scored_by",
+          "target": "ml.ModelVersion"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "plan_version",
+          "target": "plan.PlanVersion"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "plan_line",
+          "target": "plan.PlanLine"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "owner_entity",
+          "target": "supply.LegalEntity"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "store",
+          "target": "supply.Store"
+        }
+      ],
+      "name": "plan.PublishedForecast",
+      "properties": [
+        {
+          "id": "forecast_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_version_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "model_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "forecast_revision",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "store_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "category",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "brand",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_month",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "published_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              },
+              {
+                "value": "g"
+              }
+            ]
+          }
+        },
+        {
+          "id": "forecast_sales_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "forecast_sales_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "forecast_sales_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "forecast_fine_metal_g",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "forecast_sales_retail_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "forecast_sales_cost_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "forecast_sales_qty_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "published"
+              },
+              {
+                "value": "superseded"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PublishedForecast.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

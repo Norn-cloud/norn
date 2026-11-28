@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PublishedForecast.matches_plan_line.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PublishedForecast.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A published plan-grain forecast must align identically with its target PlanLine's grain and derive exact Forecast - Plan variances.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PublishedForecast.matches_plan_line",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A published plan-grain forecast must align identically with its target PlanLine's grain and derive exact Forecast - Plan variances.",
+    "response": {
+      "expression": "((((((((((self.plan_version_id == self.plan_line.plan_version_id) and (self.entity_id == self.plan_line.entity_id)) and (self.store_id == self.plan_line.store_id)) and (self.category == self.plan_line.category)) and (self.brand == self.plan_line.brand)) and (self.plan_month == self.plan_line.plan_month)) and (self.currency == self.plan_line.currency)) and (self.unit == self.plan_line.unit)) and (self.forecast_sales_retail_variance == (self.forecast_sales_retail - self.plan_line.planned_sales_retail))) and (self.forecast_sales_cost_variance == (self.forecast_sales_cost - self.plan_line.planned_sales_cost))) and (self.forecast_sales_qty_variance == (self.forecast_sales_qty - self.plan_line.planned_sales_qty))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PublishedForecast"
+      ],
+      "root": {
+        "id": "plan.PublishedForecast",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PublishedForecast"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PublishedForecast.matches_plan_line.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

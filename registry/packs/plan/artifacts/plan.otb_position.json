@@ -1,0 +1,529 @@
+{
+  "artifactId": "plan.otb_position",
+  "dependencies": [
+    {
+      "artifactId": "plan.OtbEnvelope.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.OtbPoBinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Open-to-Buy remaining envelope position",
+  "namespace": "plan",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "active_envelope": {
+          "input": "envelope",
+          "op": "filter",
+          "predicate": "input.status == 'active'"
+        },
+        "active_full": {
+          "kind": "inner",
+          "left": "active_keys_slot",
+          "on": {
+            "key": {
+              "left": [
+                "entity_id",
+                "store_id",
+                "category",
+                "brand",
+                "plan_month",
+                "currency",
+                "active_grain_slot"
+              ],
+              "right": "active_grain"
+            }
+          },
+          "op": "join",
+          "prefix": "env_",
+          "right": "active_envelope"
+        },
+        "active_keys": {
+          "groupBy": [
+            {
+              "column": "entity_id"
+            },
+            {
+              "column": "store_id"
+            },
+            {
+              "column": "category"
+            },
+            {
+              "column": "brand"
+            },
+            {
+              "column": "plan_month"
+            },
+            {
+              "column": "currency"
+            }
+          ],
+          "input": "active_envelope",
+          "measures": [
+            {
+              "fn": "count",
+              "name": "env_rows"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "active_keys_slot": {
+          "columns": [
+            {
+              "expression": "input.entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.category",
+              "name": "category"
+            },
+            {
+              "expression": "input.brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "'ACTIVE'",
+              "name": "active_grain_slot"
+            }
+          ],
+          "input": "active_keys",
+          "op": "project"
+        },
+        "binding": {
+          "input": "binding",
+          "op": "scan"
+        },
+        "combined": {
+          "branch": "source_branch",
+          "inputs": [
+            "with_bindings",
+            "zero_po"
+          ],
+          "op": "union"
+        },
+        "deduped": {
+          "input": "combined",
+          "keep": "first",
+          "key": [
+            "entity_id",
+            "store_id",
+            "category",
+            "brand",
+            "plan_month",
+            "currency"
+          ],
+          "op": "dedupe",
+          "orderBy": [
+            {
+              "column": "has_bindings",
+              "direction": "desc"
+            },
+            {
+              "column": "source_branch",
+              "direction": "asc"
+            }
+          ]
+        },
+        "envelope": {
+          "input": "envelope",
+          "op": "scan"
+        },
+        "joined_active": {
+          "kind": "inner",
+          "left": "per_grain_active_key",
+          "on": {
+            "key": {
+              "left": [
+                "entity_id",
+                "store_id",
+                "category",
+                "brand",
+                "plan_month",
+                "currency",
+                "active_grain_slot"
+              ],
+              "right": "active_grain"
+            }
+          },
+          "op": "join",
+          "prefix": "env_",
+          "right": "active_envelope"
+        },
+        "per_grain": {
+          "groupBy": [
+            {
+              "column": "entity_id"
+            },
+            {
+              "column": "store_id"
+            },
+            {
+              "column": "category"
+            },
+            {
+              "column": "brand"
+            },
+            {
+              "column": "plan_month"
+            },
+            {
+              "column": "currency"
+            }
+          ],
+          "input": "binding",
+          "measures": [
+            {
+              "column": "recognized_receipt_cost",
+              "fn": "sum",
+              "label": "Recognized receipts at cost",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "column": "unreceived_authorized_cost",
+              "fn": "sum",
+              "label": "Unreceived authorized PO value",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "column": "cancelled_released_cost",
+              "fn": "sum",
+              "label": "Cancelled released balance",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "fn": "count",
+              "name": "po_line_count"
+            },
+            {
+              "column": "authorized_binding_seq",
+              "fn": "max",
+              "name": "max_binding_seq"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "per_grain_active_key": {
+          "columns": [
+            {
+              "expression": "input.entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.category",
+              "name": "category"
+            },
+            {
+              "expression": "input.brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "'ACTIVE'",
+              "name": "active_grain_slot"
+            },
+            {
+              "expression": "input.recognized_receipts_cost",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "expression": "input.unreceived_authorized_po_cost",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "expression": "input.cancelled_released_cost",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "expression": "input.po_line_count",
+              "name": "po_line_count"
+            },
+            {
+              "expression": "input.max_binding_seq",
+              "name": "max_binding_seq"
+            }
+          ],
+          "input": "per_grain",
+          "op": "project"
+        },
+        "position": {
+          "columns": [
+            {
+              "expression": "input.entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.category",
+              "name": "category"
+            },
+            {
+              "expression": "input.brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.envelope_id",
+              "name": "envelope_id"
+            },
+            {
+              "expression": "input.plan_version_id",
+              "name": "plan_version_id"
+            },
+            {
+              "expression": "input.envelope_kind",
+              "name": "envelope_kind"
+            },
+            {
+              "expression": "input.approved_budget_cost",
+              "name": "approved_budget_cost"
+            },
+            {
+              "expression": "input.recognized_receipts_cost",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "expression": "input.unreceived_authorized_po_cost",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "expression": "input.cancelled_released_cost",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "expression": "input.bindings_complete",
+              "name": "bindings_complete"
+            },
+            {
+              "expression": "input.remaining_otb_cost",
+              "name": "remaining_otb_cost"
+            },
+            {
+              "expression": "input.po_line_count",
+              "name": "po_line_count"
+            }
+          ],
+          "input": "deduped",
+          "op": "project"
+        },
+        "with_bindings": {
+          "columns": [
+            {
+              "expression": "input.entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.category",
+              "name": "category"
+            },
+            {
+              "expression": "input.brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.env_envelope_id",
+              "name": "envelope_id"
+            },
+            {
+              "expression": "input.env_plan_version_id",
+              "name": "plan_version_id"
+            },
+            {
+              "expression": "input.env_envelope_kind",
+              "name": "envelope_kind"
+            },
+            {
+              "expression": "input.env_approved_budget_cost",
+              "name": "approved_budget_cost"
+            },
+            {
+              "expression": "input.recognized_receipts_cost + 0",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "expression": "input.unreceived_authorized_po_cost + 0",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "expression": "input.cancelled_released_cost + 0",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "expression": "input.po_line_count == input.max_binding_seq",
+              "name": "bindings_complete"
+            },
+            {
+              "expression": "input.po_line_count == input.max_binding_seq ? (input.env_approved_budget_cost - input.recognized_receipts_cost - input.unreceived_authorized_po_cost) : null",
+              "name": "remaining_otb_cost"
+            },
+            {
+              "expression": "input.po_line_count + 0",
+              "name": "po_line_count"
+            },
+            {
+              "expression": "1",
+              "name": "has_bindings"
+            }
+          ],
+          "input": "joined_active",
+          "op": "project"
+        },
+        "zero_po": {
+          "columns": [
+            {
+              "expression": "input.entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.category",
+              "name": "category"
+            },
+            {
+              "expression": "input.brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.env_envelope_id",
+              "name": "envelope_id"
+            },
+            {
+              "expression": "input.env_plan_version_id",
+              "name": "plan_version_id"
+            },
+            {
+              "expression": "input.env_envelope_kind",
+              "name": "envelope_kind"
+            },
+            {
+              "expression": "input.env_approved_budget_cost",
+              "name": "approved_budget_cost"
+            },
+            {
+              "expression": "input.env_approved_budget_cost - input.env_approved_budget_cost",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "expression": "input.env_approved_budget_cost - input.env_approved_budget_cost",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "expression": "input.env_approved_budget_cost - input.env_approved_budget_cost",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "expression": "true",
+              "name": "bindings_complete"
+            },
+            {
+              "expression": "true ? (input.env_approved_budget_cost + 0) : null",
+              "name": "remaining_otb_cost"
+            },
+            {
+              "expression": "0",
+              "name": "po_line_count"
+            },
+            {
+              "expression": "0",
+              "name": "has_bindings"
+            }
+          ],
+          "input": "active_full",
+          "op": "project"
+        }
+      },
+      "output": "position"
+    },
+    "inputs": [
+      {
+        "alias": "envelope",
+        "artifactId": "plan.OtbEnvelope.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "binding",
+        "artifactId": "plan.OtbPoBinding.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "plan.otb_position",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb_position.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

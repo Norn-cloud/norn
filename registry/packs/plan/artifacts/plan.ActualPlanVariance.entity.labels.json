@@ -1,0 +1,108 @@
+{
+  "artifactId": "plan.ActualPlanVariance.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Actual minus Plan variance snapshot labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "انحراف الفعلي مقابل الخطة",
+          "en": "Actual vs Plan variance"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.ActualPlanVariance"
+        }
+      },
+      {
+        "label": {
+          "ar": "قطعة",
+          "en": "Each"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.ActualPlanVariance",
+          "property": "unit",
+          "value": "each"
+        }
+      },
+      {
+        "label": {
+          "ar": "كيلوغرام",
+          "en": "Kilogram"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.ActualPlanVariance",
+          "property": "unit",
+          "value": "kg"
+        }
+      },
+      {
+        "label": {
+          "ar": "لتر",
+          "en": "Litre"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.ActualPlanVariance",
+          "property": "unit",
+          "value": "l"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسعّر بالتكلفة",
+          "en": "Costed"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.ActualPlanVariance",
+          "property": "cost_status",
+          "value": "costed"
+        }
+      },
+      {
+        "label": {
+          "ar": "تكلفة مفقودة",
+          "en": "Missing cost"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.ActualPlanVariance",
+          "property": "cost_status",
+          "value": "missing_cost"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.ActualPlanVariance.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

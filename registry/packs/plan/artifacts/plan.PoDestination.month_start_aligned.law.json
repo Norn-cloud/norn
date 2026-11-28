@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PoDestination.month_start_aligned.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PoDestination.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A purchase order destination's period_month_date must be the first calendar day of its canonical YYYY-MM plan_month.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PoDestination.month_start_aligned",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A purchase order destination's period_month_date must be the first calendar day of its canonical YYYY-MM plan_month.",
+    "response": {
+      "expression": "(len(self.plan_month) == 7) and (date(self.period_month_date) == date(self.plan_month + '-01'))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PoDestination"
+      ],
+      "root": {
+        "id": "plan.PoDestination",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PoDestination"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PoDestination.month_start_aligned.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

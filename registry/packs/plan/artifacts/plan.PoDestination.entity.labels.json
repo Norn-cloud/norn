@@ -1,0 +1,33 @@
+{
+  "artifactId": "plan.PoDestination.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Purchase order destination grain labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "وجهة أمر الشراء",
+          "en": "PO destination"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.PoDestination"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PoDestination.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

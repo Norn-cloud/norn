@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.SkuProfile.matches_sku.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.SkuProfile.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A SKU merchandise profile must match its catalog SKU's identity, category, and unit of measure and carry a non-empty brand.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.SkuProfile.matches_sku",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A SKU merchandise profile must match its catalog SKU's identity, category, and unit of measure and carry a non-empty brand.",
+    "response": {
+      "expression": "(((self.sku_id == self.sku.sku_id) and (self.category == self.sku.category)) and (self.unit_of_measure == self.sku.unit_of_measure)) and (len(self.brand) > 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.SkuProfile"
+      ],
+      "root": {
+        "id": "plan.SkuProfile",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.SkuProfile"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.SkuProfile.matches_sku.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

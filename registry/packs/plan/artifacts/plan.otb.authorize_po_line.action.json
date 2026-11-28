@@ -1,0 +1,433 @@
+{
+  "artifactId": "plan.otb.authorize_po_line.action",
+  "dependencies": [
+    {
+      "artifactId": "plan.otb.authorize_po_writer.rule",
+      "kind": "rule",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Authorize and submit a draft PO against an OTB envelope",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.otb.authorize_po_line",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "otb_consumed_cost"
+        },
+        "filter": {
+          "brand": "brand",
+          "category": "category",
+          "currency": "currency",
+          "entity_id": "entity_id",
+          "plan_month": "plan_month",
+          "store_id": "store_id"
+        },
+        "maxItems": 200,
+        "name": "consumed_otb_cost",
+        "objectType": "plan.OtbPoBinding"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "brand": "brand",
+          "category": "category",
+          "currency": "currency",
+          "entity_id": "entity_id",
+          "plan_month": "plan_month",
+          "store_id": "store_id"
+        },
+        "maxItems": 200,
+        "name": "grain_binding_count",
+        "objectType": "plan.OtbPoBinding"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "po_id": "po_id"
+        },
+        "maxItems": 50,
+        "name": "po_line_count",
+        "objectType": "supply.OrderLine"
+      }
+    ],
+    "createLinks": [
+      {
+        "link": "envelope",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "envelope_id",
+        "targetType": "plan.OtbEnvelope"
+      },
+      {
+        "link": "order",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "po_id",
+        "targetType": "supply.PurchaseOrder"
+      },
+      {
+        "link": "order_line",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "line_id",
+        "targetType": "supply.OrderLine"
+      },
+      {
+        "link": "sku",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      },
+      {
+        "link": "sku_profile",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "sku_id",
+        "targetType": "plan.SkuProfile"
+      },
+      {
+        "link": "po_destination",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "po_id",
+        "targetType": "plan.PoDestination"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "slice.envelope.plan_version_id",
+        "field": "plan_version_id",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.unit",
+        "field": "unit",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.ordered_qty",
+        "field": "ordered_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.unit_price",
+        "field": "unit_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.ordered_qty * slice.order_line.unit_price",
+        "field": "authorized_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.envelope.approved_budget_cost",
+        "field": "envelope_cap_snapshot",
+        "inputRequired": false
+      },
+      {
+        "expression": "aggregates.consumed_otb_cost",
+        "field": "prior_consumed_snapshot",
+        "inputRequired": false
+      },
+      {
+        "expression": "aggregates.grain_binding_count + 1",
+        "field": "authorized_binding_seq",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.PurchaseOrder.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "po_id",
+      "objectKind": "supply.PurchaseOrder",
+      "transition": "submit"
+    },
+    "idempotent": true,
+    "independentOf": [
+      "created_by"
+    ],
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "authorized_binding_seq": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 0
+          },
+          "type": "number"
+        },
+        "authorized_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "envelope_cap_snapshot": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "envelope_id": {
+          "type": "string"
+        },
+        "expected_payment_date": {
+          "type": "string"
+        },
+        "line_id": {
+          "type": "string"
+        },
+        "ordered_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "payment_terms_days": {
+          "type": "integer"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "po_id": {
+          "type": "string"
+        },
+        "prior_consumed_snapshot": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "unit_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "binding_id",
+        "envelope_id",
+        "po_id",
+        "line_id",
+        "sku_id",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "currency",
+        "expected_payment_date",
+        "payment_terms_days",
+        "as_of",
+        "plan_version_id",
+        "unit",
+        "ordered_qty",
+        "unit_cost",
+        "authorized_cost",
+        "envelope_cap_snapshot",
+        "prior_consumed_snapshot",
+        "authorized_binding_seq"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "po_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "po_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((((((((((((((((((((((((((slice.order.status == 'draft') and (aggregates.po_line_count == 1)) and (slice.order_line.po_id == input.po_id)) and (slice.order_line.sku_id == input.sku_id)) and (slice.order_line.received_qty == 0)) and (slice.envelope.status == 'active')) and (slice.envelope.active_grain_slot == 'ACTIVE')) and ((slice.plan_version.status == 'approved') or (slice.plan_version.status == 'locked'))) and (slice.store.status == 'active')) and (slice.owner_entity.status == 'active')) and (input.entity_id == slice.store.entity_id)) and (input.entity_id == slice.po_destination.entity_id)) and (input.store_id == slice.po_destination.store_id)) and (input.category == slice.sku.category)) and (input.category == slice.sku_profile.category)) and (input.brand == slice.sku_profile.brand)) and (input.plan_month == slice.po_destination.plan_month)) and (input.currency == slice.order.currency)) and (slice.order.currency == slice.order_line.currency)) and (slice.order_line.currency == slice.po_destination.currency)) and (slice.order_line.currency == slice.store.currency)) and (slice.order_line.currency == slice.envelope.currency)) and (slice.order_line.unit == slice.sku.unit_of_measure)) and (slice.envelope.entity_id == input.entity_id)) and (slice.envelope.store_id == input.store_id)) and (slice.envelope.category == input.category)) and (slice.envelope.brand == input.brand)) and (slice.envelope.plan_month == input.plan_month)) and ((aggregates.consumed_otb_cost + input.authorized_cost) <= slice.envelope.approved_budget_cost)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "po_id"
+          }
+        },
+        "name": "order",
+        "objectType": "supply.PurchaseOrder"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "line_id"
+          }
+        },
+        "name": "order_line",
+        "objectType": "supply.OrderLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku_profile",
+        "objectType": "plan.SkuProfile"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "po_id"
+          }
+        },
+        "name": "po_destination",
+        "objectType": "plan.PoDestination"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "po_destination",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "po_destination",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "envelope_id"
+          }
+        },
+        "name": "envelope",
+        "objectType": "plan.OtbEnvelope"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "envelope",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "plan_version",
+        "objectType": "plan.PlanVersion"
+      }
+    ],
+    "synchronousRule": {
+      "artifactId": "plan.otb.authorize_po_writer.rule",
+      "version": "0.1.0"
+    },
+    "title": "Authorize and submit a draft PO against an OTB envelope",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.PurchaseOrder"
+      },
+      {
+        "change": "created",
+        "entityKind": "plan.OtbPoBinding"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb.authorize_po_line.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

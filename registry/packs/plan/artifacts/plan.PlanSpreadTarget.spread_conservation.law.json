@@ -1,0 +1,57 @@
+{
+  "artifactId": "plan.PlanSpreadTarget.spread_conservation.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanSpreadTarget.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.PlanLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Child plan lines under a sealed top-down spread target must cover distinct buckets 1..bucket_count, conserve total spread weights and remainder quanta, and sum exactly to every parent measure with zero silent drift.",
+  "namespace": "plan",
+  "payload": {
+    "condition": "self.status == 'sealed'",
+    "id": "plan.PlanSpreadTarget.spread_conservation",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "Child plan lines under a sealed top-down spread target must cover distinct buckets 1..bucket_count, conserve total spread weights and remainder quanta, and sum exactly to every parent measure with zero silent drift.",
+    "response": {
+      "expression": "((((((((((((((len(self.plan_lines) == self.bucket_count) and ((sum(map(self.plan_lines as b0, b0.spread_bucket_index)) * 2) == (self.bucket_count * (self.bucket_count + 1)))) and ((sum(map(self.plan_lines as b0, b0.spread_bucket_index * b0.spread_bucket_index)) * 6) == ((self.bucket_count * (self.bucket_count + 1)) * ((2 * self.bucket_count) + 1)))) and (sum(map(self.plan_lines as b0, b0.spread_weight)) == self.target_total_weight)) and (sum(map(self.plan_lines as b0, b0.spread_remainder_quanta)) == self.target_remainder_quanta)) and ((sum(map(self.plan_lines as b0, b0.spread_base_receipts_cost)) + self.target_rounding_remainder_cost) == self.target_receipts_cost)) and (sum(map(self.plan_lines as b0, b0.planned_sales_retail)) == self.target_sales_retail)) and (sum(map(self.plan_lines as b0, b0.planned_sales_cost)) == self.target_sales_cost)) and (sum(map(self.plan_lines as b0, b0.planned_receipts_cost)) == self.target_receipts_cost)) and (sum(map(self.plan_lines as b0, b0.planned_receipts_retail)) == self.target_receipts_retail)) and (sum(map(self.plan_lines as b0, b0.planned_markdowns_cost)) == self.target_markdowns_cost)) and (sum(map(self.plan_lines as b0, b0.planned_markdowns_retail)) == self.target_markdowns_retail)) and (sum(map(self.plan_lines as b0, b0.planned_eom_stock_cost)) == self.target_eom_stock_cost)) and (sum(map(self.plan_lines as b0, b0.planned_fine_metal_g)) == self.target_fine_metal_g)) and (sum(map(self.plan_lines as b0, b0.spread_remainder_cost)) == self.target_rounding_remainder_cost)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanSpreadTarget"
+      ],
+      "root": {
+        "id": "plan.PlanSpreadTarget",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanSpreadTarget"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanSpreadTarget.spread_conservation.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

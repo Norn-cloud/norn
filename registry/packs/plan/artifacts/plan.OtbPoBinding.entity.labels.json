@@ -1,0 +1,93 @@
+{
+  "artifactId": "plan.OtbPoBinding.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "OTB purchase-order commitment binding labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "ربط أمر الشراء بميزانية الشراء",
+          "en": "OTB PO binding"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.OtbPoBinding"
+        }
+      },
+      {
+        "label": {
+          "ar": "مصرح به",
+          "en": "Authorized"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbPoBinding",
+          "property": "status",
+          "value": "authorized"
+        }
+      },
+      {
+        "label": {
+          "ar": "مستلم جزئيًا",
+          "en": "Partially received"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbPoBinding",
+          "property": "status",
+          "value": "partially_received"
+        }
+      },
+      {
+        "label": {
+          "ar": "مكتمل",
+          "en": "Fulfilled"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbPoBinding",
+          "property": "status",
+          "value": "fulfilled"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغى (محرر)",
+          "en": "Cancelled (released)"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.OtbPoBinding",
+          "property": "status",
+          "value": "cancelled"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.OtbPoBinding.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

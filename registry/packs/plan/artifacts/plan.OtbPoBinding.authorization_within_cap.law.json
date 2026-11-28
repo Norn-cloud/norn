@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.OtbPoBinding.authorization_within_cap.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.OtbPoBinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Authorizing a purchase order line against an OTB envelope must stay within the approved purchase-at-cost budget ceiling.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.OtbPoBinding.authorization_within_cap",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "Authorizing a purchase order line against an OTB envelope must stay within the approved purchase-at-cost budget ceiling.",
+    "response": {
+      "expression": "((self.prior_consumed_snapshot >= 0) and (self.envelope_cap_snapshot > 0)) and ((self.prior_consumed_snapshot + self.otb_consumed_cost) <= self.envelope_cap_snapshot)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.OtbPoBinding"
+      ],
+      "root": {
+        "id": "plan.OtbPoBinding",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.OtbPoBinding"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.OtbPoBinding.authorization_within_cap.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

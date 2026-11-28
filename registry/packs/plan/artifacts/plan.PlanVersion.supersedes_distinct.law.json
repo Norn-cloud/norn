@@ -1,0 +1,51 @@
+{
+  "artifactId": "plan.PlanVersion.supersedes_distinct.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanVersion.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A superseding plan version must name a distinct predecessor and advance revision_number past 1 without mutating locked history.",
+  "namespace": "plan",
+  "payload": {
+    "condition": "self.supersedes_version_id != null",
+    "id": "plan.PlanVersion.supersedes_distinct",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A superseding plan version must name a distinct predecessor and advance revision_number past 1 without mutating locked history.",
+    "response": {
+      "expression": "((self.supersedes_version_id ?? '') != self.plan_version_id) and (self.revision_number >= 2)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanVersion"
+      ],
+      "root": {
+        "id": "plan.PlanVersion",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanVersion"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanVersion.supersedes_distinct.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

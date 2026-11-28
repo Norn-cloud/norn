@@ -1,0 +1,63 @@
+{
+  "artifactId": "plan.PurchaseOrder.requires_otb_bindings.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.PurchaseOrder.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.OrderLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.OtbPoBinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "When the Plan pack is installed, every submitted or received purchase order must have a valid OTB binding covering every order line, blocking unbudgeted supply.po.submit bypasses.",
+  "namespace": "plan",
+  "payload": {
+    "condition": "(self.status != 'draft') and (self.status != 'cancelled')",
+    "id": "plan.PurchaseOrder.requires_otb_bindings",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "When the Plan pack is installed, every submitted or received purchase order must have a valid OTB binding covering every order line, blocking unbudgeted supply.po.submit bypasses.",
+    "response": {
+      "expression": "(len(self.lines) > 0) and (len(self.otb_bindings) == len(self.lines))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.PurchaseOrder"
+      ],
+      "root": {
+        "id": "supply.PurchaseOrder",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.PurchaseOrder"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PurchaseOrder.requires_otb_bindings.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

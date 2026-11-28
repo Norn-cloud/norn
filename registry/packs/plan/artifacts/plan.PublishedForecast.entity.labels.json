@@ -1,0 +1,138 @@
+{
+  "artifactId": "plan.PublishedForecast.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Published plan-grain forecast labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "التوقع المنشور",
+          "en": "Published forecast"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.PublishedForecast"
+        }
+      },
+      {
+        "label": {
+          "ar": "قطعة",
+          "en": "Each"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PublishedForecast",
+          "property": "unit",
+          "value": "each"
+        }
+      },
+      {
+        "label": {
+          "ar": "كيلوغرام",
+          "en": "Kilogram"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PublishedForecast",
+          "property": "unit",
+          "value": "kg"
+        }
+      },
+      {
+        "label": {
+          "ar": "لتر",
+          "en": "Litre"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PublishedForecast",
+          "property": "unit",
+          "value": "l"
+        }
+      },
+      {
+        "label": {
+          "ar": "غرام",
+          "en": "Gram"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PublishedForecast",
+          "property": "unit",
+          "value": "g"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة",
+          "en": "Draft"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PublishedForecast",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "منشور",
+          "en": "Published"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PublishedForecast",
+          "property": "status",
+          "value": "published"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُستبدل",
+          "en": "Superseded"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PublishedForecast",
+          "property": "status",
+          "value": "superseded"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PublishedForecast.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

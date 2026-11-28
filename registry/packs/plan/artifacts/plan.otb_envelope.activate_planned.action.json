@@ -1,0 +1,150 @@
+{
+  "artifactId": "plan.otb_envelope.activate_planned.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Activate a planned OTB envelope",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.otb_envelope.activate_planned",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "active_grain_slot": "active_slot_marker",
+          "brand": "brand",
+          "category": "category",
+          "currency": "currency",
+          "entity_id": "entity_id",
+          "plan_month": "plan_month",
+          "store_id": "store_id"
+        },
+        "maxItems": 10,
+        "name": "active_grain_envelopes",
+        "objectType": "plan.OtbEnvelope"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "'ACTIVE'",
+        "field": "active_slot_marker",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.OtbEnvelope.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "envelope_id",
+      "objectKind": "plan.OtbEnvelope",
+      "setFields": {
+        "active_grain_slot": "active_slot_marker"
+      },
+      "transition": "activate_planned"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "active_slot_marker": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "envelope_id": {
+          "type": "string"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "envelope_id",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "currency",
+        "active_slot_marker"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "envelope_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "envelope_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((((((slice.envelope.envelope_kind == 'planned') and ((slice.plan_version.status == 'approved') or (slice.plan_version.status == 'locked'))) and (aggregates.active_grain_envelopes == 0)) and (input.entity_id == slice.envelope.entity_id)) and (input.store_id == slice.envelope.store_id)) and (input.category == slice.envelope.category)) and (input.brand == slice.envelope.brand)) and (input.plan_month == slice.envelope.plan_month)) and (input.currency == slice.envelope.currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "envelope_id"
+          }
+        },
+        "name": "envelope",
+        "objectType": "plan.OtbEnvelope"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "envelope",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "plan_version",
+        "objectType": "plan.PlanVersion"
+      }
+    ],
+    "title": "Activate a planned OTB envelope",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.OtbEnvelope"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb_envelope.activate_planned.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

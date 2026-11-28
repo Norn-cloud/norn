@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.ActualPlanVariance.variance_valid.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.ActualPlanVariance.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An Actual - Plan variance snapshot carries non-negative actual and planned measures and exact Actual - Plan differences (withholding cost variance on missing_cost).",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.ActualPlanVariance.variance_valid",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "An Actual - Plan variance snapshot carries non-negative actual and planned measures and exact Actual - Plan differences (withholding cost variance on missing_cost).",
+    "response": {
+      "expression": "((((((((((len(self.plan_month) == 7) and (timestamp(self.period_start) == timestamp(self.plan_month + '-01T00:00:00Z'))) and (self.actual_sales_retail >= 0)) and (self.planned_sales_retail >= 0)) and (self.actual_sales_cost >= 0)) and (self.planned_sales_cost >= 0)) and (self.actual_sales_qty >= 0)) and (self.planned_sales_qty >= 0)) and (self.sales_retail_variance == (self.actual_sales_retail - self.planned_sales_retail))) and (self.sales_qty_variance == (self.actual_sales_qty - self.planned_sales_qty))) and (((self.cost_status == 'costed') and (self.sales_cost_variance == (self.actual_sales_cost - self.planned_sales_cost))) or (((self.cost_status == 'missing_cost') and (self.actual_sales_cost == 0)) and (self.sales_cost_variance == 0)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.ActualPlanVariance"
+      ],
+      "root": {
+        "id": "plan.ActualPlanVariance",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.ActualPlanVariance"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.ActualPlanVariance.variance_valid.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

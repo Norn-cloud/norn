@@ -1,0 +1,363 @@
+{
+  "artifactId": "plan.PlanSpreadTarget.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Top-down plan spread target",
+  "namespace": "plan",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "spread_target_id"
+          ]
+        },
+        {
+          "name": "spread_grain",
+          "properties": [
+            "plan_version_id",
+            "entity_id",
+            "category",
+            "brand",
+            "plan_month"
+          ]
+        }
+      ],
+      "implements": [
+        "plan.PlanTarget"
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "sealed"
+            }
+          ],
+          "immutable": [
+            "sealed"
+          ],
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "sealed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "seal",
+              "to": "sealed"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "plan_version",
+          "inverse": "spread_targets",
+          "target": "plan.PlanVersion"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "owner_entity",
+          "target": "supply.LegalEntity"
+        }
+      ],
+      "name": "plan.PlanSpreadTarget",
+      "properties": [
+        {
+          "id": "spread_target_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_version_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "category",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "brand",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_month",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_month_date",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "id": "period_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "rounding_rule",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "largest_remainder"
+              },
+              {
+                "value": "last_bucket_remainder"
+              },
+              {
+                "value": "exact_no_remainder"
+              }
+            ]
+          }
+        },
+        {
+          "id": "bucket_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "allocation_quantum_cost",
+          "type": {
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "target_total_quanta",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "target_total_weight",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "target_remainder_quanta",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "remainder_cutoff_frac",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "remainder_cutoff_bucket",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "target_sales_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "target_sales_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "target_receipts_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "target_receipts_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "target_markdowns_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "target_markdowns_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "target_eom_stock_cost",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "target_fine_metal_g",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "target_rounding_remainder_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "sealed"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanSpreadTarget.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PlanVersion.valid_window.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanVersion.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A plan version carries a positive revision number and a strictly ordered bitemporal effective window.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PlanVersion.valid_window",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A plan version carries a positive revision number and a strictly ordered bitemporal effective window.",
+    "response": {
+      "expression": "(self.revision_number >= 1) and (timestamp(self.effective_from) < timestamp(self.effective_to))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanVersion"
+      ],
+      "root": {
+        "id": "plan.PlanVersion",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanVersion"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanVersion.valid_window.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

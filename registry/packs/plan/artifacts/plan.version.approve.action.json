@@ -1,0 +1,110 @@
+{
+  "artifactId": "plan.version.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Approve a submitted plan version",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.version.approve",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "plan_version_id": "plan_version_id"
+        },
+        "maxItems": 100,
+        "name": "total_spreads",
+        "objectType": "plan.PlanSpreadTarget"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "plan_version_id": "plan_version_id",
+          "status": "sealed_status"
+        },
+        "maxItems": 100,
+        "name": "sealed_spreads",
+        "objectType": "plan.PlanSpreadTarget"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "'sealed'",
+        "field": "sealed_status",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "plan_version_id",
+      "objectKind": "plan.PlanVersion",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "independentOf": [
+      "created_by"
+    ],
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        },
+        "sealed_status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id",
+        "sealed_status"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "aggregates.total_spreads == aggregates.sealed_spreads"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Approve a submitted plan version",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.PlanVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.version.approve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

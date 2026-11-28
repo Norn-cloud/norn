@@ -1,0 +1,90 @@
+{
+  "artifactId": "plan.expected_cash_outflow_monthly",
+  "dependencies": [
+    {
+      "artifactId": "plan.OtbPoBinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Expected PO cash payment schedule",
+  "namespace": "plan",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "binding": {
+          "input": "binding",
+          "op": "scan"
+        },
+        "monthly": {
+          "groupBy": [
+            {
+              "column": "entity_id"
+            },
+            {
+              "column": "store_id"
+            },
+            {
+              "column": "currency"
+            },
+            {
+              "column": "expected_payment_date",
+              "grain": "month",
+              "label": "Payment month"
+            }
+          ],
+          "input": "binding",
+          "measures": [
+            {
+              "column": "otb_consumed_cost",
+              "fn": "sum",
+              "label": "Expected cash outflow",
+              "name": "expected_cash_outflow_cost"
+            },
+            {
+              "column": "recognized_receipt_cost",
+              "fn": "sum",
+              "label": "Recognized payable",
+              "name": "recognized_payable_cost"
+            },
+            {
+              "column": "unreceived_authorized_cost",
+              "fn": "sum",
+              "label": "Unreceived PO commitment",
+              "name": "open_po_commitment_cost"
+            },
+            {
+              "fn": "count",
+              "name": "binding_count"
+            }
+          ],
+          "op": "aggregate"
+        }
+      },
+      "output": "monthly"
+    },
+    "inputs": [
+      {
+        "alias": "binding",
+        "artifactId": "plan.OtbPoBinding.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "plan.expected_cash_outflow_monthly",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.expected_cash_outflow_monthly.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

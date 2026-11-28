@@ -1,0 +1,361 @@
+{
+  "artifactId": "plan.line.record.action",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a merchandise plan line",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.line.record",
+    "createLinks": [
+      {
+        "link": "plan_version",
+        "targetIdField": "plan_version_id",
+        "targetType": "plan.PlanVersion"
+      },
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      },
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "date(input.plan_month + '-01')",
+        "field": "period_month_date",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_bucket_index",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_weight",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_base_quanta",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_frac_remainder",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_remainder_quanta",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.planned_receipts_cost",
+        "field": "spread_base_receipts_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_remainder_cost",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanLine.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "plan_line_id",
+      "objectKind": "plan.PlanLine",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "period_month_date": {
+          "type": "string"
+        },
+        "period_start": {
+          "type": "string"
+        },
+        "plan_line_id": {
+          "type": "string"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "planned_eom_stock_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_eom_stock_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_eom_stock_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_fine_metal_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "type": "number"
+        },
+        "planned_markdowns_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_markdowns_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_receipts_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_receipts_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_receipts_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_sales_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_sales_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_sales_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "spread_base_quanta": {
+          "type": "integer"
+        },
+        "spread_base_receipts_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "spread_bucket_index": {
+          "type": "integer"
+        },
+        "spread_frac_remainder": {
+          "type": "integer"
+        },
+        "spread_remainder_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "spread_remainder_quanta": {
+          "type": "integer"
+        },
+        "spread_weight": {
+          "type": "integer"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l",
+            "g"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_line_id",
+        "plan_version_id",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "period_month_date",
+        "period_start",
+        "as_of",
+        "currency",
+        "unit",
+        "planned_sales_retail",
+        "planned_sales_cost",
+        "planned_sales_qty",
+        "planned_receipts_cost",
+        "planned_receipts_retail",
+        "planned_receipts_qty",
+        "planned_markdowns_cost",
+        "planned_markdowns_retail",
+        "planned_fine_metal_g",
+        "spread_bucket_index",
+        "spread_weight",
+        "spread_base_quanta",
+        "spread_frac_remainder",
+        "spread_remainder_quanta",
+        "spread_base_receipts_cost",
+        "spread_remainder_cost",
+        "planned_eom_stock_cost",
+        "planned_eom_stock_retail",
+        "planned_eom_stock_qty"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_line_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_line_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((((slice.version.status == 'draft') and (slice.owner_entity.status == 'active')) and (slice.store.status == 'active')) and (input.entity_id == slice.version.entity_id)) and (input.entity_id == slice.store.entity_id)) and (input.currency == slice.version.currency)) and (input.currency == slice.store.currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "version",
+        "objectType": "plan.PlanVersion"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Record a merchandise plan line",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.PlanLine"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.line.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PoDestination.matches_order_and_store.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PoDestination.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A purchase order destination must align with its order currency and store owning legal entity.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PoDestination.matches_order_and_store",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A purchase order destination must align with its order currency and store owning legal entity.",
+    "response": {
+      "expression": "((((((self.po_id == self.order.po_id) and (self.store_id == self.store.store_id)) and (self.entity_id == self.store.entity_id)) and (self.entity_id == self.owner_entity.entity_id)) and (self.currency == self.store.currency)) and (self.currency == self.owner_entity.functional_currency)) and (self.currency == self.order.currency)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PoDestination"
+      ],
+      "root": {
+        "id": "plan.PoDestination",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PoDestination"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PoDestination.matches_order_and_store.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

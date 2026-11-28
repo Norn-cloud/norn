@@ -1,0 +1,314 @@
+{
+  "artifactId": "plan.actual_sales_at_plan_grain",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.Store.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.Sku.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.SkuProfile.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Actual POS sales aggregated to full plan grain",
+  "namespace": "plan",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "at_plan_grain": {
+          "groupBy": [
+            {
+              "column": "st_entity_id"
+            },
+            {
+              "column": "store_id"
+            },
+            {
+              "column": "sk_category"
+            },
+            {
+              "column": "sp_brand"
+            },
+            {
+              "column": "unit"
+            },
+            {
+              "column": "currency"
+            },
+            {
+              "column": "sold_at",
+              "grain": "month",
+              "label": "Actual month"
+            }
+          ],
+          "input": "sale_resolved",
+          "measures": [
+            {
+              "column": "sold_qty",
+              "fn": "sum",
+              "label": "Actual units sold",
+              "name": "actual_sales_qty"
+            },
+            {
+              "column": "net_revenue",
+              "fn": "sum",
+              "label": "Actual net revenue",
+              "name": "actual_sales_retail"
+            },
+            {
+              "column": "cogs_amount",
+              "fn": "sum",
+              "label": "Actual COGS",
+              "name": "actual_sales_cost"
+            },
+            {
+              "fn": "count",
+              "name": "sale_lines"
+            },
+            {
+              "column": "costed_ref",
+              "fn": "count",
+              "name": "costed_lines"
+            },
+            {
+              "column": "profile_ref",
+              "fn": "count",
+              "name": "profiled_lines"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "sale": {
+          "input": "sale",
+          "op": "scan"
+        },
+        "sale_resolved": {
+          "columns": [
+            {
+              "expression": "input.id",
+              "name": "id"
+            },
+            {
+              "expression": "input.st_entity_id",
+              "name": "st_entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.sk_category",
+              "name": "sk_category"
+            },
+            {
+              "expression": "input.sp_brand ?? '__unprofiled__'",
+              "name": "sp_brand"
+            },
+            {
+              "expression": "input.sp_brand",
+              "name": "profile_ref"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.sold_at",
+              "name": "sold_at"
+            },
+            {
+              "expression": "input.sold_qty",
+              "name": "sold_qty"
+            },
+            {
+              "expression": "input.net_revenue",
+              "name": "net_revenue"
+            },
+            {
+              "expression": "input.cogs_amount",
+              "name": "cogs_amount"
+            },
+            {
+              "expression": "input.costed_ref",
+              "name": "costed_ref"
+            }
+          ],
+          "input": "sale_with_dims",
+          "op": "project"
+        },
+        "sale_with_dims": {
+          "kind": "left",
+          "left": "sale_with_sku",
+          "on": {
+            "key": {
+              "left": [
+                "sku_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "sp_",
+          "right": "sku_profile"
+        },
+        "sale_with_sku": {
+          "kind": "inner",
+          "left": "sale_with_store",
+          "on": {
+            "key": {
+              "left": [
+                "sku_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "sk_",
+          "right": "sku"
+        },
+        "sale_with_store": {
+          "kind": "inner",
+          "left": "sale",
+          "on": {
+            "key": {
+              "left": [
+                "store_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "st_",
+          "right": "store"
+        },
+        "sku": {
+          "input": "sku",
+          "op": "scan"
+        },
+        "sku_profile": {
+          "input": "sku_profile",
+          "op": "scan"
+        },
+        "store": {
+          "input": "store",
+          "op": "scan"
+        },
+        "summary": {
+          "columns": [
+            {
+              "expression": "input.st_entity_id",
+              "name": "st_entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.sk_category",
+              "name": "sk_category"
+            },
+            {
+              "expression": "input.sp_brand",
+              "name": "sp_brand"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.sold_at",
+              "name": "sold_at"
+            },
+            {
+              "expression": "input.actual_sales_qty",
+              "name": "actual_sales_qty"
+            },
+            {
+              "expression": "input.actual_sales_retail",
+              "name": "actual_sales_retail"
+            },
+            {
+              "expression": "input.profiled_lines == input.sale_lines",
+              "name": "profile_complete"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines",
+              "name": "cost_complete"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines ? input.actual_sales_cost : null",
+              "name": "effective_actual_sales_cost"
+            }
+          ],
+          "input": "at_plan_grain",
+          "op": "project"
+        }
+      },
+      "output": "summary"
+    },
+    "inputs": [
+      {
+        "alias": "sale",
+        "artifactId": "supply.PosSale.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "store",
+        "artifactId": "supply.Store.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "sku",
+        "artifactId": "supply.Sku.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "sku_profile",
+        "artifactId": "plan.SkuProfile.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "plan.actual_sales_at_plan_grain",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.actual_sales_at_plan_grain.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

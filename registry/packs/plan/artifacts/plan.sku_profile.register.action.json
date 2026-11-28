@@ -1,0 +1,123 @@
+{
+  "artifactId": "plan.sku_profile.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a SKU merchandise profile",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.sku_profile.register",
+    "createLinks": [
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "slice.sku.category",
+        "field": "category",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.sku.unit_of_measure",
+        "field": "unit_of_measure",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.SkuProfile.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "sku_id",
+      "objectKind": "plan.SkuProfile",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "dry_goods",
+            "chilled",
+            "pharma",
+            "spares"
+          ],
+          "type": "string"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "unit_of_measure": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "sku_id",
+        "category",
+        "brand",
+        "unit_of_measure"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "sku_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sku_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      }
+    ],
+    "title": "Register a SKU merchandise profile",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.SkuProfile"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.sku_profile.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

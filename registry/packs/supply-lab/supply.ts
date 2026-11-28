@@ -229,7 +229,7 @@ export const OrderLifecycle = Norn.interfaceType({
     { id: "submit", from: ["draft"], to: "submitted" },
     { id: "receive_partial", from: ["submitted"], to: "partially_received" },
     { id: "fulfil", from: ["submitted", "partially_received"], to: "fulfilled" },
-    { id: "cancel", from: ["draft", "submitted"], to: "cancelled" },
+    { id: "cancel", from: ["draft", "submitted", "partially_received"], to: "cancelled" },
   ] }],
 })
 
@@ -260,7 +260,7 @@ export const PurchaseOrder = Norn.type({
     { id: "submit", from: ["draft"], to: "submitted" },
     { id: "receive_partial", from: ["submitted"], to: "partially_received" },
     { id: "fulfil", from: ["submitted", "partially_received"], to: "fulfilled" },
-    { id: "cancel", from: ["draft", "submitted"], to: "cancelled" },
+    { id: "cancel", from: ["draft", "submitted", "partially_received"], to: "cancelled" },
   ] }],
 })
 
@@ -276,7 +276,7 @@ const OrderLineProps = Schema.Struct({
   // Supplier fill rate is a ratio of sums, never an average of line ratios.
   fill_rate: Norn.decimal(6, { additivity: { kind: "ratio", numerator: "received_qty", denominator: "ordered_qty" } }),
   unit: Unit,
-  unit_price: Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } }),
+  unit_price: Norn.decimal(4, { additivity: { kind: "non_additive" } }),
   currency: Schema.Literals(["EGP", "USD", "EUR"]),
 })
 
