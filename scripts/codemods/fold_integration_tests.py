@@ -44,19 +44,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITE = "suites"
-# Crates with at least four integration-test binaries. A crate with fewer gains
-# little; `norn-checker-wasm`'s `parity` binary is driven by name from Node.
+# Every multi-binary workspace crate whose integration tests can fold cleanly.
+# Remaining multi-binary crates outside this list:
+# - `norn-checker-wasm`: `parity` binary is driven by name from Node (`parity.mjs`).
+# - `norn-builtins`: hashed by `BUILTIN-PIN-1` (`registry/builtins/norn-builtins.json`).
+# - `norn-skeleton-guard`: standalone `GATE_DIRECTORIES` workspace (requires `/approve-gates`).
 CRATES = (
     "norn-api",
+    "norn-authoring",
+    "norn-canonical",
     "norn-cell",
     "norn-cell-do",
     "norn-checker",
+    "norn-datalog",
     "norn-decisions",
     "norn-expr",
     "norn-formats",
     "norn-ir",
     "norn-kernel",
     "norn-projections",
+    "norn-testkit",
 )
 TARGET_KEYS = {"name", "path", "required-features", "cfg", "comments"}
 MODULE_ATTRIBUTES = {"allow", "deny", "warn", "forbid", "expect", "cfg", "cfg_attr", "doc"}
@@ -201,6 +208,205 @@ def module_cfg(target: dict) -> str | None:
     return clauses[0] if len(clauses) == 1 else f"all({', '.join(clauses)})"
 
 
+_RUST_RAW_STRING_OPEN = re.compile(r'(?:[bc]r|r)(#*)"')
+_RUST_CHAR_LITERAL = re.compile(
+    r"b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^'\\\n])'"
+)
+# Fixed baseline of pre-existing folded crates whose `tests/suites.rs` carry the legacy
+# `#![allow(dead_code, unreachable_pub, clippy::duplicate_mod)]` block. Newly folded crates
+# must stay allow-free; adding `#![allow(...)]` to a non-baseline suite fails `--check`.
+LEGACY_SUITE_ALLOW_CRATES: frozenset[str] = frozenset(
+    {
+        "norn-api",
+        "norn-cell",
+        "norn-cell-do",
+        "norn-checker",
+        "norn-decisions",
+        "norn-expr",
+        "norn-formats",
+        "norn-ir",
+        "norn-kernel",
+        "norn-projections",
+    }
+)
+CODEMOD_SELF_FILES: frozenset[str] = frozenset(
+    {
+        "scripts/codemods/fold_integration_tests.py",
+        "scripts/codemods/test_fold_integration_tests.py",
+    }
+)
+
+
+def _is_rust_ident_char(ch: str) -> bool:
+    return len(ch) == 1 and (ch == "$" or ("a" + ch).isidentifier())
+
+
+def _iter_rust_spans(text: str):
+    """Yield `(kind, start, end)` slices splitting Rust `"code"`, `"comment"`, and `"literal"` spans."""
+    n = len(text)
+    index = 0
+    code_start = 0
+
+    def flush(end: int):
+        nonlocal code_start
+        if end > code_start:
+            yield "code", code_start, end
+
+    while index < n:
+        ch = text[index]
+        # Line comment: // ... \n
+        if ch == "/" and index + 1 < n and text[index + 1] == "/":
+            yield from flush(index)
+            end = text.find("\n", index + 2)
+            end = n if end < 0 else end
+            yield "comment", index, end
+            index = end
+            code_start = index
+            continue
+        # Nested block comment: /* ... */
+        if ch == "/" and index + 1 < n and text[index + 1] == "*":
+            yield from flush(index)
+            depth = 1
+            cursor = index + 2
+            while cursor < n and depth > 0:
+                if text[cursor] == "/" and cursor + 1 < n and text[cursor + 1] == "*":
+                    depth += 1
+                    cursor += 2
+                elif text[cursor] == "*" and cursor + 1 < n and text[cursor + 1] == "/":
+                    depth -= 1
+                    cursor += 2
+                else:
+                    cursor += 1
+            yield "comment", index, cursor
+            index = cursor
+            code_start = index
+            continue
+        # Raw string literal: r#"..."#, br#"..."#, cr#"..."#
+        prev_is_ident = index > 0 and _is_rust_ident_char(text[index - 1])
+        if not prev_is_ident and ch in ("r", "b", "c"):
+            raw_match = _RUST_RAW_STRING_OPEN.match(text, index)
+            if raw_match is not None:
+                yield from flush(index)
+                closing = '"' + raw_match.group(1)
+                close_pos = text.find(closing, raw_match.end())
+                end = n if close_pos < 0 else close_pos + len(closing)
+                yield "literal", index, end
+                index = end
+                code_start = index
+                continue
+        # Byte/C string literal: b"..." / c"..."
+        if not prev_is_ident and ch in ("b", "c") and index + 1 < n and text[index + 1] == '"':
+            yield from flush(index)
+            cursor = index + 2
+            while cursor < n:
+                if text[cursor] == "\\":
+                    cursor += 2
+                elif text[cursor] == '"':
+                    cursor += 1
+                    break
+                else:
+                    cursor += 1
+            yield "literal", index, cursor
+            index = cursor
+            code_start = index
+            continue
+        # Normal string literal: "..."
+        if ch == '"':
+            yield from flush(index)
+            cursor = index + 1
+            while cursor < n:
+                if text[cursor] == "\\":
+                    cursor += 2
+                elif text[cursor] == '"':
+                    cursor += 1
+                    break
+                else:
+                    cursor += 1
+            yield "literal", index, cursor
+            index = cursor
+            code_start = index
+            continue
+        # Char or byte char literal (not lifetimes like `'static`): `'a'`, `'\''`, `b'x'`
+        if (ch == "'" or (not prev_is_ident and ch == "b" and index + 1 < n and text[index + 1] == "'")):
+            char_match = _RUST_CHAR_LITERAL.match(text, index)
+            if char_match is not None:
+                yield from flush(index)
+                yield "literal", index, char_match.end()
+                index = char_match.end()
+                code_start = index
+                continue
+        index += 1
+    yield from flush(n)
+
+
+def _tokenize_rust_code(text: str) -> list[tuple[str, int, int]]:
+    """Tokenize non-comment Rust spans into `(kind, start, end)` with Unicode ident boundaries."""
+    tokens: list[tuple[str, int, int]] = []
+    for kind, start, end in _iter_rust_spans(text):
+        if kind == "comment":
+            continue
+        if kind == "literal":
+            tokens.append(("literal", start, end))
+            continue
+        cursor = start
+        while cursor < end:
+            ch = text[cursor]
+            if ch.isspace():
+                cursor += 1
+            elif ch == ":" and cursor + 1 < end and text[cursor + 1] == ":":
+                tokens.append(("::", cursor, cursor + 2))
+                cursor += 2
+            elif _is_rust_ident_char(ch):
+                id_start = cursor
+                cursor += 1
+                while cursor < end and _is_rust_ident_char(text[cursor]):
+                    cursor += 1
+                tokens.append(("ident", id_start, cursor))
+            else:
+                tokens.append(("punct", cursor, cursor + 1))
+                cursor += 1
+    return tokens
+
+
+def rewrite_crate_paths(text: str, name: str) -> str:
+    """Rewrite Rust code `crate ::` paths to `crate ::<name>::`, leaving comments/literals untouched."""
+    tokens = _tokenize_rust_code(text)
+    insertions: list[int] = []
+    for idx, (kind, start, end) in enumerate(tokens):
+        if kind != "ident" or text[start:end] != "crate":
+            continue
+        if idx + 1 >= len(tokens) or tokens[idx + 1][0] != "::":
+            continue
+        if (
+            idx + 3 < len(tokens)
+            and tokens[idx + 2][0] == "ident"
+            and text[tokens[idx + 2][1] : tokens[idx + 2][2]] == name
+            and tokens[idx + 3][0] == "::"
+        ):
+            continue
+        insertions.append(tokens[idx + 1][2])
+    if not insertions:
+        return text
+    out: list[str] = []
+    cursor = 0
+    for pos in insertions:
+        out.append(text[cursor:pos])
+        out.append(f"{name}::")
+        cursor = pos
+    out.append(text[cursor:])
+    return "".join(out)
+
+
+def has_code_crate_path(text: str) -> bool:
+    """Return True when `crate ::` appears in executable Rust code (outside comments/literals)."""
+    tokens = _tokenize_rust_code(text)
+    for idx, (kind, start, end) in enumerate(tokens):
+        if kind == "ident" and text[start:end] == "crate":
+            if idx + 1 < len(tokens) and tokens[idx + 1][0] == "::":
+                return True
+    return False
+
+
 def check_file(crate: Crate, name: str) -> str:
     """Validate a folded file and return its text with `crate::` rooted at its module."""
     path = crate.tests / f"{name}.rs"
@@ -210,7 +416,7 @@ def check_file(crate: Crate, name: str) -> str:
             raise Refused(f"{path.relative_to(ROOT)}: #![{attribute}] is crate-level only")
     if re.search(r"^\s*(?:#\[macro_export\]|extern\s+crate\b)", text, re.MULTILINE):
         raise Refused(f"{path.relative_to(ROOT)}: macro_export or extern crate needs a person")
-    return re.sub(r"(?<![A-Za-z0-9_$])crate::(?!" + re.escape(name) + r"::)", f"crate::{name}::", text)
+    return rewrite_crate_paths(text, name)
 
 
 def check_helpers(crate: Crate) -> None:
@@ -218,8 +424,13 @@ def check_helpers(crate: Crate) -> None:
     for path in sorted(crate.tests.rglob("*.rs")):
         if path.parent == crate.tests:
             continue
-        if re.search(r"(?<![A-Za-z0-9_$])crate::", path.read_text()):
+        if has_code_crate_path(path.read_text()):
             raise Refused(f"{path.relative_to(ROOT)}: a shared helper names `crate::`")
+
+
+def _needs_suite_allows(crate: Crate) -> bool:
+    """Keep legacy `#![allow(...)]` strictly on the fixed legacy baseline of pre-folded crates."""
+    return crate.name in LEGACY_SUITE_ALLOW_CRATES
 
 
 def suites_source(crate: Crate, folded: list[dict], comments: dict[str, list[str]]) -> str:
@@ -232,7 +443,9 @@ def suites_source(crate: Crate, folded: list[dict], comments: dict[str, list[str
 //! own `mod` and `#[path]` helpers resolve as they did when it was a binary.
 //! A new suite is a new module here: `scripts/codemods/fold_integration_tests.py`
 //! keeps this list and every reference to it in step.
-#![allow(
+"""
+    if _needs_suite_allows(crate):
+        header += """#![allow(
     dead_code,
     unreachable_pub,
     clippy::duplicate_mod,
@@ -590,7 +803,7 @@ def main() -> int:
         writes[suites] = suites_source(crate, targets, comments)
 
     for relative in tracked():
-        if relative.startswith(FROZEN) or relative == "scripts/codemods/fold_integration_tests.py":
+        if relative.startswith(FROZEN) or relative in CODEMOD_SELF_FILES:
             continue
         path = ROOT / relative
         if path in writes or not path.is_file() or path.suffix not in {".rs", ".md", ".sh", ".py", ".json", ".toml", ".ts", ".yml", ".yaml", ".txt"}:

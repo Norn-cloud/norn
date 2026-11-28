@@ -331,6 +331,7 @@ run_phase() {
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
       # With Cargo autodiscovery disabled, a new test file must be enrolled in suites.rs.
       python3 scripts/codemods/fold_integration_tests.py --check
+      python3 scripts/codemods/test_fold_integration_tests.py
       python3 scripts/ci/frontier.py self-test
       # The duration table's generator, over synthetic bundle logs.
       python3 crates/norn-skeleton-guard/scripts/test_bundle_durations.py
@@ -339,6 +340,7 @@ run_phase() {
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       python3 scripts/test_generated_proofs.py
+      python3 scripts/test_check_proof_holes.py
       python3 scripts/ci/test_implementation_receipts.py
       python3 scripts/ci/test_contract_diff.py
       python3 scripts/ci/contract_diff.py --ci
