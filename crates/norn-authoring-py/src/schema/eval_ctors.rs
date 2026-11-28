@@ -26,12 +26,12 @@ pub(crate) fn expect_str(
 }
 
 pub(crate) fn expect_bool(
-    val: EvalValue<'_>,
+    val: &EvalValue<'_>,
     label: &str,
     span: &SourceSpan,
 ) -> Result<bool, PyAuthoringError> {
     if let EvalValue::Bool(b) = val {
-        Ok(b)
+        Ok(*b)
     } else {
         Err(PyAuthoringError::spanned(
             CODE_SCHEMA,
@@ -208,7 +208,7 @@ pub(crate) fn eval_dependency_pin<'a>(
             0 => artifact_id = Some(expect_str(v, "DependencyPin.artifact_id", span)?),
             1 => version = Some(expect_str(v, "DependencyPin.version", span)?),
             2 => kind = expect_str(v, "DependencyPin.kind", span)?,
-            3 => required = expect_bool(v, "DependencyPin.required", span)?,
+            3 => required = expect_bool(&v, "DependencyPin.required", span)?,
             _ => {
                 return Err(PyAuthoringError::spanned(
                     CODE_SCHEMA,
@@ -223,7 +223,7 @@ pub(crate) fn eval_dependency_pin<'a>(
             "artifact_id" => artifact_id = Some(expect_str(v, "DependencyPin.artifact_id", span)?),
             "version" => version = Some(expect_str(v, "DependencyPin.version", span)?),
             "kind" => kind = expect_str(v, "DependencyPin.kind", span)?,
-            "required" => required = expect_bool(v, "DependencyPin.required", span)?,
+            "required" => required = expect_bool(&v, "DependencyPin.required", span)?,
             _ => {
                 return Err(PyAuthoringError::spanned(
                     CODE_SCHEMA,
@@ -710,7 +710,7 @@ pub(crate) fn eval_link<'a>(
             "from_" => {
                 from_ = Multiplicity::parse(&expect_str(v, "link.from_", span)?, Some(span))?;
             }
-            "required" => required = expect_bool(v, "link.required", span)?,
+            "required" => required = expect_bool(&v, "link.required", span)?,
             "inverse" => {
                 if matches!(v, EvalValue::None) {
                     inverse = None;
@@ -718,7 +718,7 @@ pub(crate) fn eval_link<'a>(
                     inverse = Some(expect_str(v, "link.inverse", span)?);
                 }
             }
-            "acyclic" => acyclic = expect_bool(v, "link.acyclic", span)?,
+            "acyclic" => acyclic = expect_bool(&v, "link.acyclic", span)?,
             "description" => {
                 if matches!(v, EvalValue::None) {
                     description = None;

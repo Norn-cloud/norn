@@ -310,7 +310,7 @@ pub(crate) struct ModuleEnv<'a> {
     pub(crate) eval_nodes_used: usize,
 }
 
-impl<'a> ModuleEnv<'a> {
+impl ModuleEnv<'_> {
     /// Seeds built-in Python type/constant names exposed in Layer 2's restricted builtins.
     pub(crate) fn new() -> Self {
         let mut env = Self::default();

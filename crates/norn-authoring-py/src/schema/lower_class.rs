@@ -261,7 +261,7 @@ fn collect_enum_assign<'a>(
             return Err(PyAuthoringError::spanned(
                 CODE_SCHEMA,
                 format!("enum '{py_name}' member target must be an identifier"),
-                item_span.clone(),
+                item_span,
             ));
         };
         let member_name = name.id.as_str().to_owned();
@@ -283,7 +283,7 @@ fn collect_enum_assign<'a>(
                 return Err(PyAuthoringError::spanned(
                     CODE_SCHEMA,
                     format!("enum '{py_name}.{member_name}' must have a string literal value"),
-                    item_span.clone(),
+                    item_span,
                 ));
             }
         };
@@ -444,7 +444,7 @@ fn apply_concept_kwarg<'a>(
         "name" => decl.norn_name = expect_str(val, "Concept.name", span)?,
         "title" => decl.title = expect_str(val, "Concept.title", span)?,
         "version" => decl.version = expect_str(val, "Concept.version", span)?,
-        "interface" => decl.is_interface = expect_bool(val, "Concept.interface", span)?,
+        "interface" => decl.is_interface = expect_bool(&val, "Concept.interface", span)?,
         "role" => {
             decl.role = expect_optional_str(val, "Concept.role", span)?
                 .map(|raw| RoleKind::parse(&raw, Some(span)))
@@ -514,7 +514,7 @@ struct FieldAnnotationAst<'a> {
     span: SourceSpan,
 }
 
-fn eval_value_to_class_member<'a>(val: EvalValue<'a>, span: SourceSpan) -> ClassMember<'a> {
+fn eval_value_to_class_member(val: EvalValue<'_>, span: SourceSpan) -> ClassMember<'_> {
     if let EvalValue::LifecycleSpec(lc) = val {
         ClassMember::Lifecycle(*lc)
     } else {

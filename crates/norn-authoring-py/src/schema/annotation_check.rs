@@ -223,28 +223,29 @@ fn infer_plain_property_type(
 }
 
 fn unwrap_nullable(val: AnnVal) -> (AnnVal, bool) {
-    match val {
-        AnnVal::Nullable(inner) => (*inner, true),
-        AnnVal::Union(mut items) => {
-            let original_len = items.len();
-            items.retain(|item| !matches!(item, AnnVal::None));
-            let has_none = items.len() < original_len;
-            if has_none
-                && items.len() == 1
-                && let Some(only) = items.pop()
-            {
-                return (only, true);
-            }
-            (AnnVal::Union(items), false)
+    if let AnnVal::Nullable(inner) = val {
+        (*inner, true)
+    } else if let AnnVal::Union(mut items) = val {
+        let original_len = items.len();
+        items.retain(|item| !matches!(item, AnnVal::None));
+        let has_none = items.len() < original_len;
+        if has_none
+            && items.len() == 1
+            && let Some(only) = items.pop()
+        {
+            return (only, true);
         }
-        other => (other, false),
+        (AnnVal::Union(items), false)
+    } else {
+        (val, false)
     }
 }
 
 fn unwrap_field_wrapper(val: AnnVal) -> (AnnVal, bool) {
-    match val {
-        AnnVal::Field(inner) => unwrap_nullable(*inner),
-        other => (other, false),
+    if let AnnVal::Field(inner) = val {
+        unwrap_nullable(*inner)
+    } else {
+        (val, false)
     }
 }
 

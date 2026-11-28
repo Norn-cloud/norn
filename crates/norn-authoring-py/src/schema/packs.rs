@@ -221,13 +221,6 @@ fn str_slice_to_json(items: &[String]) -> JsonValue {
     JsonValue::Array(items.iter().cloned().map(JsonValue::String).collect())
 }
 
-/// Composes packs conjunctively, failing closed on duplicates, missing dependencies,
-/// cycles, or conflicting artifact ownership under [`PackConflictPolicy::FailClosed`].
-///
-/// # Errors
-///
-/// Returns [`PyAuthoringError`] with code [`CODE_PACK_DUPLICATE`], [`CODE_PACK_MISSING_DEP`],
-/// [`CODE_PACK_CYCLE`], or [`CODE_PACK_CONFLICT`].
 #[derive(Default)]
 struct ComposedOwnership {
     entities: BTreeMap<String, String>,
@@ -236,6 +229,13 @@ struct ComposedOwnership {
     functions: BTreeMap<String, String>,
 }
 
+/// Composes packs conjunctively, failing closed on duplicates, missing dependencies,
+/// cycles, or conflicting artifact ownership under [`PackConflictPolicy::FailClosed`].
+///
+/// # Errors
+///
+/// Returns [`PyAuthoringError`] with code [`CODE_PACK_DUPLICATE`], [`CODE_PACK_MISSING_DEP`],
+/// [`CODE_PACK_CYCLE`], or [`CODE_PACK_CONFLICT`].
 pub fn compose_packs(
     packs: &[PackManifest],
     conflict_policy: PackConflictPolicy,

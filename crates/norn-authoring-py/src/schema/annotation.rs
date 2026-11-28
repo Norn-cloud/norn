@@ -433,15 +433,14 @@ fn eval_annotation_subscript(
     depth: usize,
 ) -> Result<AnnVal, PyAuthoringError> {
     let base = eval_annotation_ast(&sub.value, env, span, depth)?;
-    let args: Vec<AnnVal> = match sub.slice.as_ref() {
-        Expr::Tuple(tuple) => {
-            let mut out = Vec::with_capacity(tuple.elts.len());
-            for elt in &tuple.elts {
-                out.push(eval_annotation_ast(elt, env, span, depth)?);
-            }
-            out
+    let args: Vec<AnnVal> = if let Expr::Tuple(tuple) = sub.slice.as_ref() {
+        let mut out = Vec::with_capacity(tuple.elts.len());
+        for elt in &tuple.elts {
+            out.push(eval_annotation_ast(elt, env, span, depth)?);
         }
-        single => vec![eval_annotation_ast(single, env, span, depth)?],
+        out
+    } else {
+        vec![eval_annotation_ast(&sub.slice, env, span, depth)?]
     };
 
     let AnnVal::Symbol(sym) = base else {

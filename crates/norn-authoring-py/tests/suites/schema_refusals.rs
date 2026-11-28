@@ -311,14 +311,14 @@ class TargetB(Concept, name="test.TargetB", title="B", version="0.1.0"):
     Ok(())
 }
 
-fn sample_pack(id: &str, requires: Vec<&str>, entities: Vec<&str>) -> PackManifest {
+fn sample_pack(id: &str, requires: &[&str], entities: &[&str]) -> PackManifest {
     PackManifest {
         id: id.to_owned(),
         version: "0.1.0".to_owned(),
         category: PackCategory::Domain,
         title: id.to_owned(),
-        requires: requires.into_iter().map(str::to_owned).collect(),
-        entities: entities.into_iter().map(str::to_owned).collect(),
+        requires: requires.iter().copied().map(str::to_owned).collect(),
+        entities: entities.iter().copied().map(str::to_owned).collect(),
         laws: Vec::new(),
         markings: Vec::new(),
         functions: Vec::new(),
@@ -375,7 +375,7 @@ fn canonical_json_refuses_nfc_dups_proto_depth_and_malformed_numbers() -> TestRe
 
 #[test]
 fn pack_composition_refuses_missing_dep_cycle_duplicate_and_conflict() -> TestResult {
-    let orphan = sample_pack("norn.pack.loc-eg", vec!["norn.pack.hr"], vec![]);
+    let orphan = sample_pack("norn.pack.loc-eg", &["norn.pack.hr"], &[]);
     assert_eq!(
         expect_err(
             compose_packs(&[orphan], PackConflictPolicy::FailClosed, None),
@@ -385,8 +385,8 @@ fn pack_composition_refuses_missing_dep_cycle_duplicate_and_conflict() -> TestRe
         CODE_PACK_MISSING_DEP
     );
 
-    let p_a = sample_pack("pack.a", vec!["pack.b"], vec![]);
-    let p_b = sample_pack("pack.b", vec!["pack.a"], vec![]);
+    let p_a = sample_pack("pack.a", &["pack.b"], &[]);
+    let p_b = sample_pack("pack.b", &["pack.a"], &[]);
     assert_eq!(
         expect_err(
             compose_packs(&[p_a, p_b], PackConflictPolicy::FailClosed, None),
@@ -396,7 +396,7 @@ fn pack_composition_refuses_missing_dep_cycle_duplicate_and_conflict() -> TestRe
         CODE_PACK_CYCLE
     );
 
-    let base = sample_pack("pack.base", vec![], vec!["hr.Employee"]);
+    let base = sample_pack("pack.base", &[], &["hr.Employee"]);
     assert_eq!(
         expect_err(
             compose_packs(
@@ -410,7 +410,7 @@ fn pack_composition_refuses_missing_dep_cycle_duplicate_and_conflict() -> TestRe
         CODE_PACK_DUPLICATE
     );
 
-    let conflict = sample_pack("pack.other", vec![], vec!["hr.Employee"]);
+    let conflict = sample_pack("pack.other", &[], &["hr.Employee"]);
     assert_eq!(
         expect_err(
             compose_packs(&[base, conflict], PackConflictPolicy::FailClosed, None),
@@ -424,7 +424,7 @@ fn pack_composition_refuses_missing_dep_cycle_duplicate_and_conflict() -> TestRe
 
 #[test]
 fn deployment_spec_refuses_bad_scope_raw_secret_and_malformed_settings() -> TestResult {
-    let base = sample_pack("pack.base", vec![], vec!["hr.Employee"]);
+    let base = sample_pack("pack.base", &[], &["hr.Employee"]);
 
     let bad_scope = DeploymentSpec {
         id: "d".to_owned(),
@@ -507,7 +507,7 @@ fn deployment_spec_refuses_bad_scope_raw_secret_and_malformed_settings() -> Test
 #[test]
 fn deployment_spec_refuses_invalid_worker_endpoint_urls_without_leaking_credentials() -> TestResult
 {
-    let base = sample_pack("pack.base", vec![], vec!["hr.Employee"]);
+    let base = sample_pack("pack.base", &[], &["hr.Employee"]);
     for bad_url in [
         "http://localhost.evil.example/solve",
         "http://127.0.0.1.evil.example/solve",
