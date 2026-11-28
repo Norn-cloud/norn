@@ -1986,7 +1986,7 @@ fn legacy_generically_consumed_conflict_resolves_and_retires_pending_first_captu
         .map_or(1, |r| r.body.logical_time.saturating_add(1));
     let mut pre_seqs = BTreeSet::new();
     for id in [&conflict_a, &conflict_d, &conflict_e] {
-        let receipt = cell
+        let outcome = cell
             .store_mut()
             .commit(&norn_cell::CommitBatch {
                 world: MAIN_WORLD.into(),
@@ -1998,7 +1998,7 @@ fn legacy_generically_consumed_conflict_resolves_and_retires_pending_first_captu
                 ..norn_cell::CommitBatch::default()
             })
             .expect("generic consume conflict");
-        pre_seqs.insert(receipt.body.commit_seq);
+        pre_seqs.insert(outcome.receipt().body.commit_seq);
         next_time = next_time.saturating_add(1);
     }
     let (mut records, _) = export_records_and_head(&cell);
@@ -2010,7 +2010,6 @@ fn legacy_generically_consumed_conflict_resolves_and_retires_pending_first_captu
         }
         if pre_seqs.contains(&rec.receipt.body.commit_seq) {
             rec.storage_version = Some(12);
-            rec.pending_observations.clear();
         }
         prev_hash = rec.hash().expect("export hash");
     }
@@ -3442,6 +3441,106 @@ fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
         )
         .expect("subject history check via _norn_fact_values"),
         "hiding a linkless landed bundle in _norn_inbox must never bypass stale-delete protection"
+    );
+}
+
+/// #1549 / #1028: Hiding a newer no-op linkless observation or a newer
+/// tombstone delete by mutating `_norn_inbox.observed` must never allow a
+/// stale delete or stale upsert resurrection.
+#[test]
+fn hidden_noop_observation_and_tombstone_still_block_stale_delete_and_resurrection() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("hidden_noop_and_tombstone.sqlite");
+    let mut cell = setup(&path);
+
+    // 1. Land v1, then land an identical no-op linkless v2 (eventCount == 0).
+    let p_v1 = party_ref_row("P-A", "demo/party/a", "Same", None);
+    capture_kind(&mut cell, "erpnext", &p_v1, "e1", "1", "upsert", "p1");
+    let p_v2_noop = party_ref_row("P-A", "demo/party/a", "Same", None);
+    let obs_v2 = capture_kind(&mut cell, "erpnext", &p_v2_noop, "e2", "2", "upsert", "p1");
+
+    // Hide v2 from `_norn_inbox/source_event` by mutating its inbox `source_id`.
+    {
+        let conn = rusqlite::Connection::open(&path).expect("sqlite");
+        let obs_json: String = conn
+            .query_row(
+                "SELECT \"observed\" FROM \"_norn_inbox\" WHERE \"observation_id\" = ?1",
+                rusqlite::params![&obs_v2],
+                |row| row.get(0),
+            )
+            .expect("read v2 inbox");
+        let hidden = obs_json.replace("\"source_id\":\"P-A\"", "\"source_id\":\"P-HIDE\"");
+        assert_ne!(hidden, obs_json);
+        conn.execute(
+            "UPDATE \"_norn_inbox\" SET \"observed\" = ?1 WHERE \"observation_id\" = ?2",
+            rusqlite::params![&hidden, &obs_v2],
+        )
+        .expect("hide v2 in inbox");
+    }
+    let del_v1 = party_ref_row("P-A", "demo/party/a", "Same", None);
+    let (dr, di) = raw_event(&cell, "erpnext", &del_v1, "edel1", "1", "delete", "p1");
+    let (del_id, _) = cell.inject_mapping_bundle(&dr, &di).expect("inject del1");
+    let pending_del = cell
+        .store()
+        .read()
+        .pending_observation(&del_id)
+        .expect("pending")
+        .expect("present");
+    let obs_del: Observed<RuntimeValue> =
+        norn_ir::runtime::decode(&pending_del.observed).expect("decode del obs");
+    let del_bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&obs_del.input).expect("decode del bundle");
+    assert!(
+        norn_cell::mapping_delete::has_newer_or_incomparable_landed_source_version(
+            &cell.store().read(),
+            &del_bundle,
+        )
+        .expect("noop receipt check"),
+        "hidden no-op v2 observation must still block stale v1 delete"
+    );
+
+    // 2. Land a v3 delete (writes tombstone under `tombstone_key`), then hide
+    //    the v3 delete row in `_norn_inbox`; a stale v2 upsert must NOT lift
+    //    the tombstone.
+    let del_v3 = party_ref_row("P-A", "demo/party/a", "Same", None);
+    let obs_del3 = capture_kind(&mut cell, "erpnext", &del_v3, "edel3", "3", "delete", "p1");
+    {
+        let conn = rusqlite::Connection::open(&path).expect("sqlite");
+        let obs_json: String = conn
+            .query_row(
+                "SELECT \"observed\" FROM \"_norn_inbox\" WHERE \"observation_id\" = ?1",
+                rusqlite::params![&obs_del3],
+                |row| row.get(0),
+            )
+            .expect("read del3 inbox");
+        let hidden = obs_json.replace("\"source_id\":\"P-A\"", "\"source_id\":\"P-HIDE\"");
+        assert_ne!(hidden, obs_json);
+        conn.execute(
+            "UPDATE \"_norn_inbox\" SET \"observed\" = ?1 WHERE \"observation_id\" = ?2",
+            rusqlite::params![&hidden, &obs_del3],
+        )
+        .expect("hide del3 in inbox");
+    }
+    let stale_v2_up = party_ref_row("P-A", "demo/party/a", "Resurrected", None);
+    let (ur, ui) = raw_event(&cell, "erpnext", &stale_v2_up, "eup2", "2", "upsert", "p1");
+    let (up_id, _) = cell.inject_mapping_bundle(&ur, &ui).expect("inject up2");
+    let pending_up = cell
+        .store()
+        .read()
+        .pending_observation(&up_id)
+        .expect("pending up")
+        .expect("present up");
+    let obs_up: Observed<RuntimeValue> =
+        norn_ir::runtime::decode(&pending_up.observed).expect("decode up obs");
+    let up_bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&obs_up.input).expect("decode up bundle");
+    assert!(
+        norn_cell::mapping_delete::has_newer_or_incomparable_landed_source_version(
+            &cell.store().read(),
+            &up_bundle,
+        )
+        .expect("tombstone history check"),
+        "hidden v3 tombstone delete must still block stale v2 upsert resurrection"
     );
 }
 

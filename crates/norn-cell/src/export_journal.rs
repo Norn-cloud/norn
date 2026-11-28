@@ -596,18 +596,18 @@ fn conflict_export_candidates<E: SqlEngine>(
     Ok(candidates)
 }
 
-/// Retire a superseded pending first capture (`acceptedBundleId`) when a
-/// `mapping-conflict:` row resolves via `accept-second-as-correction` or
-/// `reject`. For legacy generically-consumed disputes (`consumed_commit_seq <
-/// commit_seq`), reads `acceptedBundleId` exclusively from the prior consuming
-/// commit's hash-verified `_norn_export_journal` `consumed_input` (bound to its
-/// pre-v13 receipt consuming `dispute_id`) rather than mutable
-/// `_norn_inbox.observed`.
-pub(crate) fn retire_superseded_conflict_bundle<E: SqlEngine>(
+/// Resolve a `mapping-conflict:` row's `acceptedBundleId` for commit
+/// `commit_seq`. For legacy generically-consumed disputes
+/// (`consumed_commit_seq < commit_seq`), reads `acceptedBundleId` exclusively
+/// from the prior consuming commit's hash-verified `_norn_export_journal`
+/// `consumed_input` (bound to its pre-v13 receipt consuming `dispute_id`)
+/// rather than mutable `_norn_inbox.observed`. Shared by both retirement and
+/// export dependency capture so they can never disagree.
+pub(crate) fn conflict_accepted_bundle_id_for_commit<E: SqlEngine>(
     conn: &E,
     commit_seq: i64,
     dispute_id: &str,
-) -> Result<(), CellError> {
+) -> Result<Option<String>, CellError> {
     let Some((consumed_seq, inbox_obs)) = conn.query_optional(
         &format!(
             "SELECT \"consumed_commit_seq\", \"observed\" FROM \"{}\" WHERE \"observation_id\" = ?1",
@@ -617,7 +617,7 @@ pub(crate) fn retire_superseded_conflict_bundle<E: SqlEngine>(
         |row| Ok((row.get::<Option<i64>>(0)?, row.get::<String>(1)?)),
     )?
     else {
-        return Ok(());
+        return Ok(None);
     };
     let observed_val = if let Some(prev_i64) = consumed_seq
         && prev_i64 < commit_seq
@@ -666,9 +666,21 @@ pub(crate) fn retire_superseded_conflict_bundle<E: SqlEngine>(
             CellError::Encoding(format!("invalid dispute JSON for {dispute_id}: {err}"))
         })?
     };
-    let Some(accepted_id) = observed_val
+    Ok(observed_val
         .pointer("/input/acceptedBundleId")
         .and_then(Value::as_str)
+        .map(str::to_owned))
+}
+
+/// Retire a superseded pending first capture (`acceptedBundleId`) when a
+/// `mapping-conflict:` row resolves via `accept-second-as-correction` or
+/// `reject`.
+pub(crate) fn retire_superseded_conflict_bundle<E: SqlEngine>(
+    conn: &E,
+    commit_seq: i64,
+    dispute_id: &str,
+) -> Result<(), CellError> {
+    let Some(accepted_id) = conflict_accepted_bundle_id_for_commit(conn, commit_seq, dispute_id)?
     else {
         return Ok(());
     };

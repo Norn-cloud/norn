@@ -163,7 +163,6 @@ fn collect_conflict_dep_flags<E: SqlEngine>(
     ctx: &ConflictDepContext<'_>,
     pending: &[crate::PendingObservation],
 ) -> Result<BTreeMap<String, bool>, CellError> {
-    let inbox = crate::system::INBOX;
     let mut deps: BTreeMap<String, bool> = BTreeMap::new();
     for row in pending
         .iter()
@@ -191,15 +190,12 @@ fn collect_conflict_dep_flags<E: SqlEngine>(
             }
         }
         for (conflict_id, allow_retired) in conflict_ids {
-            let dep: Option<Option<String>> = conn.query_optional(
-                &format!(
-                    "SELECT json_extract(\"observed\", '$.input.acceptedBundleId') \
-                     FROM \"{inbox}\" WHERE \"observation_id\" = ?1"
-                ),
-                params![conflict_id],
-                |row| row.get(0),
+            let dep = crate::export_journal::conflict_accepted_bundle_id_for_commit(
+                conn,
+                ctx.current_seq,
+                conflict_id,
             )?;
-            if let Some(Some(id)) = dep
+            if let Some(id) = dep
                 && id.starts_with("mapping-bundle:")
             {
                 *deps.entry(id).or_insert(false) |= allow_retired;

@@ -76,6 +76,7 @@ pub(crate) const DDL: &[&str] = &[
   "receipt_hash" TEXT NOT NULL
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/dispute_resolved" ON "_norn_ledger" ("world", json_extract("event", '$.disputeId'), "commit_seq") WHERE json_extract("event", '$.op') = 'dispute_resolved'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/noop_observation" ON "_norn_receipt" ("world", "commit_seq") WHERE json_extract("receipt", '$.eventCount') = 0 AND json_extract("receipt", '$.consumed.kind') = 'observation'"#,
 ];
 
 /// One row decoded from `_norn_link_claim_frontier`.
