@@ -83,6 +83,7 @@ use tempfile::TempDir;
 
 type RetailCell = SqliteCell<FactEvent, JsonObject, JsonObject>;
 type MapCell = SqliteCell<ObservationEvent, norn_ir::RuntimeObject, norn_ir::RuntimeObject>;
+type Watermarks = BTreeMap<String, BTreeMap<String, Watermark>>;
 
 const SOLE_SCOPE: &str = "org_family_sole_prop/prod";
 const PARTNER_SCOPE: &str = "org_family_partnership/prod";
@@ -191,7 +192,7 @@ fn build_retail_pack() -> Result<RetailPack, String> {
     }
     let base = core_base()?;
     let mut pool = base.clone();
-    pool.extend(candidate.iter().cloned());
+    pool.extend_from_slice(&candidate);
     let definitions =
         AdmittedDefinitions::from_envelopes(&pool).map_err(|e| format!("definitions: {e}"))?;
     let (sources, base_sources) = (runtime_envelopes(&candidate)?, runtime_envelopes(&base)?);
@@ -323,7 +324,7 @@ struct EntityBook {
     tick: u64,
     calls: u64,
     source_cursors: Frontier,
-    watermarks: BTreeMap<String, BTreeMap<String, Watermark>>,
+    watermarks: Watermarks,
 }
 
 struct FeedRow<'a> {
@@ -336,10 +337,7 @@ struct FeedRow<'a> {
     payload: &'a str,
 }
 
-fn feed_watermarks(
-    cursors: &Frontier,
-    heartbeat_ms: u64,
-) -> BTreeMap<String, BTreeMap<String, Watermark>> {
+fn feed_watermarks(cursors: &Frontier, heartbeat_ms: u64) -> Watermarks {
     cursors
         .iter()
         .map(|(feed, parts)| {
@@ -361,7 +359,7 @@ fn feed_watermarks(
         .collect()
 }
 
-fn default_feed_frontier(now_ms: u64) -> (Frontier, BTreeMap<String, BTreeMap<String, Watermark>>) {
+fn default_feed_frontier(now_ms: u64) -> (Frontier, Watermarks) {
     let mut cursors: Frontier = BTreeMap::new();
     for (feed, dataset) in REQUIRED_FEED_DATASETS {
         let mut parts = BTreeMap::new();
@@ -470,7 +468,7 @@ impl EntityBook {
         let observed_at = self.now().as_millis();
         let obs = raw_obs(row.source, row.event, row.record, row.payload)?;
         let mut input = map_input(row.mapping, row.dataset);
-        input.connector_instance = instance.to_owned();
+        instance.clone_into(&mut input.connector_instance);
         let next_cursor = format!("cursor:{}:{}", row.feed_id, row.event);
         let clean = self.with_map_cell(|map_cell| {
             let lease = map_cell
@@ -486,7 +484,7 @@ impl EntityBook {
             let advance = CursorAdvanceSpec {
                 connection_id: row.feed_id.to_owned(),
                 dataset: row.dataset.to_owned(),
-                lease_id: lease.lease_id.clone(),
+                lease_id: lease.lease_id,
                 generation: lease.generation,
                 now_ms: observed_at,
                 expected_previous_cursor: prev_cursor,
@@ -752,7 +750,7 @@ fn decimal_to_scaled_i128(value: Decimal) -> Result<i128, String> {
 
 fn check_feed_coverage(
     cursors: &Frontier,
-    watermarks: &BTreeMap<String, BTreeMap<String, Watermark>>,
+    watermarks: &Watermarks,
     min_fresh_ms: u64,
 ) -> BTreeSet<String> {
     REQUIRED_FEEDS
@@ -1308,7 +1306,7 @@ fn assert_store_isolation_and_lifecycle_refusals(sole: &mut EntityBook) -> Resul
         .pack
         .retail_question("supply.retail.store_revenue_weekly")?;
     let mut foreign_ctx = sole.query_context();
-    foreign_ctx.scope = PARTNER_SCOPE.to_owned();
+    PARTNER_SCOPE.clone_into(&mut foreign_ctx.scope);
     let cross_scope = sole
         .cell()?
         .store()
@@ -1555,7 +1553,10 @@ fn verify_pos_quarantine_and_recovery(
         .map_err(|e| format!("{e}"))?;
     cell.process_mapping_bundle(&b_fix)
         .map_err(|e| format!("{e}"))?;
-    assert!(open_findings(cell, "supply.PosSaleEvidence", "POS-BAD")?.is_empty());
+    assert_eq!(
+        open_findings(cell, "supply.PosSaleEvidence", "POS-BAD")?,
+        Vec::<String>::new()
+    );
 
     let after_fix = cell
         .store()
@@ -1720,7 +1721,10 @@ fn verify_receipt_and_cost_feeds(cell: &mut MapCell) -> Result<(), String> {
         r_obj.values.get("supplier_id").map(scalar).as_deref(),
         Some("SUP-ATELIER")
     );
-    assert!(open_findings(cell, "supply.RetailReceiptEvidence", "RR-NOCOST")?.is_empty());
+    assert_eq!(
+        open_findings(cell, "supply.RetailReceiptEvidence", "RR-NOCOST")?,
+        Vec::<String>::new()
+    );
 
     let bad_rcpt = r#"{"receipt_line_id":"RR-BAD","store_code":"ST-SOLE-CFC-2","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","received_qty":10,"damaged_qty":12,"uom":"PCS","unit_cost":-5,"ccy":"EGP","received_at":"2026-08-20T09:00:00Z"}"#;
     let (b_r2, _) = cell
@@ -1766,7 +1770,10 @@ fn verify_receipt_and_cost_feeds(cell: &mut MapCell) -> Result<(), String> {
         .map_err(|e| format!("{e}"))?;
     cell.process_mapping_bundle(&b_c2)
         .map_err(|e| format!("{e}"))?;
-    assert!(open_findings(cell, "supply.UnitCostEvidence", "COST-BAD")?.is_empty());
+    assert_eq!(
+        open_findings(cell, "supply.UnitCostEvidence", "COST-BAD")?,
+        Vec::<String>::new()
+    );
     Ok(())
 }
 
@@ -1824,7 +1831,7 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
     let mut partial_wm = watermarks;
     partial_wm.remove("supply.store_counts.mapping");
     let mut degraded_ctx = feed_ctx;
-    degraded_ctx.watermarks = partial_wm.clone();
+    degraded_ctx.watermarks.clone_from(&partial_wm);
     let degraded_res = cell
         .store()
         .evaluate_question(&pos_q, degraded_ctx, |_| Ok(true))
@@ -1888,7 +1895,7 @@ struct CountCoverageReport {
 fn parse_rfc3339_ms(ts: &str) -> Result<u64, String> {
     let (secs, nanos) =
         instant_key(ts, false).ok_or_else(|| format!("invalid RFC3339 timestamp: {ts}"))?;
-    let secs_u64 = u64::try_from(secs).map_err(|_| format!("negative timestamp {ts}"))?;
+    let secs_u64 = u64::try_from(secs).map_err(|_err| format!("negative timestamp {ts}"))?;
     Ok(secs_u64
         .saturating_mul(1_000)
         .saturating_add(u64::from(nanos / 1_000_000)))
@@ -1923,17 +1930,13 @@ fn collect_latest_counts(
 ) -> Result<BTreeMap<(String, String, String), BasisCount>, String> {
     let mut latest: BTreeMap<(String, String, String), BasisCount> = BTreeMap::new();
     for count in counts {
-        let basis = count
-            .values
-            .get("quantity_basis")
-            .map(scalar)
-            .unwrap_or_default();
+        let basis = count.values.get("quantity_basis").map_or_default(scalar);
         if basis != "on_hand" && basis != "available" {
             continue;
         }
-        let store_id = count.values.get("store_id").map(scalar).unwrap_or_default();
-        let sku_id = count.values.get("sku_id").map(scalar).unwrap_or_default();
-        let as_of = count.values.get("as_of").map(scalar).unwrap_or_default();
+        let store_id = count.values.get("store_id").map_or_default(scalar);
+        let sku_id = count.values.get("sku_id").map_or_default(scalar);
+        let as_of = count.values.get("as_of").map_or_default(scalar);
         let as_of_ms = parse_rfc3339_ms(&as_of)?;
         keys.insert((store_id.clone(), sku_id.clone()));
 
@@ -2074,8 +2077,8 @@ fn evaluate_store_count_coverage(
     let reader = store.read();
     let mut derived_on_hand: BTreeMap<(String, String), Decimal> = BTreeMap::new();
     for lot in &list_objects(&reader, "supply.StockLot")? {
-        let store_id = lot.values.get("store_id").map(scalar).unwrap_or_default();
-        let sku_id = lot.values.get("sku_id").map(scalar).unwrap_or_default();
+        let store_id = lot.values.get("store_id").map_or_default(scalar);
+        let sku_id = lot.values.get("sku_id").map_or_default(scalar);
         if let Some(RuntimeValue::Number(qty)) = lot.values.get("remaining_qty") {
             let entry = derived_on_hand
                 .entry((store_id, sku_id))
@@ -3000,7 +3003,7 @@ fn verify_retail_kpi_ratios(
         Some(400_000)
     );
     // - WOS from 4 real weekly sales buckets: 40 / 4 = 10/wk -> 60 / 10 = 6.000000 weeks
-    let weeks_i128 = i128::try_from(s1_sales_weeks).map_err(|_| "weeks overflow")?;
+    let weeks_i128 = i128::try_from(s1_sales_weeks).map_err(|_err| "weeks overflow")?;
     let weekly_sales = ratio(
         decimal_to_scaled_i128(s1_sold)?,
         weeks_i128.saturating_mul(FACTOR),
@@ -3279,7 +3282,7 @@ struct EntityFrontierSnapshot {
     entity_net_revenue: Option<String>,
     entity_gross_margin: Option<String>,
     /// Direct per-store gross-margin-rate outputs from `store_gross_margin_rate_weekly`
-    /// (exercising DuckDB's actual ratio-of-sums evaluation, withheld on missing cost).
+    /// (exercising `DuckDB`'s actual ratio-of-sums evaluation, withheld on missing cost).
     store_gross_margin_rates: BTreeMap<String, Option<String>>,
     entity_pos_feed_revenue: Option<String>,
     entity_on_hand_verified: Option<bool>,
@@ -3604,7 +3607,7 @@ fn detect_missing_cost_stores(
         }
     }
     for row in &lots.rows {
-        let store = row.values.get("store_id").map(scalar).unwrap_or_default();
+        let store = row.values.get("store_id").map_or_default(scalar);
         if entity_stores.contains(&store)
             && row.values.get("cost_complete") != Some(&RuntimeValue::Bool(true))
         {
@@ -3846,16 +3849,12 @@ fn load_retail_coverage_spec() -> Result<CellCoverageSpec, String> {
     CellCoverageSpec::from_json_str(&text).map_err(|e| format!("decode retail.coverage.json: {e}"))
 }
 
-fn load_spec_plans(
-    pack: &RetailPack,
-    spec: &CellCoverageSpec,
-) -> Result<
-    (
-        BTreeMap<String, norn_checker::transform::TransformPlan>,
-        BTreeMap<String, QuestionPlan>,
-    ),
-    String,
-> {
+type SpecPlans = (
+    BTreeMap<String, norn_checker::transform::TransformPlan>,
+    BTreeMap<String, QuestionPlan>,
+);
+
+fn load_spec_plans(pack: &RetailPack, spec: &CellCoverageSpec) -> Result<SpecPlans, String> {
     let mut tf_ids = BTreeSet::new();
     for g in &spec.coverage_transforms {
         tf_ids.insert(g.transform_id.as_str());
@@ -4019,7 +4018,7 @@ fn verify_library_combined_view_report(
     // DATA-VALUES-1: with `whole_world_values: false`, disclosed answers carry keyed revision & lineage handles.
     assert!(c1.complete);
     assert_eq!(c1.read_token.completeness, Completeness::Complete);
-    assert!(c1.failed_coverage_gates.is_empty());
+    assert_eq!(c1.failed_coverage_gates, BTreeSet::new());
     let p_answers = c1
         .answers
         .as_ref()
@@ -4040,14 +4039,14 @@ fn verify_library_combined_view_report(
     );
     assert_ne!(disclosed_rev.lineage_ref, raw_rev.lineage_ref);
 
-    verify_duplicate_cell_refusal(sole)?;
+    verify_duplicate_cell_refusal(sole);
     verify_library_cut_row_access_gate(partner)?;
     verify_expected_grain_missing_sku_gate()?;
     verify_shipped_phantom_week_and_late_sale_gates()?;
     Ok(report)
 }
 
-fn verify_duplicate_cell_refusal(sole: &EntityBook) -> Result<(), String> {
+fn verify_duplicate_cell_refusal(sole: &EntityBook) {
     let dup = evaluate_two_cell_report(sole, "LE-SOLE", sole, "LE-SOLE", |_, _, plan, ctx| {
         sole.cell()
             .map_err(CellError::Engine)?
@@ -4058,7 +4057,6 @@ fn verify_duplicate_cell_refusal(sole: &EntityBook) -> Result<(), String> {
         dup.is_err(),
         "duplicate cell_id in combined view must refuse"
     );
-    Ok(())
 }
 
 fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
@@ -4524,7 +4522,7 @@ fn verify_library_cut_population_only_disclosure(
     for row in rev.rows.values() {
         assert!(row.suppressed, "single-member bucket must suppress");
         assert!(row.value.is_none());
-        assert!(row.totals.is_empty());
+        assert_eq!(row.totals, Vec::<Decimal>::new());
         assert!(row.membership_digest.is_none());
         for member in row.members.values() {
             assert!(member.restricted);
@@ -4598,7 +4596,7 @@ fn verify_non_inlined_and_short_key_disclosure(
             );
             if expect_suppressed {
                 assert!(row.value.is_none());
-                assert!(row.totals.is_empty());
+                assert_eq!(row.totals, Vec::<Decimal>::new());
             } else {
                 assert!(row.value.is_some());
             }
@@ -5595,7 +5593,7 @@ fn verify_non_nfc_zero_record_backfill_refused() -> Result<(), String> {
     let pack = retail_pack()?;
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let path = dir.path().join("non-nfc-backfill.sqlite");
-    let cell_id = CellId::try_from(SOLE_CELL_ID.to_owned()).map_err(|e| format!("{e}"))?;
+    let cell_id = CellId::try_from(SOLE_CELL_ID.to_owned())?;
     let engine = NativeEngine::open(&path, StoreOptions::default()).map_err(|e| format!("{e}"))?;
     let mut store = CellStore::from_engine_bound(engine, pack.model().clone(), &cell_id)
         .map_err(|e| format!("{e}"))?;
@@ -5626,10 +5624,8 @@ fn verify_non_nfc_zero_record_backfill_refused() -> Result<(), String> {
         .pending_observations()
         .map_err(|e| format!("{e}"))?;
     let pending_row = pending.first().ok_or("missing zero-record bundle")?;
-    let decoded_obs: Observed<RuntimeValue> =
-        norn_ir::runtime::decode(&pending_row.observed).map_err(|e| format!("{e}"))?;
-    let bundle: MappingBundle =
-        norn_ir::runtime::decode(&decoded_obs.input).map_err(|e| format!("{e}"))?;
+    let decoded_obs: Observed<RuntimeValue> = norn_ir::runtime::decode(&pending_row.observed)?;
+    let bundle: MappingBundle = norn_ir::runtime::decode(&decoded_obs.input)?;
     assert!(bundle.records.is_empty(), "original must be zero-record");
     drop(store);
 
@@ -5846,7 +5842,7 @@ fn verify_library_cut_bad_authority_refusal(
                 .get_mut(POS_FEED_ID)
                 .and_then(|m| m.get_mut(POS_FEED_DATASET))
         {
-            wm.observed = "cursor:shifted-mid-read".to_owned();
+            "cursor:shifted-mid-read".clone_into(&mut wm.observed);
         }
         Ok((sole.source_cursors.clone(), wms))
     };
@@ -5907,7 +5903,7 @@ fn verify_library_cut_durable_cursor_mismatch(
         .get_mut(POS_FEED_ID)
         .and_then(|m| m.get_mut(POS_FEED_DATASET))
     {
-        wm.observed = "cursor:forged-stable".to_owned();
+        "cursor:forged-stable".clone_into(&mut wm.observed);
     }
     let forged_frontier = || {
         Ok((
@@ -5958,7 +5954,7 @@ fn verify_library_cut_foreign_scope_refusal(
     // `questions` and empty `evidence_types` before any evaluation or disclosure.
     let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
     let mut foreign_ctx = sole.query_context();
-    foreign_ctx.scope = "org_foreign_intruder/prod".to_owned();
+    "org_foreign_intruder/prod".clone_into(&mut foreign_ctx.scope);
     let live_frontier = || Ok((sole.source_cursors.clone(), sole.watermarks.clone()));
     let foreign_input = CellViewInput {
         store: sole.cell()?.store(),

@@ -954,6 +954,10 @@ fn axis1_snapshots_carry_take_the_last_count_and_stay_absent_before_the_first() 
 /// METRIC-UNIT-PARTITION-1: a stock question that leaves unit and basis free is
 /// partitioned by them (never summed across); at the group-by cap it refuses.
 /// METRIC-ADDITIVITY: no additive-over-time metric is derived for a stock.
+/// `supply.InventorySnapshot`, hex-encoded as derived metric ids name it.
+const INVENTORY_SNAPSHOT_PREFIX: &str =
+    "analysis.object_737570706c792e496e76656e746f7279536e617073686f74.";
+
 #[test]
 fn axis1_unit_partition_and_no_naive_additive_stock() -> Result<(), String> {
     let stress = seeded()?;
@@ -992,9 +996,6 @@ fn axis1_unit_partition_and_no_naive_additive_stock() -> Result<(), String> {
             .any(|finding| finding.starts_with("metric.validation.mixed_unit")),
         "{refused:?}"
     );
-    // `supply.InventorySnapshot`, hex-encoded as derived metric ids name it.
-    const INVENTORY_SNAPSHOT_PREFIX: &str =
-        "analysis.object_737570706c792e496e76656e746f7279536e617073686f74.";
     let names: Vec<String> = metrics(&stress.lab, "supply.InventorySnapshot")?
         .into_iter()
         .filter(|(n, _, _)| n.starts_with(INVENTORY_SNAPSHOT_PREFIX))
