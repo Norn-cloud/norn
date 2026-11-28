@@ -6,13 +6,13 @@ use std::sync::Arc;
 use norn_ir::RuntimeValue as Value;
 use serde::{Deserialize, Serialize};
 
-use crate::codec::{canonical_json, hash_json};
+use crate::codec::hash_json;
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::ExportRecord;
 use crate::export_journal::ConsumedInput;
 use crate::read::{LedgerEntry, LedgerHead, ObjectRecord, StoreReader, to_i64, to_u64};
-use crate::system::{FACT_VALUES, GENESIS_HASH, INBOX, RECEIPT, RUN, STORE_FORMAT};
+use crate::system::{FACT_VALUES, GENESIS_HASH, RECEIPT, RUN, STORE_FORMAT};
 use crate::{CellStore, CommitOutcome, Model, Receipt};
 
 /// The commitment preimage; absence is a tombstone, not an empty live object.
@@ -141,7 +141,7 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
             |root, version, budget| self.evidence(world, root, key, version, budget),
         )
     }
-    fn evidence(
+    pub(crate) fn evidence(
         &mut self,
         world: &str,
         kind: &str,
@@ -2235,6 +2235,12 @@ impl<E: SqlEngine> CellStore<E> {
                 store.bind(key, value)?;
             }
             if let Some(install) = &record.definition_install {
+                crate::export_journal::restore_late_source_evidence(
+                    &store.read(),
+                    record.receipt.body.commit_seq,
+                    &record.pending_observations,
+                    &record.source_evidence,
+                )?;
                 let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
                     return Err(refused());
@@ -2247,6 +2253,12 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused());
                 }
                 restore_input(&mut store, record)?;
+                crate::export_journal::restore_late_source_evidence(
+                    &store.read(),
+                    record.receipt.body.commit_seq,
+                    &record.pending_observations,
+                    &record.source_evidence,
+                )?;
                 let outcome = store.commit_retained_batch(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))
                     || outcome.receipt() != &record.receipt
@@ -2288,28 +2300,15 @@ pub(crate) fn restore_input<E: SqlEngine>(
             observation_id,
             observed,
             members,
+            source_evidence,
         } => {
-            if position == 0
-                || record.batch.consumes
-                    != Some(crate::Consumption::Observation {
-                        observation_id: observation_id.clone(),
-                    })
-            {
-                return Err(mismatch());
-            }
-            // inject() assigns a new position; the export must retain the old
-            // position even when unconsumed deliveries left gaps in the inbox.
-            store.conn.execute(
-                &format!("INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"),
-                params![to_i64(position, "position")?, observation_id, canonical_json(&observed)?],
-            ).map_err(|_invalid| mismatch())?;
-            // OBS-PAGE-1: the page's members, pending again at their old positions.
-            for member in members {
-                store.conn.execute(
-                    &format!("INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"),
-                    params![to_i64(member.position, "position")?, member.observation_id, canonical_json(&member.observed)?],
-                ).map_err(|_invalid| mismatch())?;
-            }
+            crate::export_journal::restore_observation_input(
+                &store.read(),
+                record,
+                (position, &observation_id, &observed),
+                &members,
+                &source_evidence,
+            )?;
         }
         ConsumedInput::Timer { commit_seq, timer } => {
             let expected = crate::PendingTimer { commit_seq, timer };
@@ -2412,19 +2411,7 @@ pub(crate) fn restore_run_history<E: SqlEngine>(
 // numeric values, which would round exact runtime decimals in these preimages.
 fn decode_input(input: &norn_ir::RuntimeValue) -> Result<ConsumedInput, String> {
     match input.get("kind").and_then(norn_ir::RuntimeValue::as_str) {
-        Some("observation") => {
-            let row: crate::PendingObservation = norn_ir::runtime::decode(input)?;
-            let members = match input.get("members") {
-                Some(members) => norn_ir::runtime::decode(members)?,
-                None => Vec::new(),
-            };
-            Ok(ConsumedInput::Observation {
-                position: row.position,
-                observation_id: row.observation_id,
-                observed: row.observed,
-                members,
-            })
-        }
+        Some("observation") => crate::export_journal::decode_observation_input(input),
         Some("timer") => {
             let row: crate::PendingTimer = norn_ir::runtime::decode(input)?;
             Ok(ConsumedInput::Timer {

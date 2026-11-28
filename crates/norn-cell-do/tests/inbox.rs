@@ -399,6 +399,64 @@ fn a_marked_name_is_a_pseudonym_for_every_caller_and_the_fix_stays() {
     );
 }
 
+fn drive_failed_sync_route(cell: &Cell, connect: &mut Connect, admin: &str, id: &str) -> String {
+    let path = format!("/v1/sources/{id}:sync");
+    let request = Request {
+        method: "POST",
+        path: &path,
+        query: QUERY,
+        authorization: Some(admin),
+        now: NOW,
+        body: "",
+    };
+    let routed = connect
+        .route(
+            cell.tenant.serving_host(),
+            &cell.tokens,
+            &request,
+            NOW * 1000,
+        )
+        .expect("a connect route");
+    assert_eq!(routed.response.status, 202, "{}", routed.response.body);
+    let claimed: Value = serde_json::from_str(&routed.response.body).unwrap();
+    let claimed_run = claimed["run"].as_str().expect("claimed run id").to_owned();
+    let mut answer: Value = serde_json::from_str(&connect.step(
+        cell.tenant.serving_host(),
+        id,
+        None,
+        (NOW * 1000, None),
+    ))
+    .unwrap();
+    // The installed connector asks the extractor, which refuses the read.
+    if answer.get("request").is_some() {
+        answer = serde_json::from_str(&connect.step(
+            cell.tenant.serving_host(),
+            id,
+            Some((401, b"{}")),
+            (NOW * 1000, None),
+        ))
+        .unwrap();
+    }
+    assert_eq!(answer["done"]["outcome"], "failed", "{id}: {answer}");
+    assert_eq!(
+        answer["done"]["run"].as_str(),
+        Some(claimed_run.as_str()),
+        "202 receipt run ID must match RunSummary.run for {id}"
+    );
+    let stored_run = cell
+        .tenant
+        .serving_host()
+        .expect("host")
+        .host_object("source.SyncRun", &claimed_run)
+        .expect("read SyncRun")
+        .expect("source.SyncRun must match 202 receipt run ID");
+    assert_eq!(
+        stored_run.get("id").and_then(norn_ir::RuntimeValue::as_str),
+        Some(claimed_run.as_str())
+    );
+    claimed_run
+}
+
 /// INBOX-SOURCES-1: a connection whose connector is not installed is not set
 /// up (Studio's Sources page says so); it has not failed, so the inbox
 /// neither lists nor counts it. A connection whose read was refused has
@@ -426,44 +484,24 @@ fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
         &[connector],
     );
     let admin = user("admin");
-    for id in ["docs.scans", "erpnext.rest"] {
-        let path = format!("/v1/sources/{id}:sync");
-        let request = Request {
-            method: "POST",
-            path: &path,
-            query: QUERY,
-            authorization: Some(&admin),
-            now: NOW,
-            body: "",
-        };
-        let routed = connect
-            .route(
-                cell.tenant.serving_host(),
-                &cell.tokens,
-                &request,
-                NOW * 1000,
-            )
-            .expect("a connect route");
-        assert_eq!(routed.response.status, 202, "{}", routed.response.body);
-        let mut answer: Value = serde_json::from_str(&connect.step(
-            cell.tenant.serving_host(),
-            id,
-            None,
-            (NOW * 1000, None),
-        ))
-        .unwrap();
-        // The installed connector asks the extractor, which refuses the read.
-        if answer.get("request").is_some() {
-            answer = serde_json::from_str(&connect.step(
-                cell.tenant.serving_host(),
-                id,
-                Some((401, b"{}")),
-                (NOW * 1000, None),
-            ))
-            .unwrap();
-        }
-        assert_eq!(answer["done"]["outcome"], "failed", "{id}: {answer}");
-    }
+    let first_docs_run = drive_failed_sync_route(&cell, &mut connect, &admin, "docs.scans");
+    let _erp_run = drive_failed_sync_route(&cell, &mut connect, &admin, "erpnext.rest");
+
+    // A second manual sync of `docs.scans` in the same millisecond must return
+    // a distinct 202 run ID and keep both durable `source.SyncRun` records.
+    let second_run = drive_failed_sync_route(&cell, &mut connect, &admin, "docs.scans");
+    assert_ne!(second_run, first_docs_run);
+    let host = cell.tenant.serving_host().expect("host");
+    assert!(
+        host.host_object("source.SyncRun", &first_docs_run)
+            .expect("read first SyncRun")
+            .is_some()
+    );
+    assert!(
+        host.host_object("source.SyncRun", &second_run)
+            .expect("read second SyncRun")
+            .is_some()
+    );
 
     let (status, inbox, _) = cell.inbox("admin");
     assert_eq!(status, 200, "{inbox}");

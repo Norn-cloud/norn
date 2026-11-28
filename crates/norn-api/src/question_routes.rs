@@ -65,6 +65,24 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
         plan: &QuestionPlan,
         actor: &str,
     ) -> Result<QuestionSnapshot, Refusal>;
+    /// Resolve the frontier for either a live read (`answered == None`) or a
+    /// pinned `:trace` (`answered == Some((frontier, now_ms))`), reconstructing
+    /// historical source cursors/watermarks at `frontier` when pinned.
+    /// # Errors
+    /// Unavailable or unauthenticated dependencies refuse rather than being fabricated.
+    fn snapshot_at(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        actor: &str,
+        answered: Option<(u64, u64)>,
+    ) -> Result<QuestionSnapshot, Refusal> {
+        let mut snapshot = self.snapshot(store, plan, actor)?;
+        if let Some((_, now)) = answered {
+            snapshot.context.now_ms = now;
+        }
+        Ok(snapshot)
+    }
     /// Map trusted principal/resource inputs without reading cell data. For a collection,
     /// resource ID is the question name and type is its grain; rows use their actual ID/type.
     /// # Errors
@@ -263,13 +281,14 @@ fn answer_plan<E: SqlEngine>(
     if cell.store().fork_pin().is_some() {
         return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
     }
+    let checked_version = crate::object_routes::version_of(&cell.store().read())?;
     let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
     let historical = snapshot.cutoff.is_some() || plan.as_of();
     let world_name = snapshot.context.world.clone();
-    let checked_version = check_snapshot(host, cell.store(), plan, &world_name, historical)?;
+    refuse_labeled_paths_on(host, &cell.store().read(), plan, &world_name, historical)?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
@@ -285,6 +304,14 @@ fn answer_plan<E: SqlEngine>(
         QuestionAnswer::Live(result) => result.known_as_of,
         QuestionAnswer::Historical(historical) => historical.result.known_as_of,
     });
+    let disclosed = outcome.map(|answer| {
+        project_answer(
+            (host, runtime, cell.store()),
+            (actor, question, key, plan),
+            &withheld,
+            answer,
+        )
+    });
     verify_checked_snapshot(
         host,
         cell.store(),
@@ -297,13 +324,7 @@ fn answer_plan<E: SqlEngine>(
             live_read: snapshot.cutoff.is_none(),
         },
     )?;
-    let answer = outcome.map_err(Refusal::from_compute)?;
-    project_answer(
-        (host, runtime, cell.store()),
-        (actor, key),
-        &withheld,
-        answer,
-    )
+    disclosed.map_err(Refusal::from_compute)?
 }
 
 /// #1164 (D53): the receipt coordinate `actor` may see for a commit outside
@@ -453,19 +474,6 @@ fn refuse_labeled_paths_on<E: SqlEngine>(
     Err(refusal)
 }
 
-fn check_snapshot<E: SqlEngine>(
-    host: &DevHost<E>,
-    store: &CellStore<E>,
-    plan: &QuestionPlan,
-    world: &str,
-    historical: bool,
-) -> Result<(u64, Option<(u64, u64)>), Refusal> {
-    let reader = store.read();
-    let version = crate::object_routes::version_of(&reader)?;
-    refuse_labeled_paths_on(host, &reader, plan, world, historical)?;
-    Ok(version)
-}
-
 struct CheckedSnapshot<'a> {
     world: &'a str,
     checked_version: (u64, Option<(u64, u64)>),
@@ -525,13 +533,14 @@ fn trace_plan<E: SqlEngine>(
     answered: Option<(u64, u64)>,
 ) -> Result<DisclosedTrace, Refusal> {
     let cell = host.cell()?;
-    let mut snapshot = runtime.snapshot(cell.store(), plan, actor)?;
+    let checked_version = crate::object_routes::version_of(&cell.store().read())?;
+    let snapshot = runtime.snapshot_at(cell.store(), plan, actor, answered)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
     let historical = snapshot.cutoff.is_some() || answered.is_some() || plan.as_of();
     let world_name = snapshot.context.world.clone();
-    let checked_version = check_snapshot(host, cell.store(), plan, &world_name, historical)?;
+    refuse_labeled_paths_on(host, &cell.store().read(), plan, &world_name, historical)?;
     if snapshot.cutoff.is_some() {
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.compute.unsupported_engine",
@@ -545,19 +554,17 @@ fn trace_plan<E: SqlEngine>(
         source: &mut |row| permits(row, Sources),
     };
     let outcome = match answered {
-        // The answer as it was given: recomputed from its commit, at its clock.
-        Some((frontier, now)) => {
-            snapshot.context.now_ms = now;
-            cell.store().trace_question_answered_matching(
-                plan,
-                snapshot.context,
-                frontier,
-                &matches,
-                bucket,
-                |row| visible_recording(row, &permits, &mut withheld),
-                disclosure,
-            )
-        }
+        // The answer as it was given: recomputed from its commit, at its clock
+        // and historical connector frontier.
+        Some((frontier, _now)) => cell.store().trace_question_answered_matching(
+            plan,
+            snapshot.context,
+            frontier,
+            &matches,
+            bucket,
+            |row| visible_recording(row, &permits, &mut withheld),
+            disclosure,
+        ),
         None => cell.store().trace_question_matching(
             plan,
             snapshot.context,
@@ -567,6 +574,16 @@ fn trace_plan<E: SqlEngine>(
             disclosure,
         ),
     };
+    let evaluated_frontier = outcome.as_ref().ok().map(|t| t.result.known_as_of);
+    let disclosed = outcome.map(|trace| {
+        project_trace(
+            (host, runtime, cell.store()),
+            (actor, question, &world_name, plan),
+            (key, lineage),
+            &withheld,
+            trace,
+        )
+    });
     verify_checked_snapshot(
         host,
         cell.store(),
@@ -574,19 +591,12 @@ fn trace_plan<E: SqlEngine>(
         &CheckedSnapshot {
             world: &world_name,
             checked_version,
-            evaluated_frontier: outcome.as_ref().ok().map(|t| t.result.known_as_of),
+            evaluated_frontier,
             historical,
             live_read: answered.is_none(),
         },
     )?;
-    let trace = outcome.map_err(Refusal::from_compute)?;
-    project_trace(
-        (host, runtime, cell.store()),
-        (actor, &world_name),
-        (key, lineage),
-        &withheld,
-        trace,
-    )
+    disclosed.map_err(Refusal::from_compute)?
 }
 
 fn mapped<E: SqlEngine>(
@@ -611,7 +621,7 @@ fn mapped<E: SqlEngine>(
     }
     Ok(access)
 }
-fn allowed<E: SqlEngine>(
+pub(crate) fn allowed<E: SqlEngine>(
     host: &DevHost<E>,
     runtime: &dyn QuestionRuntime<E>,
     actor: &str,

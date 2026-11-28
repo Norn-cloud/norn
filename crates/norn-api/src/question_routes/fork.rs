@@ -2,7 +2,7 @@
 //! evaluation through the shared read authority and disclosure boundary.
 
 use super::{
-    CheckedSnapshot, QuestionRuntime, admit_named_question, allowed, check_snapshot,
+    CheckedSnapshot, QuestionRuntime, admit_named_question, allowed, refuse_labeled_paths_on,
     verify_checked_snapshot, visible_recording,
 };
 use crate::{
@@ -50,6 +50,7 @@ fn fork_answer_plan<E: SqlEngine>(
     if cell.store().fork_pin().is_none() {
         return Err(Refusal::from_compute(CellError::WorldSimulationForbidden));
     }
+    let checked_version = crate::object_routes::version_of(&cell.store().read())?;
     let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
@@ -58,12 +59,20 @@ fn fork_answer_plan<E: SqlEngine>(
         return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
     }
     let historical = plan.as_of();
-    let checked_version = check_snapshot(host, cell.store(), plan, MAIN_WORLD, historical)?;
+    refuse_labeled_paths_on(host, &cell.store().read(), plan, MAIN_WORLD, historical)?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
     let outcome = runtime.evaluate_in_fork(cell.store(), plan, snapshot.context, &mut visible);
     let evaluated_frontier = outcome.as_ref().ok().map(|fork| fork.result.known_as_of);
+    let disclosed = outcome.map(|fork| {
+        project_fork_answer(
+            (host, runtime, cell.store()),
+            (actor, question, key, plan),
+            &withheld,
+            fork,
+        )
+    });
     verify_checked_snapshot(
         host,
         cell.store(),
@@ -76,6 +85,5 @@ fn fork_answer_plan<E: SqlEngine>(
             live_read: true,
         },
     )?;
-    let fork = outcome.map_err(Refusal::from_compute)?;
-    project_fork_answer((host, runtime, cell.store()), (actor, key), &withheld, fork)
+    disclosed.map_err(Refusal::from_compute)?
 }

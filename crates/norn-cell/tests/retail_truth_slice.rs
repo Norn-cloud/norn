@@ -89,6 +89,8 @@ const PARTNER_SCOPE: &str = "org_family_partnership/prod";
 const SOLE_CELL_ID: &str = "0000000000000000000000000000a101";
 const PARTNER_CELL_ID: &str = "0000000000000000000000000000b202";
 const FEED_PARTITION: &str = "MALL-CFC";
+const POS_FEED_ID: &str = "supply.pos_sales.mapping";
+const POS_FEED_DATASET: &str = "pos_sale_line";
 
 /// 2026-09-07T12:00:00Z (after W1..W9 retail events).
 const CLOCK_MS: u64 = 1_788_782_400_000;
@@ -97,10 +99,16 @@ const FEED_MAX_AGE_MS: u64 = 60_000;
 /// Maximum allowed physical count age before count-staleness fails closed (7 days).
 const MAX_COUNT_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const REQUIRED_FEEDS: [&str; 4] = [
-    "supply.pos_sales",
-    "supply.store_counts",
-    "supply.retail_receipts",
-    "supply.unit_costs",
+    POS_FEED_ID,
+    "supply.store_counts.mapping",
+    "supply.retail_receipts.mapping",
+    "supply.unit_costs.mapping",
+];
+const REQUIRED_FEED_DATASETS: [(&str, &str); 4] = [
+    (POS_FEED_ID, POS_FEED_DATASET),
+    ("supply.store_counts.mapping", "store_count"),
+    ("supply.retail_receipts.mapping", "retail_receipt"),
+    ("supply.unit_costs.mapping", "unit_cost"),
 ];
 const EVIDENCE_TYPES: [&str; 4] = [
     "supply.PosSaleEvidence",
@@ -355,9 +363,9 @@ fn feed_watermarks(
 
 fn default_feed_frontier(now_ms: u64) -> (Frontier, BTreeMap<String, BTreeMap<String, Watermark>>) {
     let mut cursors: Frontier = BTreeMap::new();
-    for feed in REQUIRED_FEEDS {
+    for (feed, dataset) in REQUIRED_FEED_DATASETS {
         let mut parts = BTreeMap::new();
-        parts.insert(FEED_PARTITION.to_owned(), format!("cursor:{feed}:synced"));
+        parts.insert(dataset.to_owned(), format!("cursor:{feed}:synced"));
         cursors.insert(feed.to_owned(), parts);
     }
     let watermarks = feed_watermarks(&cursors, now_ms);
@@ -473,11 +481,11 @@ impl EntityBook {
                 .read()
                 .source_cursors(row.feed_id)
                 .map_err(|e| format!("read cursor {}: {e}", row.feed_id))?
-                .get(FEED_PARTITION)
+                .get(row.dataset)
                 .map(|r| r.cursor_json.clone());
             let advance = CursorAdvanceSpec {
                 connection_id: row.feed_id.to_owned(),
-                dataset: FEED_PARTITION.to_owned(),
+                dataset: row.dataset.to_owned(),
                 lease_id: lease.lease_id.clone(),
                 generation: lease.generation,
                 now_ms: observed_at,
@@ -486,7 +494,7 @@ impl EntityBook {
                 renew_ttl_ms: None,
             };
             let captured = map_cell
-                .capture_source_page(&[obs], Some(&input), &advance, 64)
+                .capture_source_page(&[obs], Some(&input), &advance, 64, None)
                 .map_err(|e| format!("capture {}/{}: {e}", row.feed_id, row.record))?;
             let mut all_clean = true;
             if captured.captured.pages.is_empty() {
@@ -512,19 +520,19 @@ impl EntityBook {
                 }
             }
             map_cell
-                .complete_source_pending(row.feed_id, FEED_PARTITION, &captured.page_digest)
+                .complete_source_pending(row.feed_id, row.dataset, &captured.page_digest)
                 .map_err(|e| format!("complete pending {}: {e}", row.feed_id))?;
             Ok(all_clean)
         })?;
         self.source_cursors
             .entry(row.feed_id.to_owned())
             .or_default()
-            .insert(FEED_PARTITION.to_owned(), next_cursor.clone());
+            .insert(row.dataset.to_owned(), next_cursor.clone());
         self.watermarks
             .entry(row.feed_id.to_owned())
             .or_default()
             .insert(
-                FEED_PARTITION.to_owned(),
+                row.dataset.to_owned(),
                 Watermark {
                     observed: next_cursor.clone(),
                     heartbeat_ms: Some(observed_at),
@@ -1814,7 +1822,7 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
     verify_pos_feed_and_lineage(&mut cell, &pos_q, &feed_ctx)?;
 
     let mut partial_wm = watermarks;
-    partial_wm.remove("supply.store_counts");
+    partial_wm.remove("supply.store_counts.mapping");
     let mut degraded_ctx = feed_ctx;
     degraded_ctx.watermarks = partial_wm.clone();
     let degraded_res = cell
@@ -1828,7 +1836,7 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
         &partial_wm,
         CLOCK_MS.saturating_sub(FEED_MAX_AGE_MS),
     );
-    assert!(missing_feeds.contains("supply.store_counts"));
+    assert!(missing_feeds.contains("supply.store_counts.mapping"));
 
     verify_secondary_feeds(&mut cell)?;
     cell.store()
@@ -3221,7 +3229,7 @@ fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Res
     seed_retail_operations(&mut sole, &mut partner)?;
     seed_store_commercial_rollups(&mut sole, &mut partner)?;
 
-    sole.refused(
+    let (code, msg) = sole.refused(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
@@ -3231,6 +3239,7 @@ fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Res
             "received_at": "2026-09-01T09:00:00Z"
         }),
     )?;
+    assert_eq!(code, "action.invalid_input", "{msg}");
 
     let (s1_on_hand, s1_stock_val, s1_total_received, s1_sold, s1_sales_weeks) =
         verify_retail_questions(&sole)?;
@@ -3322,7 +3331,7 @@ fn ingest_baseline_entity_feeds(
 ) -> Result<(), String> {
     let sole_rows = [
         FeedRow {
-            feed_id: "supply.pos_sales",
+            feed_id: POS_FEED_ID,
             mapping: "supply.pos_sales.mapping",
             dataset: "pos_sale_line",
             source: "synthetic-pos",
@@ -3331,7 +3340,7 @@ fn ingest_baseline_entity_feeds(
             payload: r#"{"pos_line_id":"POS-SOLE-1","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":30,"uom":"PCS","net_amount":6000,"ccy":"EGP","sold_at":"2026-09-01T14:00:00Z"}"#,
         },
         FeedRow {
-            feed_id: "supply.store_counts",
+            feed_id: "supply.store_counts.mapping",
             mapping: "supply.store_counts.mapping",
             dataset: "store_count",
             source: "synthetic-store-count",
@@ -3340,7 +3349,7 @@ fn ingest_baseline_entity_feeds(
             payload: r#"{"count_id":"SC-SOLE-1","store_code":"ST-SOLE-CFC-1","sku_code":"SKU-DRESS","counted_qty":60,"uom":"EA","basis":"on_hand","counted_at":"2026-09-05T10:00:00Z"}"#,
         },
         FeedRow {
-            feed_id: "supply.retail_receipts",
+            feed_id: "supply.retail_receipts.mapping",
             mapping: "supply.retail_receipts.mapping",
             dataset: "retail_receipt",
             source: "synthetic-retail-receipt",
@@ -3349,7 +3358,7 @@ fn ingest_baseline_entity_feeds(
             payload: r#"{"receipt_line_id":"RR-SOLE-1","store_code":"ST-SOLE-CFC-1","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","received_qty":50,"damaged_qty":0,"uom":"PCS","unit_cost":100,"ccy":"EGP","received_at":"2026-07-08T09:00:00Z"}"#,
         },
         FeedRow {
-            feed_id: "supply.unit_costs",
+            feed_id: "supply.unit_costs.mapping",
             mapping: "supply.unit_costs.mapping",
             dataset: "unit_cost",
             source: "synthetic-cost",
@@ -3365,7 +3374,7 @@ fn ingest_baseline_entity_feeds(
 
     let partner_rows = [
         FeedRow {
-            feed_id: "supply.pos_sales",
+            feed_id: POS_FEED_ID,
             mapping: "supply.pos_sales.mapping",
             dataset: "pos_sale_line",
             source: "synthetic-pos",
@@ -3374,7 +3383,7 @@ fn ingest_baseline_entity_feeds(
             payload: r#"{"pos_line_id":"POS-PART-1","branch_code":"ST-PART-CFC-1","barcode_sku":"SKU-RING-18K","qty":8,"uom":"PCS","net_amount":3200,"ccy":"USD","sold_at":"2026-09-02T15:00:00Z"}"#,
         },
         FeedRow {
-            feed_id: "supply.store_counts",
+            feed_id: "supply.store_counts.mapping",
             mapping: "supply.store_counts.mapping",
             dataset: "store_count",
             source: "synthetic-store-count",
@@ -3383,7 +3392,7 @@ fn ingest_baseline_entity_feeds(
             payload: r#"{"count_id":"SC-PART-1","store_code":"ST-PART-CFC-1","sku_code":"SKU-RING-18K","counted_qty":12,"uom":"EA","basis":"on_hand","counted_at":"2026-09-06T10:00:00Z"}"#,
         },
         FeedRow {
-            feed_id: "supply.retail_receipts",
+            feed_id: "supply.retail_receipts.mapping",
             mapping: "supply.retail_receipts.mapping",
             dataset: "retail_receipt",
             source: "synthetic-retail-receipt",
@@ -3392,7 +3401,7 @@ fn ingest_baseline_entity_feeds(
             payload: r#"{"receipt_line_id":"RR-PART-1","store_code":"ST-PART-CFC-1","sku_code":"SKU-RING-18K","vendor_code":"GOLD-09","received_qty":20,"damaged_qty":0,"uom":"PCS","unit_cost":250,"ccy":"USD","received_at":"2026-07-22T09:00:00Z"}"#,
         },
         FeedRow {
-            feed_id: "supply.unit_costs",
+            feed_id: "supply.unit_costs.mapping",
             mapping: "supply.unit_costs.mapping",
             dataset: "unit_cost",
             source: "synthetic-cost",
@@ -5098,7 +5107,7 @@ fn verify_quarantined_evidence_access(sole: &EntityBook) -> Result<(), String> {
 
 fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> Result<(), String> {
     sole.ingest_feed(&FeedRow {
-        feed_id: "supply.pos_sales",
+        feed_id: POS_FEED_ID,
         mapping: "supply.pos_sales.mapping",
         dataset: "pos_sale_line",
         source: "synthetic-pos",
@@ -5114,7 +5123,7 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
     assert_eq!(quarantined.entity_pos_feed_revenue, None);
 
     sole.ingest_feed(&FeedRow {
-        feed_id: "supply.pos_sales",
+        feed_id: POS_FEED_ID,
         mapping: "supply.pos_sales.mapping",
         dataset: "pos_sale_line",
         source: "synthetic-pos",
@@ -5151,7 +5160,7 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
     assert_eq!(recovered.entity_net_revenue.as_deref(), Some("10800"));
 
     let (_, clean_uom) = sole.ingest_feed(&FeedRow {
-        feed_id: "supply.pos_sales",
+        feed_id: POS_FEED_ID,
         mapping: "supply.pos_sales.mapping",
         dataset: "pos_sale_line",
         source: "synthetic-pos",
@@ -5344,7 +5353,7 @@ fn verify_nonempty_pending_bundle_row_privacy(book: &mut EntityBook) -> Result<(
     // `ALL_MEMBERS` with row-level `None`, `Count`, and `Read` on the conflicting row,
     // verifying `pending_record_readable` passes the incoming mapped row values.
     let (_, first_clean) = book.ingest_feed(&FeedRow {
-        feed_id: "supply.pos_sales",
+        feed_id: POS_FEED_ID,
         mapping: "supply.pos_sales.mapping",
         dataset: "pos_sale_line",
         source: "synthetic-pos",
@@ -5354,7 +5363,7 @@ fn verify_nonempty_pending_bundle_row_privacy(book: &mut EntityBook) -> Result<(
     })?;
     assert!(first_clean, "initial conflict fixture row must land");
     let (_, conflict_clean) = book.ingest_feed(&FeedRow {
-        feed_id: "supply.pos_sales",
+        feed_id: POS_FEED_ID,
         mapping: "supply.pos_sales.mapping",
         dataset: "pos_sale_line",
         source: "synthetic-pos",
@@ -5834,8 +5843,8 @@ fn verify_library_cut_bad_authority_refusal(
         let mut wms = sole.watermarks.clone();
         if n > 0
             && let Some(wm) = wms
-                .get_mut("supply.pos_sales")
-                .and_then(|m| m.get_mut(FEED_PARTITION))
+                .get_mut(POS_FEED_ID)
+                .and_then(|m| m.get_mut(POS_FEED_DATASET))
         {
             wm.observed = "cursor:shifted-mid-read".to_owned();
         }
@@ -5887,13 +5896,16 @@ fn verify_library_cut_durable_cursor_mismatch(
     // 5. Stable durable-cursor vs QueryContext mismatch must refuse fail-closed.
     let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
     let mut forged_ctx = sole.query_context();
-    if let Some(parts) = forged_ctx.source_cursors.get_mut("supply.pos_sales") {
-        parts.insert(FEED_PARTITION.to_owned(), "cursor:forged-stable".to_owned());
+    if let Some(parts) = forged_ctx.source_cursors.get_mut(POS_FEED_ID) {
+        parts.insert(
+            POS_FEED_DATASET.to_owned(),
+            "cursor:forged-stable".to_owned(),
+        );
     }
     if let Some(wm) = forged_ctx
         .watermarks
-        .get_mut("supply.pos_sales")
-        .and_then(|m| m.get_mut(FEED_PARTITION))
+        .get_mut(POS_FEED_ID)
+        .and_then(|m| m.get_mut(POS_FEED_DATASET))
     {
         wm.observed = "cursor:forged-stable".to_owned();
     }
@@ -6040,25 +6052,25 @@ fn verify_library_cut_degraded_and_tampered(sole: &mut EntityBook) -> Result<(),
     // 4. Observed-vs-consumed cursor mismatch must mark the feed missing and withhold answers.
     let prev_obs = sole
         .watermarks
-        .get_mut("supply.pos_sales")
-        .and_then(|m| m.get_mut(FEED_PARTITION))
+        .get_mut(POS_FEED_ID)
+        .and_then(|m| m.get_mut(POS_FEED_DATASET))
         .map(|wm| std::mem::replace(&mut wm.observed, "cursor:drifted".to_owned()));
     let drift_snap = evaluate_single_library_cut(sole, "LE-SOLE")?;
-    assert!(drift_snap.missing_feeds.contains("supply.pos_sales"));
+    assert!(drift_snap.missing_feeds.contains(POS_FEED_ID));
     assert!(!drift_snap.complete);
     assert_eq!(drift_snap.read_token.completeness, Completeness::Partial);
     assert!(drift_snap.answers.is_none());
     if let (Some(obs), Some(wm)) = (
         prev_obs,
         sole.watermarks
-            .get_mut("supply.pos_sales")
-            .and_then(|m| m.get_mut(FEED_PARTITION)),
+            .get_mut(POS_FEED_ID)
+            .and_then(|m| m.get_mut(POS_FEED_DATASET)),
     ) {
         wm.observed = obs;
     }
     // 5. Observed watermark on partition B with no consumed cursor must withhold answers.
     let hb_ms = sole.now().as_millis();
-    if let Some(parts) = sole.watermarks.get_mut("supply.pos_sales") {
+    if let Some(parts) = sole.watermarks.get_mut(POS_FEED_ID) {
         parts.insert(
             "partition-b".to_owned(),
             Watermark {
@@ -6069,14 +6081,10 @@ fn verify_library_cut_degraded_and_tampered(sole: &mut EntityBook) -> Result<(),
         );
     }
     let unconsumed_part_snap = evaluate_single_library_cut(sole, "LE-SOLE")?;
-    assert!(
-        unconsumed_part_snap
-            .missing_feeds
-            .contains("supply.pos_sales")
-    );
+    assert!(unconsumed_part_snap.missing_feeds.contains(POS_FEED_ID));
     assert!(!unconsumed_part_snap.complete);
     assert!(unconsumed_part_snap.answers.is_none());
-    if let Some(parts) = sole.watermarks.get_mut("supply.pos_sales") {
+    if let Some(parts) = sole.watermarks.get_mut(POS_FEED_ID) {
         parts.remove("partition-b");
     }
     Ok(())
@@ -6085,43 +6093,39 @@ fn verify_library_cut_degraded_and_tampered(sole: &mut EntityBook) -> Result<(),
 fn verify_degraded_stale_and_quarantined_view(sole: &mut EntityBook) -> Result<(), String> {
     verify_library_cut_degraded_and_tampered(sole)?;
 
-    let saved_wm = sole.watermarks.remove("supply.pos_sales");
+    let saved_wm = sole.watermarks.remove(POS_FEED_ID);
     let lib_degraded = evaluate_single_library_cut(sole, "LE-SOLE")?;
-    assert!(lib_degraded.missing_feeds.contains("supply.pos_sales"));
+    assert!(lib_degraded.missing_feeds.contains(POS_FEED_ID));
     assert!(!lib_degraded.complete);
     assert!(lib_degraded.answers.is_none());
     let degraded = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;
-    assert!(degraded.missing_feed_coverage.contains("supply.pos_sales"));
+    assert!(degraded.missing_feed_coverage.contains(POS_FEED_ID));
     assert_eq!(degraded.entity_net_revenue, None);
     assert_eq!(degraded.entity_pos_feed_revenue, None);
     if let Some(wm) = saved_wm {
-        sole.watermarks.insert("supply.pos_sales".to_owned(), wm);
+        sole.watermarks.insert(POS_FEED_ID.to_owned(), wm);
     }
 
     let stale_hb = sole.now().as_millis().saturating_sub(120_000);
     let prev_hb = sole
         .watermarks
-        .get_mut("supply.pos_sales")
-        .and_then(|m| m.get_mut(FEED_PARTITION))
+        .get_mut(POS_FEED_ID)
+        .and_then(|m| m.get_mut(POS_FEED_DATASET))
         .and_then(|wm| wm.heartbeat_ms.replace(stale_hb));
     let lib_stale = evaluate_single_library_cut(sole, "LE-SOLE")?;
-    assert!(lib_stale.missing_feeds.contains("supply.pos_sales"));
+    assert!(lib_stale.missing_feeds.contains(POS_FEED_ID));
     assert!(!lib_stale.complete);
     assert!(lib_stale.answers.is_none());
     let stale_q = sole.answer("supply.retail.store_revenue_weekly")?;
     assert_eq!(stale_q.freshness, Freshness::Stale);
     let stale_view = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;
-    assert!(
-        stale_view
-            .missing_feed_coverage
-            .contains("supply.pos_sales")
-    );
+    assert!(stale_view.missing_feed_coverage.contains(POS_FEED_ID));
     assert_eq!(stale_view.entity_net_revenue, None);
     if let (Some(hb), Some(wm)) = (
         prev_hb,
         sole.watermarks
-            .get_mut("supply.pos_sales")
-            .and_then(|m| m.get_mut(FEED_PARTITION)),
+            .get_mut(POS_FEED_ID)
+            .and_then(|m| m.get_mut(POS_FEED_DATASET)),
     ) {
         wm.heartbeat_ms = Some(hb);
     }

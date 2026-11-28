@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct IdentityEvidence {
     pub(crate) bundle: MappingBundle,
     // Numeric bytes survive the inbox text profile without changing the spelling proof.
-    identity: [Vec<u8>; 5],
+    pub(crate) identity: [Vec<u8>; 5],
     pub(crate) finding: DataQualityFinding,
 }
 
@@ -158,10 +158,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(disputed)
     }
 
-    /// Recompute retained identity-guard evidence before disclosure or counting.
+    /// Recompute identity-dispute evidence against the retained admitted definitions.
     pub(crate) fn recheck_identity_evidence(
         &self,
         guard: &IdentityEvidence,
+        stored_id: &str,
     ) -> Result<(), CellError> {
         self.recheck_mapping_bundle(&guard.bundle)?;
         let text: Vec<_> = guard
@@ -177,6 +178,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if text == normalized
             || normalized.as_slice() != keys(&guard.bundle.raw, &guard.bundle.input)?
             || guard.finding != finding(&guard.bundle, &guard.identity)?
+            || stored_id != format!("mapping-identity:{}", guard.finding.id)
         {
             return Err(CellError::MappingBundleMismatch);
         }
@@ -195,12 +197,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let guard: IdentityEvidence =
                 norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-            self.recheck_identity_evidence(&guard)?;
-            if observed.id.0 != stored_id
-                || stored_id != format!("mapping-identity:{}", guard.finding.id)
-            {
+            if observed.id.0 != stored_id {
                 return Err(CellError::MappingBundleMismatch);
             }
+            self.recheck_identity_evidence(&guard, &stored_id)?;
             evidence.push((position, guard));
         }
         Ok(evidence)

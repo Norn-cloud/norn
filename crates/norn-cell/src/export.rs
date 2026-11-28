@@ -58,6 +58,21 @@ pub fn record_decode_bytes(
         .transpose()
 }
 
+/// One durable `_norn_source_evidence` capture-attribution row preserved
+/// across export and replay so historical pinned `:trace` queries keep
+/// identical connection and frontier attribution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceEvidenceEntry {
+    /// Inbox observation identifier attributed to `connection_id`.
+    pub observation_id: String,
+    /// Source connection identifier (`""` for unattributed or legacy rows).
+    pub connection_id: String,
+    /// Commit sequence at which this attribution was captured (`-1` for
+    /// legacy pre-upgrade rows whose causal order uses inbox position).
+    pub captured_commit_seq: i64,
+}
+
 /// One immutable object per committed batch, including batches with no events.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -113,6 +128,17 @@ pub struct ExportRecord {
     /// Absent, it leaves the record's bytes and hash unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation_inline: Option<crate::automation_outbox::AutomationInlineEvidence>,
+    /// Late `_norn_source_evidence` attribution rows recorded between commit
+    /// `commit_seq - 1` and `commit_seq` for already-consumed or pending
+    /// evidence observations. Absent when empty, leaving existing export
+    /// records' bytes and hashes unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_evidence: Vec<SourceEvidenceEntry>,
+    /// Pending mapping evidence `_norn_inbox` rows first attributed between
+    /// commit `commit_seq - 1` and `commit_seq` (`mapping-bundle:`,
+    /// `mapping-conflict:`, or `mapping-identity:`). Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_observations: Vec<crate::PendingObservation>,
 }
 
 impl ExportRecord {

@@ -63,7 +63,7 @@ fn authorized_evidence_types<E: SqlEngine>(
 enum PendingCandidate {
     Bundle(MappingBundle),
     Conflict(MappingConflict),
-    Identity(IdentityEvidence),
+    Identity(String, IdentityEvidence),
 }
 
 impl PendingCandidate {
@@ -71,7 +71,7 @@ impl PendingCandidate {
         match self {
             Self::Bundle(bundle) => bundle.input.mapping.as_str(),
             Self::Conflict(conflict) => conflict.incoming.input.mapping.as_str(),
-            Self::Identity(evidence) => evidence.bundle.input.mapping.as_str(),
+            Self::Identity(_, evidence) => evidence.bundle.input.mapping.as_str(),
         }
     }
 }
@@ -101,8 +101,9 @@ fn decode_pending_candidate(obs: &PendingObservation) -> Option<PendingCandidate
             .then_some(PendingCandidate::Conflict(conflict))
     } else if obs.observation_id.starts_with("mapping-identity:") {
         let evidence: IdentityEvidence = norn_ir::runtime::decode(&observed.input).ok()?;
-        (obs.observation_id == format!("mapping-identity:{}", evidence.finding.id))
-            .then_some(PendingCandidate::Identity(evidence))
+        (obs.observation_id == format!("mapping-identity:{}", evidence.finding.id)).then_some(
+            PendingCandidate::Identity(obs.observation_id.clone(), evidence),
+        )
     } else {
         None
     }
@@ -157,8 +158,8 @@ fn verify_visible_pending_candidate<E: SqlEngine>(
             let expected = reader.mapping_conflict(&conflict.incoming)?;
             Ok(expected.as_ref() == Some(&conflict))
         }
-        PendingCandidate::Identity(evidence) => {
-            if !verify_or_ignore(reader.recheck_identity_evidence(&evidence))? {
+        PendingCandidate::Identity(stored_id, evidence) => {
+            if !verify_or_ignore(reader.recheck_identity_evidence(&evidence, &stored_id))? {
                 return Ok(false);
             }
             bundle_records_visible(input, allowed_evidence, &evidence.bundle)

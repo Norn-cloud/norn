@@ -31,7 +31,7 @@ use norn_kernel::{
     CellCommit, CommitModel, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent,
     ObservationId, Observed, TypeCatalog,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The most records one page carries.
 pub const MAX_PAGE_RECORDS: usize = 1_000;
@@ -115,6 +115,7 @@ pub(crate) fn is_store_failure(error: &CellError) -> bool {
             | CellError::Engine(_)
             | CellError::Verifying(_)
             | CellError::Fenced(_)
+            | CellError::SourceLeaseFenced { .. }
             | CellError::LedgerCorrupt { .. }
     )
 }
@@ -159,6 +160,7 @@ impl<E: SqlEngine> CellStore<E> {
         input: &MappingInput,
         canonical: CommitModel<'_, '_>,
         max_run_rows: usize,
+        connection_id: Option<&str>,
     ) -> Result<CapturedPage, CellError> {
         // Capture writes only inbox rows: a plan proven once holds for
         // every record of the page (INGEST-DERIVE-ONCE-1).
@@ -187,6 +189,11 @@ impl<E: SqlEngine> CellStore<E> {
                 crate::mapping_identity::keys(&raw.input, input)?;
             let identity = [connector, partition, source, source_id];
             let (id, new) = self.capture_mapping_bundle(raw, input)?;
+            if let Some(cid) = connection_id {
+                crate::source_cursor::record_source_evidence_in_tx(&self.conn, &id, cid, new)?;
+            } else if new {
+                crate::source_cursor::record_source_evidence_in_tx(&self.conn, &id, "", true)?;
+            }
             records.push(id.clone());
             if !id.starts_with("mapping-bundle:") {
                 // Conflict and identity findings stay pending, as one by
@@ -281,7 +288,7 @@ impl<E: SqlEngine> CellStore<E> {
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS)
+            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS, None)
         })
     }
 
@@ -302,6 +309,7 @@ impl<E: SqlEngine> CellStore<E> {
         input: Option<&MappingInput>,
         advance: &crate::source_cursor::CursorAdvanceSpec,
         max_run_rows: usize,
+        expected_binding: Option<(&str, &str)>,
     ) -> Result<CapturedSourcePage, CellError> {
         let input = if raws.is_empty() {
             None
@@ -310,36 +318,66 @@ impl<E: SqlEngine> CellStore<E> {
             Self::validate_page_framing(raws, input, true)?;
             Some(input)
         };
-        let digest = crate::source_cursor::page_digest(advance, raws)?;
+        let digest = crate::source_cursor::page_digest(advance, input, raws)?;
+        let legacy_v2 = crate::source_cursor::page_digest_v2(advance, raws)?;
         let model = self.model().clone();
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            let precondition =
-                crate::source_cursor::check_capture_precondition(&self.conn, advance, &digest)?;
-            let captured = match &precondition {
-                crate::source_cursor::Precondition::IdempotentReplay { pages, records } => {
+            crate::mapping_conflict::verify_mapping_binding_in_tx(
+                &self.read(),
+                expected_binding,
+                Some((
+                    advance.connection_id.as_str(),
+                    advance.lease_id.as_str(),
+                    advance.generation,
+                )),
+            )?;
+            let active_binding = match input {
+                Some(input) => self.read().active_mapping_binding(&input.mapping)?,
+                None => None,
+            };
+            let precondition = crate::source_cursor::check_capture_precondition(
+                &self.conn,
+                advance,
+                &digest,
+                Some((legacy_v2.as_str(), input, active_binding.as_deref(), raws)),
+            )?;
+            let (page_digest, captured) = match &precondition {
+                crate::source_cursor::Precondition::IdempotentReplay {
+                    matched_digest,
+                    pages,
+                    records,
+                } => (
+                    matched_digest.clone(),
                     // Exact replay returns the originally captured observation
                     // ids without creating fresh inbox rows (even if wall-clock
                     // `extracted_at` changed).
                     CapturedPage {
                         pages: pages.iter().cloned().map(|id| (id, false)).collect(),
                         records: records.clone(),
-                    }
-                }
-                crate::source_cursor::Precondition::Advance => match input {
-                    Some(input) => {
-                        self.capture_mapping_page_rows_in_tx(raws, input, canonical, max_run_rows)?
-                    }
-                    None => CapturedPage {
-                        pages: Vec::new(),
-                        records: Vec::new(),
                     },
-                },
+                ),
+                crate::source_cursor::Precondition::Advance => (
+                    digest.clone(),
+                    match input {
+                        Some(input) => self.capture_mapping_page_rows_in_tx(
+                            raws,
+                            input,
+                            canonical,
+                            max_run_rows,
+                            Some(&advance.connection_id),
+                        )?,
+                        None => CapturedPage {
+                            pages: Vec::new(),
+                            records: Vec::new(),
+                        },
+                    },
+                ),
             };
             let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
             let payload = crate::source_cursor::CaptureCommitPayload {
-                digest: &digest,
+                digest: &page_digest,
                 pages: &page_ids,
                 records: &captured.records,
                 record_pending: true,
@@ -351,7 +389,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &payload,
             )?;
             Ok(CapturedSourcePage {
-                page_digest: digest,
+                page_digest,
                 captured,
             })
         })
@@ -372,6 +410,7 @@ impl<E: SqlEngine> CellStore<E> {
         input: &MappingInput,
         advance: &crate::source_cursor::CursorAdvanceSpec,
         pending_key: &str,
+        expected_binding: Option<(&str, &str)>,
     ) -> Result<CapturedPage, CellError> {
         let single = std::slice::from_ref(raw);
         Self::validate_page_framing(single, input, true)?;
@@ -379,9 +418,22 @@ impl<E: SqlEngine> CellStore<E> {
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            let precondition =
-                crate::source_cursor::check_capture_precondition(&self.conn, advance, pending_key)?;
-            if let crate::source_cursor::Precondition::IdempotentReplay { pages, records } =
+            crate::mapping_conflict::verify_mapping_binding_in_tx(
+                &self.read(),
+                expected_binding,
+                Some((
+                    advance.connection_id.as_str(),
+                    advance.lease_id.as_str(),
+                    advance.generation,
+                )),
+            )?;
+            let precondition = crate::source_cursor::check_capture_precondition(
+                &self.conn,
+                advance,
+                pending_key,
+                None,
+            )?;
+            if let crate::source_cursor::Precondition::IdempotentReplay { pages, records, .. } =
                 precondition
             {
                 return Ok(CapturedPage {
@@ -389,7 +441,13 @@ impl<E: SqlEngine> CellStore<E> {
                     records,
                 });
             }
-            let captured = self.capture_mapping_page_rows_in_tx(single, input, canonical, 1)?;
+            let captured = self.capture_mapping_page_rows_in_tx(
+                single,
+                input,
+                canonical,
+                1,
+                Some(&advance.connection_id),
+            )?;
             let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
             crate::source_cursor::insert_pending_in_tx(
                 &self.conn,
@@ -405,8 +463,8 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     /// SOURCE-CAPTURE-1: capture a sync report page while verifying inside the
-    /// same SQLite transaction that any existing lease row for `connection_id`
-    /// still belongs to `(lease_id, generation)` and has not expired at `now_ms`.
+    /// same SQLite transaction that both the durable lease and active connector
+    /// mapping revision pin match `fence`.
     ///
     /// # Errors
     /// [`CellError::SourceLeaseFenced`], framing refusals, or store errors.
@@ -414,7 +472,7 @@ impl<E: SqlEngine> CellStore<E> {
         &mut self,
         raws: &[Observed<RuntimeValue>],
         input: &MappingInput,
-        lease: Option<(&str, &str, u64, u64)>,
+        fence: crate::source_cursor::SourceReportFence<'_>,
     ) -> Result<CapturedPage, CellError> {
         if raws.is_empty() {
             return Err(CellError::OutOfRange("mapping page records"));
@@ -424,18 +482,8 @@ impl<E: SqlEngine> CellStore<E> {
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            if let Some((connection_id, lease_id, generation, now_ms)) = lease
-                && self.read().source_lease(connection_id)?.is_some()
-            {
-                crate::source_cursor::verify_active_lease(
-                    &self.conn,
-                    connection_id,
-                    lease_id,
-                    generation,
-                    now_ms,
-                )?;
-            }
-            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS)
+            crate::mapping_conflict::verify_source_fence_in_tx(&self.read(), fence)?;
+            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS, None)
         })
     }
 }
@@ -592,7 +640,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         clippy::type_complexity,
         reason = "the page row with its pending members"
     )]
-    fn pending_page(
+    pub(crate) fn pending_page(
         &self,
         page_id: &str,
     ) -> Result<Option<(Observed<RuntimeValue>, Vec<(String, MappingBundle)>)>, CellError> {
@@ -619,6 +667,22 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         &mut self,
         page: &Observed<RuntimeValue>,
         members: &[(String, MappingBundle)],
+    ) -> Result<(), CellError> {
+        self.commit_page_with_fence(
+            page,
+            members,
+            crate::source_cursor::SourceReportFence::default(),
+        )
+    }
+
+    /// One commit consuming `page` and applying `members` in page order,
+    /// optionally verifying an active source lease and connector mapping pin
+    /// inside the commit write tx.
+    pub(crate) fn commit_page_with_fence(
+        &mut self,
+        page: &Observed<RuntimeValue>,
+        members: &[(String, MappingBundle)],
+        source_fence: crate::source_cursor::SourceReportFence<'_>,
     ) -> Result<(), CellError> {
         let model = self.store().model().clone();
         let catalog = TypeCatalog::new(model.object_types())
@@ -669,8 +733,216 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed_evidence(commit, &authorization, &bundles)
-            .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
+        self.commit_observed_evidence_with_fence(commit, &authorization, &bundles, source_fence)
+            .map_err(|e| {
+                if let norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) = e
+                {
+                    err
+                } else {
+                    CellError::ObservationCommit(Box::new(e))
+                }
+            })?;
         Ok(())
+    }
+}
+
+impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
+    /// See [`CellStore::bind_source_mapping`].
+    ///
+    /// # Errors
+    /// Lease fencing, out-of-range timestamp, or store errors.
+    pub fn bind_source_mapping(
+        &mut self,
+        connection_id: &str,
+        mapping: (&str, &str),
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+        seed_cursors: &BTreeMap<String, String>,
+    ) -> Result<(), CellError> {
+        self.store_mut().bind_source_mapping(
+            connection_id,
+            mapping,
+            lease_id,
+            generation,
+            now_ms,
+            seed_cursors,
+        )
+    }
+
+    /// See [`CellStore::reset_source_cursors`].
+    ///
+    /// # Errors
+    /// Lease fencing, pending captures conflict, out-of-range timestamp, or store errors.
+    pub fn reset_source_cursors(
+        &mut self,
+        connection_id: &str,
+        mapping: (&str, &str),
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), CellError> {
+        self.store_mut()
+            .reset_source_cursors(connection_id, mapping, lease_id, generation, now_ms)
+    }
+}
+
+impl<E: SqlEngine> CellStore<E> {
+    /// Persist `connection_id -> mapping.1` in `_norn_source_binding` and
+    /// optionally seed legacy `_norn_source_cursor` rows in the same SQLite
+    /// transaction under the active fencing lease and connector mapping pin,
+    /// clearing any orphan `processed = 1` replay rows if the previous binding
+    /// was absent or different.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], [`CellError::OutOfRange`], or store errors.
+    pub fn bind_source_mapping(
+        &mut self,
+        connection_id: &str,
+        mapping: (&str, &str),
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+        seed_cursors: &BTreeMap<String, String>,
+    ) -> Result<(), CellError> {
+        use crate::engine::params;
+        use crate::source_cursor::{
+            SOURCE_BINDING, SOURCE_CURSOR, SOURCE_PENDING, verify_active_lease,
+        };
+        let gen_i64 = i64::try_from(generation)
+            .map_err(|_err| CellError::OutOfRange("binding generation"))?;
+        let now_i64 =
+            i64::try_from(now_ms).map_err(|_err| CellError::OutOfRange("binding updated_at_ms"))?;
+        self.write_tx(|| {
+            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
+            crate::mapping_conflict::verify_mapping_binding_in_tx(
+                &self.read(),
+                Some(mapping),
+                Some((connection_id, lease_id, generation)),
+            )?;
+            let prev: Option<String> = self.conn.query_optional(
+                &format!(
+                    "SELECT \"mapping_id\" FROM \"{SOURCE_BINDING}\" WHERE \"connection_id\" = ?1"
+                ),
+                params![connection_id],
+                |row| row.get(0),
+            )?;
+            if prev.as_deref() != Some(mapping.1) {
+                self.conn.execute(
+                    &format!(
+                        "DELETE FROM \"{SOURCE_PENDING}\" \
+                         WHERE \"connection_id\" = ?1 AND \"processed\" = 1"
+                    ),
+                    params![connection_id],
+                )?;
+            }
+            self.conn.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO \"{SOURCE_BINDING}\" \
+                     (\"connection_id\", \"mapping_id\", \"generation\", \"updated_at_ms\") \
+                     VALUES (?1, ?2, ?3, ?4)"
+                ),
+                params![connection_id, mapping.1, gen_i64, now_i64],
+            )?;
+            for (dataset, cursor_json) in seed_cursors {
+                self.conn.execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO \"{SOURCE_CURSOR}\" \
+                         (\"connection_id\", \"dataset\", \"cursor_json\", \"generation\", \"page_digest\", \
+                          \"pages_json\", \"records_json\", \"updated_at_ms\") \
+                         VALUES (?1, ?2, ?3, ?4, 'legacy-seed', '[]', '[]', ?5)"
+                    ),
+                    params![
+                        connection_id,
+                        dataset.as_str(),
+                        cursor_json.as_str(),
+                        gen_i64,
+                        now_i64,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Clear durable cursors/replays and rebind `connection_id` to `mapping.1`
+    /// under the active lease and active connector mapping pin. Refuses if
+    /// unprocessed pending captures remain or the active revision drifted.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
+    /// [`CellError::OutOfRange`], or store errors.
+    pub fn reset_source_cursors(
+        &mut self,
+        connection_id: &str,
+        mapping: (&str, &str),
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), CellError> {
+        use crate::engine::params;
+        use crate::source_cursor::{
+            SOURCE_BINDING, SOURCE_CURSOR, SOURCE_PENDING, verify_active_lease,
+        };
+        let gen_i64 = i64::try_from(generation)
+            .map_err(|_err| CellError::OutOfRange("binding generation"))?;
+        let now_i64 =
+            i64::try_from(now_ms).map_err(|_err| CellError::OutOfRange("binding updated_at_ms"))?;
+        self.write_tx(|| {
+            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
+            crate::mapping_conflict::verify_mapping_binding_in_tx(
+                &self.read(),
+                Some(mapping),
+                Some((connection_id, lease_id, generation)),
+            )?;
+            let pending: Option<String> = self.conn.query_optional(
+                &format!("SELECT \"dataset\" FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1 AND \"processed\" = 0 LIMIT 1"),
+                params![connection_id],
+                |row| row.get(0),
+            )?;
+            if let Some(dataset) = pending {
+                return Err(CellError::SourceCursorConflict {
+                    connection_id: connection_id.to_owned(),
+                    dataset,
+                    expected: None,
+                    actual: Some("pending".to_owned()),
+                });
+            }
+            self.conn.execute(
+                &format!("DELETE FROM \"{SOURCE_CURSOR}\" WHERE \"connection_id\" = ?1"),
+                params![connection_id],
+            )?;
+            self.conn.execute(
+                &format!("DELETE FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1"),
+                params![connection_id],
+            )?;
+            self.conn.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO \"{SOURCE_BINDING}\" \
+                     (\"connection_id\", \"mapping_id\", \"generation\", \"updated_at_ms\") \
+                     VALUES (?1, ?2, ?3, ?4)"
+                ),
+                params![connection_id, mapping.1, gen_i64, now_i64],
+            )?;
+            Ok(())
+        })
+    }
+}
+
+impl<E: SqlEngine> crate::StoreReader<'_, E> {
+    /// Durably bound mapping pin for `connection_id` from `_norn_source_binding`.
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn source_mapping_binding(&self, connection_id: &str) -> Result<Option<String>, CellError> {
+        use crate::engine::params;
+        use crate::source_cursor::SOURCE_BINDING;
+        self.conn.query_optional(
+            &format!(
+                "SELECT \"mapping_id\" FROM \"{SOURCE_BINDING}\" WHERE \"connection_id\" = ?1"
+            ),
+            params![connection_id],
+            |row| row.get(0),
+        )
     }
 }
