@@ -271,9 +271,8 @@ fn determinable_upsert_fields(needed: &BTreeSet<String>, base: &UpsertBase) -> O
     let mut enum_fields: BTreeSet<String> = BTreeSet::new();
     for field in needed {
         if base.derived_fields.contains(field) {
-            let deps = match base.derived_deps.get(field) {
-                Some(Some(deps)) => deps,
-                Some(None) | None => return None,
+            let Some(Some(deps)) = base.derived_deps.get(field) else {
+                return None;
             };
             for dep in deps {
                 if base.input.contains_key(dep) {
@@ -285,12 +284,12 @@ fn determinable_upsert_fields(needed: &BTreeSet<String>, base: &UpsertBase) -> O
                     return None;
                 }
             }
-        } else if base.state.contains_key(field) {
-            continue;
-        } else if base.finite_domains.contains_key(field) {
-            enum_fields.insert(field.clone());
-        } else {
-            return None;
+        } else if !base.state.contains_key(field) {
+            if base.finite_domains.contains_key(field) {
+                enum_fields.insert(field.clone());
+            } else {
+                return None;
+            }
         }
     }
     Some(enum_fields.into_iter().collect())

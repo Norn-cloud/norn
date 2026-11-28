@@ -261,8 +261,7 @@ fn constitutional_core_law_defeat_and_shadowing_are_refused_with_witness() {
             "rationale": "attempt to bypass core measure law",
             "source": {
                 "artifactId": "acme.relax_hold.law",
-                "version": "0.1.0",
-                "path": "/payload/exceptions/0"
+                "pointer": "/payload/exceptions/0"
             }
         }
     ]);

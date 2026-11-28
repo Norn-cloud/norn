@@ -55,7 +55,6 @@ pub(crate) fn core_base_values() -> Vec<Value> {
         "core.ValuedLedgerEffect.interface.json",
         "core.ReversibleEvent.interface.json",
         "core.TimeInterval.interface.json",
-        "core.Order.interface.json",
         "core.EconomicEvent.reversal_matches_original.law.json",
         "core.Hold.measure_matches_resource.law.json",
         "core.HoldableResource.open_holds_within_quantity.law.json",
@@ -92,13 +91,15 @@ pub(crate) fn core_base_values() -> Vec<Value> {
                     "id": "pii.financial",
                     "label": "Financial PII",
                     "severity": "high",
-                    "description": "Financial amount or billing metadata"
+                    "category": "pii.financial",
+                    "mask": { "kind": "redacted" }
                 },
                 {
                     "id": "pii.personal",
                     "label": "Personal PII",
                     "severity": "high",
-                    "description": "Personal contact or identity metadata"
+                    "category": "pii.personal",
+                    "mask": { "kind": "redacted" }
                 }
             ]
         }
@@ -151,7 +152,7 @@ pub(crate) fn core_predicate_law(
             {
                 "artifactId": dep_artifact_id,
                 "kind": "entity",
-                "version": "0.1.0",
+                "version": "0.2.0",
                 "required": true
             }
         ],

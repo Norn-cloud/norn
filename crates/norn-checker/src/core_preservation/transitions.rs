@@ -37,9 +37,8 @@ fn determinable_transition_fields(
             .find(|(prop, _)| prop.as_str() == field)
             .map(|(_, input_field)| input_field)?;
         if derived_fields.contains(input_field) {
-            let deps = match derived_deps.get(input_field) {
-                Some(Some(deps)) => deps,
-                Some(None) | None => return None,
+            let Some(Some(deps)) = derived_deps.get(input_field) else {
+                return None;
             };
             for dep in deps {
                 if base_input.contains_key(dep) {
@@ -51,12 +50,12 @@ fn determinable_transition_fields(
                     return None;
                 }
             }
-        } else if base_input.contains_key(input_field) {
-            continue;
-        } else if finite_domains.contains_key(input_field) {
-            enum_fields.insert(input_field.clone());
-        } else {
-            return None;
+        } else if !base_input.contains_key(input_field) {
+            if finite_domains.contains_key(input_field) {
+                enum_fields.insert(input_field.clone());
+            } else {
+                return None;
+            }
         }
     }
     Some(enum_fields.into_iter().collect())

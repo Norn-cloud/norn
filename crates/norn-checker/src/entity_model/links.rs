@@ -871,6 +871,11 @@ impl<'a> Checker<'a, '_> {
                 .get(ancestor)
                 .is_some_and(|entry| entry.local.is_none())
         });
+        let inherited_table = if registered && has_base_ancestor {
+            self.parent(&def.name).map(|parent| self.link_table(parent))
+        } else {
+            None
+        };
 
         for (id, group) in groups {
             let properties: Vec<(Option<usize>, &InterfaceDef)> = held
@@ -924,7 +929,7 @@ impl<'a> Checker<'a, '_> {
                         id,
                         requirement,
                         &table,
-                        has_base_ancestor,
+                        inherited_table.as_deref(),
                     );
                 }
             }
@@ -981,11 +986,11 @@ impl<'a> Checker<'a, '_> {
         id: &str,
         (position, interface, requirement): &LinkRequirement<'a>,
         table: &LinkTable<'a>,
-        check_inherited: bool,
+        inherited_table: Option<&LinkTable<'a>>,
     ) {
         let at = match position {
             Some(position) => span_at(base, &["implements", position.to_string().as_str()]),
-            None if check_inherited => span_at(base, &["extends"]),
+            None if inherited_table.is_some() => span_at(base, &["extends"]),
             None => return,
         };
         let name = interface.name.as_str();
@@ -1050,8 +1055,29 @@ impl<'a> Checker<'a, '_> {
             ));
             return;
         };
+        // When an interface is inherited through `extends` (`position.is_none()`),
+        // avoid emitting duplicate `interface_link_*` diagnostics at `/extends`
+        // when `check_link_override` already rejected this type's direct override
+        // of the inherited link for target mismatch or widened cardinality.
+        let overridden_link = if position.is_none()
+            && matches!(decl.origin, Origin::Type(owner) if owner.as_str() == child_name)
+        {
+            inherited_table.and_then(|parent| {
+                parent.get(id).and_then(|member| match member.kind {
+                    MemberKind::Link(inherited) => Some(inherited.link),
+                    MemberKind::Property(_) | MemberKind::Inverse(_) => None,
+                })
+            })
+        } else {
+            None
+        };
         let actual = link_witness::format_link_contract(&decl.link.target, decl.link.cardinality);
-        if self.target_narrows(&decl.link.target, &requirement.target) == Some(false) {
+        let override_failed_target = overridden_link.is_some_and(|inherited| {
+            self.target_narrows(&decl.link.target, &inherited.target) == Some(false)
+        });
+        if !override_failed_target
+            && self.target_narrows(&decl.link.target, &requirement.target) == Some(false)
+        {
             self.out.push(link_witness::interface_link_target_mismatch(
                 child_name,
                 name,
@@ -1062,7 +1088,12 @@ impl<'a> Checker<'a, '_> {
                 at.clone(),
             ));
         }
-        if !cardinality_narrows(decl.link.cardinality, requirement.cardinality) {
+        let override_widened_cardinality = overridden_link.is_some_and(|inherited| {
+            !cardinality_narrows(decl.link.cardinality, inherited.cardinality)
+        });
+        if !override_widened_cardinality
+            && !cardinality_narrows(decl.link.cardinality, requirement.cardinality)
+        {
             self.out
                 .push(link_witness::interface_link_widens_cardinality(
                     child_name, name, id, expected, actual, at,

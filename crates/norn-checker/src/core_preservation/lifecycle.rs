@@ -521,7 +521,7 @@ fn report_lifecycle_exits(
         trace.push(format!("blocked:{}", blocked.transition));
 
         let row = rows.get(blocked.from);
-        let state_assignment = row.map(row_assignment).unwrap_or_default();
+        let state_assignment = row.map_or_else(BTreeMap::new, row_assignment);
         let state_label = row
             .and_then(|r| r.get(property))
             .map_or_else(String::new, expr_value_to_string);

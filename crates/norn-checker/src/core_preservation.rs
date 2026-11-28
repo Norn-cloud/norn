@@ -678,7 +678,11 @@ fn check_core_law_enrollment(
             .map(InterfaceName::as_str)
             .filter(|name| is_core_name(name))
             .collect();
-        let lineage: BTreeSet<&str> = effective.lineage.iter().map(|n| n.as_str()).collect();
+        let lineage: BTreeSet<&str> = effective
+            .lineage
+            .iter()
+            .map(norn_ir::ObjectTypeName::as_str)
+            .collect();
         if core_ifaces.is_empty() && !lineage.iter().any(|n| is_core_name(n)) {
             continue;
         }
@@ -727,18 +731,33 @@ fn check_law_binding_on_subtype(
     env: &norn_expr::ZenTypeEnv,
     findings: &mut Vec<Diagnostic>,
 ) {
-    let mut exprs: Vec<(&str, &str)> = Vec::new();
+    let compiled_condition = law
+        .condition
+        .as_ref()
+        .and_then(|cond| Expression::compile(cond.as_str()).ok());
+    let mut exprs: Vec<(&str, &str, bool)> = Vec::new();
     if let Some(cond) = &law.condition {
-        exprs.push(("condition", cond.as_str()));
+        exprs.push(("condition", cond.as_str(), false));
+    }
+    for exception in &law.exceptions {
+        exprs.push(("exception", exception.condition.as_str(), true));
+    }
+    if let LawModality::Until { predicate } = &law.modality {
+        exprs.push(("until", predicate.as_str(), false));
     }
     if let LawResponse::Predicate { expression } = &law.response {
-        exprs.push(("response", expression.as_str()));
+        exprs.push(("response", expression.as_str(), true));
     }
-    for (slot, source) in exprs {
+    for (slot, source, guarded) in exprs {
         let Ok(compiled) = Expression::compile(source) else {
             continue;
         };
-        if let Err(errors) = compiled.check_typed(env, &Type::Bool) {
+        let checked = if guarded && let Some(cond) = &compiled_condition {
+            norn_expr::check_expression_under(&compiled, cond, env, &Type::Bool)
+        } else {
+            norn_expr::check_expression(&compiled, env, &Type::Bool)
+        };
+        if let Err(errors) = checked {
             let detail = errors.first().map_or_else(
                 || "type error binding core law on subtype".to_owned(),
                 |err| err.message.clone(),

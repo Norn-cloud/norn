@@ -244,12 +244,11 @@ pub(super) fn derive_input_dependencies(
             }
             if let Some(head) = path.first() {
                 if let Some(prev) = deps_by_field.get(head) {
-                    match prev {
-                        Some(prev_deps) => step_deps.extend(prev_deps.iter().cloned()),
-                        None => {
-                            ok = false;
-                            break;
-                        }
+                    if let Some(prev_deps) = prev {
+                        step_deps.extend(prev_deps.iter().cloned());
+                    } else {
+                        ok = false;
+                        break;
                     }
                 } else {
                     step_deps.insert(head.clone());
