@@ -427,11 +427,7 @@ pub fn compile_definitions_program(
 ) -> Result<Vec<DefinitionsCompileOutcome>, AuthoringError> {
     let started = Instant::now();
     let reports = profile_checker.check_program(program, files)?;
-    let first_limits = files
-        .first()
-        .map(|f| options_for(f).limits.clamped())
-        .unwrap_or_default();
-    let mut expansion = new_budget(first_limits, started);
+    let mut expansion = new_budget(CompilerLimits::default(), started);
 
     let mut outcomes = Vec::with_capacity(files.len());
     for (&file, report) in files.iter().zip(reports) {

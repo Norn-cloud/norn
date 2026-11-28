@@ -297,6 +297,7 @@ struct Cost {
 /// nesting depth, and wall-clock time (`builder/budget.ts`).
 #[derive(Clone, Debug)]
 pub(crate) struct ExpansionBudget {
+    pack_limits: ExpansionLimits,
     limits: ExpansionLimits,
     started: Instant,
     work: usize,
@@ -305,10 +306,12 @@ pub(crate) struct ExpansionBudget {
 }
 
 impl ExpansionBudget {
-    /// Creates a budget anchored at an explicit [`Instant`].
+    /// Creates a budget anchored at an explicit [`Instant`] whose `limits` also
+    /// act as the immutable pack-wide ceiling.
     #[must_use]
     pub(crate) const fn with_started(limits: ExpansionLimits, started: Instant) -> Self {
         Self {
+            pack_limits: limits,
             limits,
             started,
             work: 0,
@@ -333,11 +336,21 @@ impl ExpansionBudget {
         Ok(())
     }
 
-    /// Applies the module's expansion limits and resets the per-module work and
-    /// pending literal counters while keeping the pack-wide output byte counter
-    /// and deadline anchor.
-    pub(crate) fn begin_module(&mut self, limits: ExpansionLimits) {
-        self.limits = limits;
+    /// Applies the module's expansion limits clamped strictly within the fixed
+    /// pack-wide ceilings, resetting per-module work and pending literal
+    /// counters while preserving pack-wide output bytes and the deadline anchor.
+    pub(crate) fn begin_module(&mut self, module_limits: ExpansionLimits) {
+        self.limits = ExpansionLimits {
+            max_work: module_limits.max_work.min(self.pack_limits.max_work),
+            max_output_bytes: module_limits
+                .max_output_bytes
+                .min(self.pack_limits.max_output_bytes),
+            max_millis: match (self.pack_limits.max_millis, module_limits.max_millis) {
+                (Some(pack_ms), Some(mod_ms)) => Some(pack_ms.min(mod_ms)),
+                (Some(pack_ms), None) => Some(pack_ms),
+                (None, mod_ms) => mod_ms,
+            },
+        };
         self.work = 0;
         self.pending_bytes = 0;
     }
@@ -606,5 +619,34 @@ mod tests {
             Instant::now(),
         );
         assert!(generous.assert_value(&json!(raw)).is_ok());
+    }
+
+    #[test]
+    fn begin_module_clamps_within_fixed_pack_ceilings() {
+        let mut budget = ExpansionBudget::with_started(
+            ExpansionLimits {
+                max_work: 500,
+                max_output_bytes: 200,
+                max_millis: Some(1_000),
+            },
+            Instant::now(),
+        );
+        budget.begin_module(ExpansionLimits {
+            max_work: 9_999,
+            max_output_bytes: 9_999,
+            max_millis: Some(9_999),
+        });
+        assert_eq!(budget.limits.max_work, 500);
+        assert_eq!(budget.limits.max_output_bytes, 200);
+        assert_eq!(budget.limits.max_millis, Some(1_000));
+
+        budget.begin_module(ExpansionLimits {
+            max_work: 100,
+            max_output_bytes: 50,
+            max_millis: Some(250),
+        });
+        assert_eq!(budget.limits.max_work, 100);
+        assert_eq!(budget.limits.max_output_bytes, 50);
+        assert_eq!(budget.limits.max_millis, Some(250));
     }
 }
