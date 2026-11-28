@@ -191,9 +191,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             &format!(
                 "SELECT position, observation_id, observed FROM \"{INBOX}\" \
                  WHERE observation_id LIKE 'mapping-identity:%' \
-                   AND NOT EXISTS (SELECT 1 FROM \"{res}\" r WHERE r.\"dispute_id\" = \"{INBOX}\".\"observation_id\") \
-                 ORDER BY position",
-                res = crate::link_claim_frontier::DISPUTE_RESOLUTION,
+                 ORDER BY position"
             ),
             params![],
         )?;
@@ -203,6 +201,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
             let stored_id: String = row.get(1)?;
             let encoded: String = row.get(2)?;
+            if self
+                .verified_dispute_resolution_seq(&stored_id, None)?
+                .is_some()
+            {
+                continue;
+            }
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let guard: IdentityEvidence =
                 norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;

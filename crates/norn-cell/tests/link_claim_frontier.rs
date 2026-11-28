@@ -3075,3 +3075,120 @@ fn pre_v13_legacy_retirement_with_prior_pending_conflict_and_same_window_attribu
             .is_some()
     );
 }
+
+/// #1549 / OBS-DISPUTE-LOOKUP-1: Inserting a forged `_norn_dispute_resolution`
+/// row directly into SQLite on an already-open cell (without a matching
+/// immutable ledger event and verified receipt) must fail closed on every live
+/// quarantine reader and never release the disputed subject from quarantine.
+#[test]
+fn tampered_dispute_resolution_on_open_cell_fails_closed_and_keeps_quarantine() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("open_tamper_res.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let a1 = party_ref_row("P-A", "demo/party/a", "A1", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "A2 Conflict", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+    let (r2, i2) = raw_event(&cell, "erpnext", &a2, "e1", "1", "upsert", "p1");
+    let mapping_id = i2.mapping.clone();
+    let (conflict_id, inserted) = cell.inject_mapping_bundle(&r2, &i2).expect("inject c");
+    assert!(inserted && conflict_id.starts_with("mapping-conflict:"));
+
+    // Tamper `_norn_dispute_resolution` while `cell` is ALREADY open!
+    {
+        let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
+        raw_conn
+            .execute(
+                "INSERT INTO \"_norn_dispute_resolution\" \
+                 (\"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\") \
+                 VALUES (?1, 'accept-first', 'attacker', 'forged', 1, '0000')",
+                rusqlite::params![&conflict_id],
+            )
+            .expect("tamper resolution row");
+    }
+
+    assert!(
+        cell.store()
+            .read()
+            .authoritative_page(MAIN_WORLD, "canon.Party", None, 100)
+            .is_err(),
+        "authoritative_page must fail closed on unverified _norn_dispute_resolution row"
+    );
+    assert!(
+        cell.store()
+            .read()
+            .unresolved_quarantined_datasets(&mapping_id, None)
+            .is_err(),
+        "unresolved_quarantined_datasets must fail closed on unverified resolution row"
+    );
+    assert!(
+        cell.store().read().retained_source_conflicts().is_err(),
+        "retained_source_conflicts must fail closed on unverified resolution row"
+    );
+    assert!(
+        cell.store()
+            .read()
+            .dispute_resolution(&conflict_id)
+            .is_err(),
+        "dispute_resolution must fail closed on unverified resolution row"
+    );
+    assert!(
+        cell.store().read().dispute_resolutions().is_err(),
+        "dispute_resolutions must fail closed on unverified resolution row"
+    );
+}
+
+/// #1028: A link claim whose provenance carries decomposed NFD Unicode text
+/// must preserve exact spelling across reopen and frontier drift healing so
+/// resealing that retained claim in a later commit never fails with
+/// `immutable claim changed`.
+#[test]
+fn nfd_unicode_claim_provenance_survives_reopen_heal_and_resealing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("nfd_claim_reseal.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
+
+    // Decomposed NFD source_id (`e` + U+0301 combining acute accent).
+    let a_nfd = party_ref_row(
+        "P-Cafe\u{0301}",
+        "demo/party/a",
+        "A NFD",
+        Some("demo/party/b"),
+    );
+    capture_kind(&mut cell, "erpnext", &a_nfd, "e1", "1", "upsert", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // Wipe `_norn_link_claim_frontier` and reopen so drift healing rebuilds it.
+    let model = cell.store().model().clone();
+    drop(cell);
+    {
+        let conn = rusqlite::Connection::open(&path).expect("sqlite");
+        conn.execute("DELETE FROM \"_norn_link_claim_frontier\"", [])
+            .expect("wipe frontier");
+    }
+    let reopened = CellStore::open(&path, model, StoreOptions::default()).expect("reopen heals");
+    let mut cell = SqliteCell::new(reopened, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+
+    // Landing a second partition's claim on the same `(demo/party/a, refers)`
+    // group forces resealing the retained NFD claim via `prepare_observed_link_claim_snapshot`.
+    let a_p2 = party_ref_row("P-ASCII", "demo/party/a", "A P2", Some("demo/party/c"));
+    capture_kind(&mut cell, "erpnext", &a_p2, "e2", "1", "upsert", "p2");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned(), "demo/party/c".to_owned()])
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence with NFD claim provenance");
+}

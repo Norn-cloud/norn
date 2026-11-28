@@ -377,7 +377,7 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
 /// (normal pending dispute) or consumes nothing when resolving a pre-v13
 /// legacy dispute row that was already generically consumed at an earlier
 /// commit sequence (`consumed_commit_seq < commit_seq`).
-fn dispute_consumption_valid<E: SqlEngine>(
+pub(crate) fn dispute_consumption_valid<E: SqlEngine>(
     conn: &E,
     commit_seq: u64,
     dispute_id: &str,
@@ -494,7 +494,8 @@ pub(crate) fn verify_or_rebuild_on_open<E: SqlEngine>(
 pub(crate) fn frontier_has_drift<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
 ) -> Result<bool, CellError> {
-    let (expected_claims, expected_superseded) = decode_claims_from_fact_values(reader.conn)?;
+    let (expected_claims, expected_superseded) =
+        decode_claims_from_fact_values(reader.conn, Some(reader))?;
     let stored_claims = reader.conn.query(
         &format!(
             "SELECT \"claim_id\", \"contribution_id\", \"source_scope\", \"source_type\", \
@@ -566,6 +567,7 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
 )]
 pub(crate) fn decode_claims_from_fact_values<E: SqlEngine>(
     conn: &E,
+    reader: Option<&StoreReader<'_, E>>,
 ) -> Result<(Vec<(String, u64, u64, ObservedLinkClaim)>, BTreeSet<String>), CellError> {
     let rows = conn.query(
         &format!(
@@ -603,7 +605,26 @@ pub(crate) fn decode_claims_from_fact_values<E: SqlEngine>(
         let Some(values) = snapshot.values else {
             continue;
         };
-        let claim = parse_claim_from_values(&id, &values)?;
+        // Verify canonical equality against immutable `_norn_fact_values` and
+        // decode live exact Unicode spelling (for resealing) when available.
+        let claim_values = if let Some(reader) = reader
+            && let Some(live) = reader.object(
+                crate::MAIN_WORLD,
+                norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+                &id,
+            )? {
+            if crate::codec::canonical_json(&live.values)? != crate::codec::canonical_json(&values)?
+            {
+                return Err(CellError::LedgerCorrupt {
+                    seq: commit_seq,
+                    reason: format!("live claim {id} disagrees with _norn_fact_values"),
+                });
+            }
+            live.values
+        } else {
+            values
+        };
+        let claim = parse_claim_from_values(&id, &claim_values)?;
         superseded_ids.extend(claim.supersedes.iter().cloned());
         decoded.push((id, commit_seq, ordinal, claim));
     }
@@ -708,7 +729,7 @@ fn rebuild_inner<E: SqlEngine>(
     conn.execute(&format!("DELETE FROM \"{LINK_CLAIM_FRONTIER}\""), params![])?;
     conn.execute(&format!("DELETE FROM \"{DISPUTE_RESOLUTION}\""), params![])?;
 
-    let (decoded, superseded_ids) = decode_claims_from_fact_values(conn)?;
+    let (decoded, superseded_ids) = decode_claims_from_fact_values(conn, reader)?;
     let mut meta_cache: BTreeMap<String, ClaimSourceMeta> = BTreeMap::new();
     for (id, commit_seq, ord, claim) in &decoded {
         if !meta_cache.contains_key(&claim.observation_id) {
@@ -923,7 +944,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// sequence then dispute id.
     ///
     /// # Errors
-    /// Store query failures.
+    /// Store query failures or unverified resolution index rows.
     pub fn dispute_resolutions(&self) -> Result<Vec<DisputeResolutionRecord>, CellError> {
         self.check_live()?;
         let rows = self.conn.query(
@@ -935,15 +956,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )?;
         rows.into_iter()
             .map(|raw| {
-                let row = SqlRow(raw);
-                Ok(DisputeResolutionRecord {
-                    dispute_id: row.get(0)?,
-                    decision: row.get(1)?,
-                    actor: row.get(2)?,
-                    reason: row.get(3)?,
-                    commit_seq: to_u64(row.get(4)?, "dispute resolution commit_seq")?,
-                    receipt_hash: row.get(5)?,
-                })
+                let rec = decode_dispute_resolution_row(&SqlRow(raw))?;
+                self.verified_dispute_resolution_seq(&rec.dispute_id, None)?;
+                Ok(rec)
             })
             .collect()
     }
@@ -951,28 +966,34 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// Look up the recorded resolution for one `dispute_id`, if resolved.
     ///
     /// # Errors
-    /// Store query failures.
+    /// Store query failures or an unverified resolution index row.
     pub fn dispute_resolution(
         &self,
         dispute_id: &str,
     ) -> Result<Option<DisputeResolutionRecord>, CellError> {
         self.check_live()?;
-        self.conn.query_optional(
+        let rec = self.conn.query_optional(
             &format!(
                 "SELECT \"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\" \
                  FROM \"{DISPUTE_RESOLUTION}\" WHERE \"dispute_id\" = ?1"
             ),
             params![dispute_id],
-            |row| {
-                Ok(DisputeResolutionRecord {
-                    dispute_id: row.get(0)?,
-                    decision: row.get(1)?,
-                    actor: row.get(2)?,
-                    reason: row.get(3)?,
-                    commit_seq: to_u64(row.get(4)?, "dispute resolution commit_seq")?,
-                    receipt_hash: row.get(5)?,
-                })
-            },
-        )
+            decode_dispute_resolution_row,
+        )?;
+        if let Some(record) = &rec {
+            self.verified_dispute_resolution_seq(&record.dispute_id, None)?;
+        }
+        Ok(rec)
     }
+}
+
+fn decode_dispute_resolution_row(row: &SqlRow) -> Result<DisputeResolutionRecord, CellError> {
+    Ok(DisputeResolutionRecord {
+        dispute_id: row.get(0)?,
+        decision: row.get(1)?,
+        actor: row.get(2)?,
+        reason: row.get(3)?,
+        commit_seq: to_u64(row.get(4)?, "dispute resolution commit_seq")?,
+        receipt_hash: row.get(5)?,
+    })
 }

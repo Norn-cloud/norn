@@ -290,7 +290,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     }
                     None => false,
                 };
-            if !relevant {
+            if !relevant
+                || self
+                    .verified_dispute_resolution_seq(&stored_id, None)?
+                    .is_some()
+            {
                 continue;
             }
             if let Err(err) = self.recheck_mapping_bundle(&conflict.incoming) {
@@ -354,7 +358,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     }
                     None => false,
                 };
-            if !relevant {
+            if !relevant
+                || self
+                    .verified_dispute_resolution_seq(&stored_id, None)?
+                    .is_some()
+            {
                 continue;
             }
             if let Err(err) = self.recheck_identity_evidence(&guard, &stored_id) {
@@ -421,15 +429,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         evidence_access: crate::combined_view::RowAccessDecider<'_>,
     ) -> Result<usize, CellError> {
         // Range bounds (`:` = 0x3A, `;` = 0x3B) use the `UNIQUE(observation_id)` index.
-        let res = crate::link_claim_frontier::DISPUTE_RESOLUTION;
-        let unresolved = format!(
-            "NOT EXISTS (SELECT 1 FROM \"{res}\" r WHERE r.\"dispute_id\" = {INBOX}.observation_id)"
-        );
         let conflict_rows = self.conn.query(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
                  WHERE observation_id >= 'mapping-conflict:' AND observation_id < 'mapping-conflict;' \
-                   AND {unresolved} \
                  ORDER BY position"
             ),
             params![],
@@ -438,7 +441,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
                  WHERE observation_id >= 'mapping-identity:' AND observation_id < 'mapping-identity;' \
-                   AND {unresolved} \
                  ORDER BY position"
             ),
             params![],

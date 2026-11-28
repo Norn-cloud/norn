@@ -173,7 +173,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             ));
         }
         let (immutable_claims, _) =
-            crate::link_claim_frontier::decode_claims_from_fact_values(self.conn)?;
+            crate::link_claim_frontier::decode_claims_from_fact_values(self.conn, Some(self))?;
         let active_rows = self.all_frontier_claims()?;
         let catalog = TypeCatalog::new(self.model().object_types())
             .with_interfaces(self.model().interfaces());

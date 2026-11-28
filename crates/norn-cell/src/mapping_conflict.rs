@@ -539,19 +539,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             None => "\"consumed_commit_seq\" IS NULL".to_owned(),
         };
-        let res = crate::link_claim_frontier::DISPUTE_RESOLUTION;
-        let unresolved_dispute = match frontier_i64 {
-            Some(f) => format!(
-                "NOT EXISTS (SELECT 1 FROM \"{res}\" r WHERE r.\"dispute_id\" = \"{INBOX}\".\"observation_id\" AND r.\"commit_seq\" <= {f})"
-            ),
-            None => format!(
-                "NOT EXISTS (SELECT 1 FROM \"{res}\" r WHERE r.\"dispute_id\" = \"{INBOX}\".\"observation_id\")"
-            ),
-        };
         let disputes_sql = format!(
             "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
-             WHERE {unresolved_dispute} \
-               AND (\"observation_id\" LIKE 'mapping-conflict:%' OR \"observation_id\" LIKE 'mapping-identity:%')"
+             WHERE \"observation_id\" LIKE 'mapping-conflict:%' \
+                OR \"observation_id\" LIKE 'mapping-identity:%'"
         );
         for values in self.conn.query(&disputes_sql, params![])? {
             let row = crate::engine::SqlRow(values);
@@ -562,6 +553,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 continue;
             };
             if bundle.input.mapping != mapping_id {
+                continue;
+            }
+            if self
+                .verified_dispute_resolution_seq(&id, frontier_i64)?
+                .is_some()
+            {
                 continue;
             }
             if evidence_matches_scope(self.conn, &id, pos, &bundle, connection_id, scope_at)? {
