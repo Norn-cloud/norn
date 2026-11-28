@@ -568,7 +568,7 @@ impl EntityBook {
         let input: JsonObject =
             serde_json::from_value(input).map_err(|e| format!("{action} input: {e}"))?;
         let catalog = pack.definitions.catalog();
-        let call = ActionCall {
+        let action_call = ActionCall {
             action: &admitted.root,
             action_artifact_id: &admitted.artifact_id,
             action_version: &admitted.version,
@@ -586,7 +586,7 @@ impl EntityBook {
             },
             trace: None,
         };
-        Ok(match commit_action(cell, &catalog, &call, &Allow) {
+        Ok(match commit_action(cell, &catalog, &action_call, &Allow) {
             Ok(ActionOutcome::Committed { .. }) => Outcome::Committed,
             Ok(ActionOutcome::Replayed { .. }) => Outcome::Replayed,
             Err(refusal) => Outcome::Refused(refusal.code().to_owned(), refusal.to_string()),
@@ -1698,7 +1698,7 @@ fn verify_pos_lineage(
 fn verify_receipt_and_cost_feeds(cell: &mut MapCell) -> Result<(), String> {
     let rcpt_in = map_input("supply.retail_receipts.mapping", "retail_receipt");
     let nocost_rcpt = r#"{"receipt_line_id":"RR-NOCOST","store_code":"ST-SOLE-CFC-2","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","received_qty":20,"damaged_qty":0,"uom":"PCS","unit_cost":null,"ccy":"EGP","received_at":"2026-08-20T09:00:00Z"}"#;
-    let (b_r1, _) = cell
+    let (nocost_receipt_bundle, _) = cell
         .inject_mapping_bundle(
             &raw_obs(
                 "synthetic-retail-receipt",
@@ -1709,7 +1709,7 @@ fn verify_receipt_and_cost_feeds(cell: &mut MapCell) -> Result<(), String> {
             &rcpt_in,
         )
         .map_err(|e| format!("{e}"))?;
-    cell.process_mapping_bundle(&b_r1)
+    cell.process_mapping_bundle(&nocost_receipt_bundle)
         .map_err(|e| format!("{e}"))?;
     let r_obj = cell
         .store()
@@ -1727,48 +1727,54 @@ fn verify_receipt_and_cost_feeds(cell: &mut MapCell) -> Result<(), String> {
     );
 
     let bad_rcpt = r#"{"receipt_line_id":"RR-BAD","store_code":"ST-SOLE-CFC-2","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","received_qty":10,"damaged_qty":12,"uom":"PCS","unit_cost":-5,"ccy":"EGP","received_at":"2026-08-20T09:00:00Z"}"#;
-    let (b_r2, _) = cell
+    let (bad_receipt_bundle, _) = cell
         .inject_mapping_bundle(
             &raw_obs("synthetic-retail-receipt", "ev-rr-2", "RR-BAD", bad_rcpt)?,
             &rcpt_in,
         )
         .map_err(|e| format!("{e}"))?;
-    cell.process_mapping_bundle(&b_r2)
+    cell.process_mapping_bundle(&bad_receipt_bundle)
         .map_err(|e| format!("{e}"))?;
-    let r_f = open_findings(cell, "supply.RetailReceiptEvidence", "RR-BAD")?;
+    let receipt_findings = open_findings(cell, "supply.RetailReceiptEvidence", "RR-BAD")?;
     assert!(
-        r_f.iter().any(|r| r.contains("damaged_within_received")),
-        "{r_f:?}"
+        receipt_findings
+            .iter()
+            .any(|r| r.contains("damaged_within_received")),
+        "{receipt_findings:?}"
     );
     assert!(
-        r_f.iter().any(|r| r.contains("retail_receipt_cost_valid")),
-        "{r_f:?}"
+        receipt_findings
+            .iter()
+            .any(|r| r.contains("retail_receipt_cost_valid")),
+        "{receipt_findings:?}"
     );
 
     let cost_in = map_input("supply.unit_costs.mapping", "unit_cost");
     let bad_cost = r#"{"cost_id":"COST-BAD","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","unit_cost":0,"ccy":"EGP","effective_from":"2026-08-01T00:00:00Z"}"#;
-    let (b_c1, _) = cell
+    let (bad_cost_bundle, _) = cell
         .inject_mapping_bundle(
             &raw_obs("synthetic-cost", "ev-c-1", "COST-BAD", bad_cost)?,
             &cost_in,
         )
         .map_err(|e| format!("{e}"))?;
-    cell.process_mapping_bundle(&b_c1)
+    cell.process_mapping_bundle(&bad_cost_bundle)
         .map_err(|e| format!("{e}"))?;
-    let c_f = open_findings(cell, "supply.UnitCostEvidence", "COST-BAD")?;
+    let cost_findings = open_findings(cell, "supply.UnitCostEvidence", "COST-BAD")?;
     assert!(
-        c_f.iter().any(|r| r.contains("unit_cost_positive")),
-        "{c_f:?}"
+        cost_findings
+            .iter()
+            .any(|r| r.contains("unit_cost_positive")),
+        "{cost_findings:?}"
     );
 
     let good_cost = r#"{"cost_id":"COST-BAD","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","unit_cost":100,"ccy":"EGP","effective_from":"2026-08-01T00:00:00Z"}"#;
-    let (b_c2, _) = cell
+    let (good_cost_bundle, _) = cell
         .inject_mapping_bundle(
             &raw_obs("synthetic-cost", "ev-c-2", "COST-BAD", good_cost)?,
             &cost_in,
         )
         .map_err(|e| format!("{e}"))?;
-    cell.process_mapping_bundle(&b_c2)
+    cell.process_mapping_bundle(&good_cost_bundle)
         .map_err(|e| format!("{e}"))?;
     assert_eq!(
         open_findings(cell, "supply.UnitCostEvidence", "COST-BAD")?,
