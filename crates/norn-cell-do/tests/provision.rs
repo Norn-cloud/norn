@@ -1226,6 +1226,13 @@ fn fault_sweep(first: &[u32], later: &[u32]) -> Swept {
 
 /// [`fault_sweep`] for the fault `kinds` only (a shard of an exhaustive run).
 fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Swept {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    enum CaseOutcome {
+        Hit { is_whole: bool },
+        Miss,
+    }
+
     let directory = tempfile::tempdir().unwrap();
     let scope = scope("org_a", "prod");
     let owner = user("org_a", "owner");
@@ -1243,6 +1250,48 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
             plans.push((EngineFaultKind::Commit, transaction, &commit_point));
         }
     }
+    let next_case_id = AtomicU64::new(0);
+    let run_case = |kind: EngineFaultKind, transaction: u32, at_statement: u32| -> CaseOutcome {
+        let case_id = next_case_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let at = format!("{kind:?} at transaction {transaction}, statement {at_statement}");
+        let path = file(&directory, &format!("fault-{case_id}"));
+        let faults = FaultSwitch::default();
+        let mut cell = open_faulted(&path, &scope, &faults).unwrap();
+        faults.arm(EngineFault {
+            kind,
+            transaction,
+            at_statement,
+        });
+        let response = provision(&mut cell, Some(&owner), &body);
+        let hit = faults.disarm();
+        drop(cell);
+        // The platform restarts the object; no fault is armed.
+        let mut cell = open_faulted(&path, &scope, &faults)
+            .unwrap_or_else(|error| panic!("{at}: recovery refused: {error}"));
+        let outcome = if hit {
+            assert!(response.status >= 400, "{at}: {}", response.body);
+            assert!(json_of(&response)["code"].is_string(), "{at}");
+            let is_whole = cell.tenant.is_provisioned();
+            let retry = provision(&mut cell, Some(&owner), &body);
+            assert_eq!(retry.status, 200, "{at}: {}", retry.body);
+            let expected = if is_whole { "replayed" } else { "provisioned" };
+            assert_eq!(json_of(&retry)["outcome"], expected, "{at}");
+            CaseOutcome::Hit { is_whole }
+        } else {
+            assert_eq!(response.status, 200, "{at}: {}", response.body);
+            assert!(cell.tenant.is_provisioned(), "{at}");
+            CaseOutcome::Miss
+        };
+        assert_eq!(definitions(&mut cell, Some(&owner)).status, 200, "{at}");
+        drop(cell);
+        // An exhaustive sweep runs tens of thousands of cases: each
+        // case's store goes once it is checked, or the disk fills.
+        remove_store(&path);
+        outcome
+    };
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(4);
     let mut swept = Swept {
         vacant: 0,
         whole: 0,
@@ -1251,49 +1300,63 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
     };
     for (kind, transaction, statements) in plans {
         let mut past = false;
-        for &at_statement in statements {
-            if past && at_statement != u32::MAX {
+        let mut index = 0;
+        while index < statements.len() {
+            if past {
+                let at_statement = statements[index];
+                index += 1;
+                if at_statement != u32::MAX {
+                    continue;
+                }
+                swept.cases += 1;
+                let outcome = run_case(kind, transaction, at_statement);
+                match outcome {
+                    CaseOutcome::Hit { is_whole: true } => swept.whole += 1,
+                    CaseOutcome::Hit { is_whole: false } => swept.vacant += 1,
+                    CaseOutcome::Miss => {}
+                }
+                past = matches!(outcome, CaseOutcome::Miss);
                 continue;
             }
-            swept.cases += 1;
-            let at = format!("{kind:?} at transaction {transaction}, statement {at_statement}");
-            let path = file(&directory, &format!("fault-{}", swept.cases));
-            let faults = FaultSwitch::default();
-            let mut cell = open_faulted(&path, &scope, &faults).unwrap();
-            faults.arm(EngineFault {
-                kind,
-                transaction,
-                at_statement,
-            });
-            let response = provision(&mut cell, Some(&owner), &body);
-            let hit = faults.disarm();
-            drop(cell);
-            // The platform restarts the object; no fault is armed.
-            let mut cell = open_faulted(&path, &scope, &faults)
-                .unwrap_or_else(|error| panic!("{at}: recovery refused: {error}"));
-            if hit {
-                assert!(response.status >= 400, "{at}: {}", response.body);
-                assert!(json_of(&response)["code"].is_string(), "{at}");
-                let whole = cell.tenant.is_provisioned();
-                let retry = provision(&mut cell, Some(&owner), &body);
-                assert_eq!(retry.status, 200, "{at}: {}", retry.body);
-                let expected = if whole { "replayed" } else { "provisioned" };
-                assert_eq!(json_of(&retry)["outcome"], expected, "{at}");
-                if whole {
-                    swept.whole += 1;
-                } else {
-                    swept.vacant += 1;
-                }
+            // Execute up to `workers` independent cases in parallel, then fold
+            // their outcomes in strict index order so `swept` and `past` match
+            // the serial loop identically for every statement list.
+            let end = (index + workers).min(statements.len());
+            let batch = &statements[index..end];
+            index = end;
+            let outcomes: Vec<std::thread::Result<CaseOutcome>> = if batch.len() == 1 {
+                vec![Ok(run_case(kind, transaction, batch[0]))]
             } else {
-                assert_eq!(response.status, 200, "{at}: {}", response.body);
-                assert!(cell.tenant.is_provisioned(), "{at}");
+                let run_case = &run_case;
+                std::thread::scope(|thread_scope| {
+                    let mut handles = Vec::with_capacity(batch.len());
+                    for &at_statement in batch {
+                        handles.push(
+                            thread_scope.spawn(move || run_case(kind, transaction, at_statement)),
+                        );
+                    }
+                    handles
+                        .into_iter()
+                        .map(std::thread::ScopedJoinHandle::join)
+                        .collect()
+                })
+            };
+            for (&at_statement, outcome) in batch.iter().zip(outcomes) {
+                if past && at_statement != u32::MAX {
+                    continue;
+                }
+                let outcome = match outcome {
+                    Ok(outcome) => outcome,
+                    Err(payload) => std::panic::resume_unwind(payload),
+                };
+                swept.cases += 1;
+                match outcome {
+                    CaseOutcome::Hit { is_whole: true } => swept.whole += 1,
+                    CaseOutcome::Hit { is_whole: false } => swept.vacant += 1,
+                    CaseOutcome::Miss => {}
+                }
+                past = matches!(outcome, CaseOutcome::Miss);
             }
-            assert_eq!(definitions(&mut cell, Some(&owner)).status, 200, "{at}");
-            drop(cell);
-            // An exhaustive sweep runs tens of thousands of cases: each
-            // case's store goes once it is checked, or the disk fills.
-            remove_store(&path);
-            past = !hit;
         }
         if !past && statements.len() > 1 {
             swept
