@@ -271,7 +271,7 @@ pub fn synthesize_object(
         if !all_key_props.contains(id)
             && let Some(witness) = witness_subject
             && let Some(witness_val) = witness.get(id)
-            && super::witness_seed::witness_value_matches_property(witness_val, &prop, &shared)
+            && super::witness_seed::witness_value_matches_property(witness_val, prop, &shared)
         {
             values.insert(id.to_owned(), witness_val.clone());
             continue;
@@ -290,7 +290,7 @@ pub fn synthesize_object(
         object_type,
         &props,
         &initial_by_prop,
-        &key_props,
+        &all_key_props,
         &mut values,
     );
     values
