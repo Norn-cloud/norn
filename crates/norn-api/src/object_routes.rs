@@ -148,6 +148,31 @@ pub(crate) fn question_sources_permitted<E: SqlEngine>(
     })
 }
 
+/// QUESTION-STEP-1 / PRIVACY-3: check inherited `RunQuestionRead` grants for
+/// exporting `object_type` inside the caller's held snapshot-permit reader so
+/// inherited clearance and exported rows share one sealed snapshot version.
+pub(crate) fn inherited_export_permitted<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    access: &dyn ObjectAccess,
+    actor: Option<&str>,
+    object_type: &str,
+) -> Result<bool, Refusal> {
+    let inherited = reader
+        .object_type_question_source_types(MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?;
+    if inherited.is_empty() {
+        return Ok(true);
+    }
+    let Some(actor_id) = actor else {
+        return Ok(false);
+    };
+    Ok(
+        question_sources_permitted(host, access, actor_id, &inherited, Population)
+            && question_sources_permitted(host, access, actor_id, &inherited, Values),
+    )
+}
+
 /// Declared property names and resolved base types of an object type.
 pub(crate) type EffectiveProperties = Vec<(String, Option<norn_ir::PropertyType>)>;
 

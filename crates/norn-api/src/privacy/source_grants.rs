@@ -29,18 +29,30 @@ pub(crate) fn plan_sources<E: SqlEngine>(
     if !unmarked {
         return false;
     }
-    let mut types = BTreeSet::from([plan.grain().as_str()]);
+    let mut types: BTreeSet<String> = BTreeSet::from([plan.grain().as_str().to_owned()]);
     for sum in plan.sums() {
         if let Some(link) = &sum.time_link {
-            types.insert(link.target_type.as_str());
+            types.insert(link.target_type.as_str().to_owned());
+        }
+    }
+    let reader = store.read();
+    let seeds: Vec<String> = types.iter().cloned().collect();
+    for ty in seeds {
+        let Ok(inherited) = reader.object_type_question_source_types(MAIN_WORLD, &ty) else {
+            return false;
+        };
+        for req in inherited {
+            if req.requires_sources {
+                types.insert(req.source_type);
+            }
         }
     }
     if store.model().has_type("source.Connection") {
-        types.insert("source.Connection");
+        types.insert("source.Connection".to_owned());
     }
     types.into_iter().all(|name| {
         runtime
-            .collection_access(host.scope(), actor, Sources, name)
+            .collection_access(host.scope(), actor, Sources, &name)
             .is_ok_and(|access| {
                 access.principal().subject_id == actor
                     && access.resource().object_type == name

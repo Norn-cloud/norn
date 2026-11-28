@@ -13,6 +13,8 @@
 //! an index for reads, never authority: run state is the run object's
 //! lifecycle property, and every read goes through the caller's read gates.
 
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
 use norn_ir::RuntimeValue as Value;
 use serde::{Deserialize, Serialize};
 
@@ -553,9 +555,62 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(None)
     }
 
+    fn direct_object_type_question_source_types(
+        &self,
+        world: &str,
+        object_type: &str,
+    ) -> Result<Vec<RunQuestionSource>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT "source_type", MAX("requires_sources") FROM "{FLOW_RUN_SOURCE}" WHERE "world"=?1 AND "object_type"=?2 GROUP BY "source_type" ORDER BY "source_type""#
+            ),
+            params![world, object_type],
+        )?;
+        rows.into_iter()
+            .map(|values| {
+                let row = SqlRow(values);
+                Ok(RunQuestionSource {
+                    source_type: row.get(0)?,
+                    requires_sources: row.get::<i64>(1)? != 0,
+                })
+            })
+            .collect()
+    }
+
+    fn expand_transitive_question_sources(
+        &self,
+        world: &str,
+        initial: Vec<RunQuestionSource>,
+    ) -> Result<Vec<RunQuestionSource>, CellError> {
+        let mut merged: BTreeMap<String, bool> = BTreeMap::new();
+        let mut expanded: BTreeSet<String> = BTreeSet::new();
+        let mut queue: VecDeque<String> = VecDeque::new();
+        for req in initial {
+            *merged.entry(req.source_type.clone()).or_insert(false) |= req.requires_sources;
+            if expanded.insert(req.source_type.clone()) {
+                queue.push_back(req.source_type);
+            }
+        }
+        while let Some(ty) = queue.pop_front() {
+            for next in self.direct_object_type_question_source_types(world, &ty)? {
+                *merged.entry(next.source_type.clone()).or_insert(false) |= next.requires_sources;
+                if expanded.insert(next.source_type.clone()) {
+                    queue.push_back(next.source_type);
+                }
+            }
+        }
+        Ok(merged
+            .into_iter()
+            .map(|(source_type, requires_sources)| RunQuestionSource {
+                source_type,
+                requires_sources,
+            })
+            .collect())
+    }
+
     /// Source object types read by settled `norn.question@1` steps on
-    /// `(world, object_type, run_id)`. Empty for non-run objects and for runs
-    /// without settled question reads.
+    /// `(world, object_type, run_id)`, expanded transitively across Run types.
+    /// Empty for non-run objects and for runs without settled question reads.
     ///
     /// # Errors
     /// SQL engine or decode errors.
@@ -572,7 +627,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             params![world, object_type, run_id],
         )?;
-        rows.into_iter()
+        let direct = rows
+            .into_iter()
             .map(|values| {
                 let row = SqlRow(values);
                 Ok(RunQuestionSource {
@@ -580,12 +636,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     requires_sources: row.get::<i64>(1)? != 0,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, CellError>>()?;
+        self.expand_transitive_question_sources(world, direct)
     }
 
     /// Distinct source object types read by any settled `norn.question@1` step
-    /// across all runs of `(world, object_type)`, for bulk/collection read
-    /// gates (exports and whole-grain engine queries).
+    /// across all runs of `(world, object_type)`, expanded transitively across
+    /// Run types, for bulk/collection read gates (exports and whole-grain
+    /// engine queries).
     ///
     /// # Errors
     /// SQL engine or decode errors.
@@ -595,21 +653,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
     ) -> Result<Vec<RunQuestionSource>, CellError> {
         self.check_live()?;
-        let rows = self.conn.query(
-            &format!(
-                r#"SELECT "source_type", MAX("requires_sources") FROM "{FLOW_RUN_SOURCE}" WHERE "world"=?1 AND "object_type"=?2 GROUP BY "source_type" ORDER BY "source_type""#
-            ),
-            params![world, object_type],
-        )?;
-        rows.into_iter()
-            .map(|values| {
-                let row = SqlRow(values);
-                Ok(RunQuestionSource {
-                    source_type: row.get(0)?,
-                    requires_sources: row.get::<i64>(1)? != 0,
-                })
-            })
-            .collect()
+        let direct = self.direct_object_type_question_source_types(world, object_type)?;
+        self.expand_transitive_question_sources(world, direct)
     }
 
     /// The run `run_id` in `world`, if it was started.

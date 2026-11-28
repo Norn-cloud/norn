@@ -38,13 +38,15 @@ use norn_cell::engine::NativeEngine;
 use norn_cell::flow_run::RunStarter;
 use norn_cell::{
     CellError, CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, LedgerHead,
-    LinkChange, MAIN_WORLD, ObjectRecord,
+    LinkChange, MAIN_WORLD, ObjectRecord, StoreOptions,
 };
+use norn_cell_do::connect::Connect;
 use norn_cell_do::policy::{CallerSlot, DEMO_GRANTS, ReadPolicy, collection_access};
 use norn_cell_do::principal::{FIXTURE_ROLES, FixturePrincipals};
 use norn_cell_do::questions::DerivedQuestions;
 use norn_cell_do::run_due_with_runtime;
 use norn_cell_do::server::{self, Response};
+use norn_cell_do::tenant::{Served, Tenant};
 use norn_checker::EntityArtifactSetContext;
 use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::{QuestionPlan, admit as admit_question_plan};
@@ -71,19 +73,26 @@ const BLIND: Option<&str> = Some("Bearer fixture:blind@demo");
 /// Holds Population (not Values) on `canon.OrderLine`, and Population+Values on
 /// Run objects.
 const PARTIAL: Option<&str> = Some("Bearer fixture:partial@demo");
+/// Holds collection-level Population+Values on `canon.OrderLine` and full Run
+/// permissions, but is denied row-level (`ALL_MEMBERS`/row) access on
+/// `canon.OrderLine`.
+const ROW_BLIND: Option<&str> = Some("Bearer fixture:row_blind@demo");
 
 const TEST_FIXTURES: &[(&str, &[&str])] = &[
     ("admin@demo", &["admin"]),
     ("member@demo", &["member"]),
     ("blind@demo", &["member"]),
     ("partial@demo", &["member"]),
+    ("row_blind@demo", &["member"]),
 ];
 
 const T0: u64 = 1_794_484_800_000;
 const T0_SECS: u64 = T0 / 1_000;
 const SANDBOX_HOSTS: &str = "erpnext-rest";
 const QUESTION_ID: &str = "freshness.order_line_qty";
+const RUN_A_QUESTION_ID: &str = "freshness.run_a_weight";
 const GUARD_FLOW_ID: &str = "ops.question_guard";
+const TRANSITIVE_FLOW_ID: &str = "ops.transitive_guard";
 const DECIDE_FLOW_ID: &str = "ops.decide_then_question";
 const TIMER_FLOW_ID: &str = "ops.timer_question_guard";
 const MELT: &str = "constitution.Melt";
@@ -282,7 +291,9 @@ impl Authorizer for QuestionTestPolicy {
             && request.access.resource().object_type == "canon.OrderLine"
             && (current.subject_id == "blind@demo"
                 || (current.subject_id == "partial@demo"
-                    && request.capability == ReadCapability::Values))
+                    && request.capability == ReadCapability::Values)
+                || (current.subject_id == "row_blind@demo"
+                    && request.access.resource().id != "canon.OrderLine"))
         {
             return Err(norn_api::authz::read_denied());
         }
@@ -393,6 +404,43 @@ fn commit_marked_order_line(
         .expect("commit marked order line");
 }
 
+fn make_guard_flow_measurable(artifacts: &mut [Value]) {
+    let props = artifacts[0]["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .unwrap();
+    props.push(json!({
+        "id": "occurred_at",
+        "type": { "kind": "timestamp", "timezone": "utc" }
+    }));
+    props.push(json!({
+        "id": "weight",
+        "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "additivity": { "kind": "additive" }
+        }
+    }));
+    let rule = &mut artifacts[1]["payload"];
+    rule["inputSchema"]["properties"]["slice"]["properties"]["run"]["properties"]["occurred_at"] =
+        json!({ "type": "string" });
+    rule["inputSchema"]["properties"]["slice"]["properties"]["run"]["properties"]["weight"] =
+        json!({ "type": ["number", "string"] });
+    rule["outputSchema"]["properties"]["facts"]["items"]["properties"]["values"]["properties"]["occurred_at"] =
+        json!({ "type": "string" });
+    rule["outputSchema"]["properties"]["facts"]["items"]["properties"]["values"]["properties"]["weight"] =
+        json!({ "type": ["number", "string"] });
+    let rules = rule["graph"]["nodes"][1]["content"]["rules"]
+        .as_array_mut()
+        .unwrap();
+    let start_row = rules
+        .iter_mut()
+        .find(|entry| entry["_id"] == "started/start/1")
+        .unwrap();
+    start_row["o_facts"] = json!(
+        "[{op: 'create', objectType: 'ops.QuestionGuardRun', key: event.runId, values: {run_id: event.runId, status: 'started', occurred_at: '2026-08-06T12:00:00Z', weight: 1}}, {op: 'transition', objectType: 'ops.QuestionGuardRun', key: event.runId, lifecycle: 'status', transition: 'to_awaiting_perform_check_question'}]"
+    );
+}
+
 struct QuestionCell {
     host: DevHost<NativeEngine>,
     principals: FixturePrincipals,
@@ -404,7 +452,18 @@ struct QuestionCell {
 
 impl QuestionCell {
     fn open(with_erpnext: bool, with_markings: bool) -> Self {
-        let artifacts = catalog_artifacts(with_erpnext, with_markings);
+        Self::open_with(with_erpnext, with_markings, None, &[], None)
+    }
+
+    fn open_with(
+        with_erpnext: bool,
+        with_markings: bool,
+        db_path: Option<&std::path::Path>,
+        extra_artifacts: &[ArtifactEnvelope],
+        pre_commit: Option<&dyn Fn(&mut CellStore<NativeEngine>, &CellScope)>,
+    ) -> Self {
+        let mut artifacts = catalog_artifacts(with_erpnext, with_markings);
+        artifacts.extend(extra_artifacts.iter().cloned());
         let (base, candidate): (Vec<_>, Vec<_>) = artifacts
             .iter()
             .cloned()
@@ -455,12 +514,20 @@ impl QuestionCell {
             installed_at: 1,
             layout: None,
         };
-        let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+        let mut store = match db_path {
+            Some(path) => {
+                CellStore::open(path, model.clone(), StoreOptions::default()).expect("store")
+            }
+            None => CellStore::open_in_memory(model.clone()).expect("store"),
+        };
         store
             .install_definitions(model, input, Some(0), &scope.key())
             .expect("install");
         if with_markings {
             commit_marked_order_line(&mut store, &scope, T0);
+        }
+        if let Some(hook) = pre_commit {
+            hook(&mut store, &scope);
         }
         let policy = QuestionTestPolicy::compile(&store, &scope);
         let caller = Arc::clone(&policy.caller);
@@ -654,25 +721,22 @@ impl QuestionCell {
         self.install_flow(GUARD_FLOW_ID, "Guard a melt with a question", artifacts);
     }
 
-    /// Install a new definitions revision that modifies only `erpnext.rest.mapping`
-    /// (bump version `0.2.0` -> `0.2.1`), leaving the retained question and
-    /// entity `model_hash` completely unchanged.
-    fn upgrade_erpnext_mapping(&self) {
-        let active = {
-            let cell = self.host.cell().expect("cell");
-            cell.store()
-                .read()
-                .installed_definitions(None)
-                .expect("active")
-                .expect("installed")
-        };
+    /// Install a new definitions revision that modifies only `artifact_id`
+    /// (bumping its version to `new_version`), leaving the retained question
+    /// and entity `model_hash` completely unchanged.
+    fn upgrade_artifact_version(&self, artifact_id: &str, new_version: &str) {
+        let active = self
+            .host
+            .active_definitions()
+            .expect("active")
+            .expect("installed");
         let mut artifacts =
             norn_api::kernel_set::retained_artifacts(&active.canonical_set).expect("retained");
-        let mapping = artifacts
+        let target = artifacts
             .iter_mut()
-            .find(|artifact| artifact.artifact_id == "erpnext.rest.mapping")
-            .expect("erpnext.rest.mapping");
-        mapping.version = "0.2.1".to_owned();
+            .find(|artifact| artifact.artifact_id == artifact_id)
+            .expect("target artifact");
+        new_version.clone_into(&mut target.version);
 
         let (base, candidate): (Vec<_>, Vec<_>) = artifacts
             .iter()
@@ -723,11 +787,101 @@ impl QuestionCell {
         let upgraded = self
             .host
             .install_definitions(model, input, Some(active.version))
-            .expect("upgrade mapping");
+            .expect("upgrade artifact");
         assert_eq!(
             upgraded.model_hash, active.model_hash,
-            "dependency-only mapping upgrade must keep model_hash unchanged"
+            "dependency-only upgrade must keep model_hash unchanged"
         );
+    }
+
+    fn upgrade_erpnext_mapping(&self) {
+        self.upgrade_artifact_version("erpnext.rest.mapping", "0.2.1");
+    }
+
+    fn install_guard_flow_storing_stale_failure(&self, measurable: bool) {
+        let mut artifacts: Vec<Value> = serde_json::from_str(QUESTION_GUARD_IR).unwrap();
+        let failure_schema = json!({
+            "additionalProperties": false,
+            "properties": {
+                "_tag": { "type": "string" },
+                "code": { "type": "string" },
+                "freshness": { "type": "string" },
+                "complete": { "type": "boolean" },
+                "sources": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["_tag"],
+            "type": "object"
+        });
+        artifacts[0]["payload"]["objectType"]["properties"][2]["type"]["schema"]["properties"]["failure"] =
+            failure_schema.clone();
+        artifacts[1]["payload"]["inputSchema"]["properties"]["slice"]["properties"]["run"]["properties"]
+            ["slots"]["properties"]["failure"] = failure_schema.clone();
+        artifacts[1]["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"]["value"]
+            ["properties"]["failure"] = failure_schema;
+
+        let rules = artifacts[1]["payload"]["graph"]["nodes"][1]["content"]["rules"]
+            .as_array_mut()
+            .unwrap();
+        let stale_row = rules
+            .iter_mut()
+            .find(|entry| entry["_id"] == "awaiting_perform_check_question/failure/1")
+            .unwrap();
+        stale_row["o_facts"] = json!(
+            "[{op: 'set', objectType: 'ops.QuestionGuardRun', key: slice.run.run_id, property: 'slots', value: {failure: event.failure}}, {op: 'transition', objectType: 'ops.QuestionGuardRun', key: slice.run.run_id, lifecycle: 'status', transition: 'to_failed_refused'}]"
+        );
+        if measurable {
+            make_guard_flow_measurable(&mut artifacts);
+        }
+        self.install_flow(GUARD_FLOW_ID, "Guard a melt with a question", artifacts);
+    }
+
+    fn install_measurable_guard_flow(&self) {
+        let mut artifacts: Vec<Value> = serde_json::from_str(QUESTION_GUARD_IR).unwrap();
+        make_guard_flow_measurable(&mut artifacts);
+        self.install_flow(GUARD_FLOW_ID, "Guard a melt with a question", artifacts);
+    }
+
+    fn install_run_a_question(&self) {
+        let (status, doc) = self.call("GET", "/v1/questions:metrics", ADMIN, "");
+        assert_eq!(status, 200, "{doc}");
+        let metric = doc["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["objectType"] == "ops.QuestionGuardRun" && m["expression"] == "weight")
+            .expect("ops.QuestionGuardRun.weight metric")["name"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let body = json!({
+            "kind": "question",
+            "id": RUN_A_QUESTION_ID,
+            "payload": {
+                "irVersion": "0.1",
+                "name": RUN_A_QUESTION_ID,
+                "objectSet": "ops.QuestionGuardRun",
+                "calendar": "iso_utc",
+                "aggregate": [{"metric": metric}],
+                "groupBy": [
+                    {"path": {"property": "occurred_at"}, "grain": "day"}
+                ],
+                "window": {"start": "2026-01-01T00:00:00Z", "end": "2027-01-01T00:00:00Z"},
+                "freshness": {"kind": "live", "maxAgeMs": 60_000}
+            }
+        });
+        let (status, installed) =
+            self.call("POST", "/v1/definitions:install", ADMIN, &body.to_string());
+        assert_eq!(status, 200, "{installed}");
+    }
+
+    fn install_transitive_flow(&self) {
+        let rewritten = QUESTION_GUARD_IR
+            .replace("ops.QuestionGuardRun", "ops.TransitiveGuardRun")
+            .replace("ops.question_guard", TRANSITIVE_FLOW_ID)
+            .replace(QUESTION_ID, RUN_A_QUESTION_ID)
+            .replace("'melt-7'", "'melt-8'");
+        let artifacts: Vec<Value> = serde_json::from_str(&rewritten).unwrap();
+        self.install_flow(TRANSITIVE_FLOW_ID, "Read Run A transitively", artifacts);
     }
 
     /// Run due work on the real production alarm/timer wake entrypoint
@@ -1293,11 +1447,12 @@ impl Transport for PanicTransport {
         None
     }
     fn call(&self, _call: &EngineCall) -> Option<EngineAnswer> {
-        panic!("unauthorized export must be refused before reaching analytics transport");
+        None.expect("unauthorized export must be refused before reaching analytics transport")
     }
 }
 
 struct RunQuestionRt {
+    grain: String,
     plan: QuestionPlan,
     key: [u8; 32],
 }
@@ -1343,7 +1498,7 @@ impl QuestionRuntime<NativeEngine> for RunQuestionRt {
             business_unit: None,
         };
         let (object_type, id) = row.map_or_else(
-            || ("ops.QuestionGuardRun".to_owned(), question.to_owned()),
+            || (self.grain.clone(), question.to_owned()),
             |r| (r.object_type.clone(), r.id.clone()),
         );
         let cap = norn_cell_do::policy::capability_name(capability);
@@ -1385,7 +1540,7 @@ impl QuestionRuntime<NativeEngine> for RunQuestionRt {
         visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<QueryResult, CellError> {
         let all_gate = ObjectRecord {
-            object_type: "ops.QuestionGuardRun".to_owned(),
+            object_type: self.grain.clone(),
             id: ALL_MEMBERS.to_owned(),
             scope: context.scope.clone(),
             version: 0,
@@ -1393,7 +1548,7 @@ impl QuestionRuntime<NativeEngine> for RunQuestionRt {
         };
         let all_ok = visible(&all_gate)?;
         let mut rows = BTreeMap::new();
-        for row in store.read().list(MAIN_WORLD, "ops.QuestionGuardRun", 100)? {
+        for row in store.read().list(MAIN_WORLD, &self.grain, 100)? {
             if all_ok && visible(&row)? {
                 rows.insert(
                     row.id.clone(),
@@ -1418,7 +1573,7 @@ impl QuestionRuntime<NativeEngine> for RunQuestionRt {
             revision: LedgerHead::genesis(),
             effective_as_of: UtcTimestamp("2027-01-01T00:00:00Z".to_owned()),
             known_as_of: head,
-            grain: ObjectTypeName("ops.QuestionGuardRun".to_owned()),
+            grain: ObjectTypeName(self.grain.clone()),
             lineage_ref: "lr-run".to_owned(),
             rows,
             freshness: Freshness::Exact,
@@ -1431,13 +1586,13 @@ impl QuestionRuntime<NativeEngine> for RunQuestionRt {
     }
 }
 
-fn build_run_question_runtime() -> RunQuestionRt {
+fn build_run_question_runtime(grain: &str) -> RunQuestionRt {
     let run_entity: ArtifactEnvelope = serde_json::from_value(json!({
         "irVersion": "0.1",
-        "artifactId": "ops.QuestionGuardRun.entity.test",
+        "artifactId": format!("{grain}.entity.test"),
         "kind": "entity",
         "namespace": "ops",
-        "name": "QuestionGuardRun",
+        "name": grain,
         "version": "0.1.0",
         "lifecycle": "active",
         "scope": { "orgId": "org_demo", "environmentId": "dev" },
@@ -1446,7 +1601,7 @@ fn build_run_question_runtime() -> RunQuestionRt {
         "payload": {
             "entityVersion": "2.0",
             "objectType": {
-                "name": "ops.QuestionGuardRun",
+                "name": grain,
                 "properties": [
                     { "id": "status", "type": { "kind": "text" } },
                     { "id": "occurred_at", "type": { "kind": "timestamp", "timezone": "utc" } },
@@ -1476,7 +1631,7 @@ fn build_run_question_runtime() -> RunQuestionRt {
         "type": "simple",
         "type_params": {
             "metric_aggregation_params": {
-                "semantic_model": "ops.QuestionGuardRun",
+                "semantic_model": grain,
                 "agg": "sum",
                 "agg_time_dimension": "occurred_at"
             },
@@ -1492,7 +1647,7 @@ fn build_run_question_runtime() -> RunQuestionRt {
     let run_q: QuestionIR = serde_json::from_value(json!({
         "irVersion": "0.1",
         "name": "test.run_count",
-        "objectSet": "ops.QuestionGuardRun",
+        "objectSet": grain,
         "aggregate": [{ "metric": "test.run_count" }],
         "groupBy": [{ "path": { "property": "status" } }],
         "window": { "start": "2026-01-01T00:00:00Z", "end": "2027-01-01T00:00:00Z" },
@@ -1502,6 +1657,7 @@ fn build_run_question_runtime() -> RunQuestionRt {
     .unwrap();
     let plan = admit_question_plan(&[run_metric], &run_q, &run_catalog, 1_000).expect("run plan");
     RunQuestionRt {
+        grain: grain.to_owned(),
         plan,
         key: [9_u8; 32],
     }
@@ -1570,7 +1726,7 @@ fn unauthorized_run_reader_denied_on_export_and_question_over_run() {
         );
     }
 
-    let run_rt = build_run_question_runtime();
+    let run_rt = build_run_question_runtime("ops.QuestionGuardRun");
     let scope_q = ScopeQuery {
         org_id: Some("org_demo".to_owned()),
         environment_id: Some("dev".to_owned()),
@@ -1615,7 +1771,7 @@ fn unauthorized_run_reader_denied_on_export_and_question_over_run() {
 fn unsynced_stale_source_does_not_leak_to_unauthorized_starter_or_run_reader() {
     let cell = QuestionCell::open(true, false);
     cell.install_order_line_question(60_000, None);
-    cell.install_guard_flow(None);
+    cell.install_guard_flow_storing_stale_failure(false);
     // Deliberately do NOT sync erpnext.rest — required source is unsynced.
 
     // 1. MEMBER lacks `Sources` -> StaleSource.sources MUST be empty `[]`!
@@ -1628,7 +1784,7 @@ fn unsynced_stale_source_does_not_leak_to_unauthorized_starter_or_run_reader() {
         T0_SECS.saturating_add(5),
     );
     assert_eq!(status, 201, "{member_run}");
-    assert_eq!(member_run["state"], json!("failed_stale"), "{member_run}");
+    assert_eq!(member_run["state"], json!("failed_refused"), "{member_run}");
     let (status, member_obj) = cell.call(
         "GET",
         "/v1/objects/ops.QuestionGuardRun/q-stale-member-1",
@@ -1659,7 +1815,7 @@ fn unsynced_stale_source_does_not_leak_to_unauthorized_starter_or_run_reader() {
         T0_SECS.saturating_add(5),
     );
     assert_eq!(status, 201, "{admin_run}");
-    assert_eq!(admin_run["state"], json!("failed_stale"), "{admin_run}");
+    assert_eq!(admin_run["state"], json!("failed_refused"), "{admin_run}");
     let (status, admin_obj) = cell.call(
         "GET",
         "/v1/objects/ops.QuestionGuardRun/q-stale-admin-1",
@@ -1967,5 +2123,532 @@ fn timer_driven_question_to_action_flow_completes_on_wake_without_http_retry() {
             .unwrap_or_default()
             .is_empty(),
         "Answered queryPin must be populated after timer wake: {run_obj}"
+    );
+}
+
+fn assert_transitive_export_denied(cell: &QuestionCell, label: &str, auth: Option<&str>) {
+    let export_query = ExportQuery {
+        org_id: Some("org_demo".to_owned()),
+        environment_id: Some("dev".to_owned()),
+        columns: "status".to_owned(),
+        format: Some("jsonl".to_owned()),
+    };
+    let _req = norn_cell_do::principal::RequestScope::new(&cell.principals);
+    let actor =
+        norn_cell_do::principal::PrincipalResolver::resolve(&cell.principals, auth, T0_SECS);
+    let err = export_objects(
+        &cell.host,
+        &export_query,
+        actor.as_deref(),
+        "ops.TransitiveGuardRun",
+        &TestObjectAccess,
+        &PanicTransport,
+    )
+    .expect_err("unauthorized transitive export must refuse");
+    assert_eq!(
+        err.status, 403,
+        "{label} transitive export must fail with 403: {err:?}"
+    );
+}
+
+fn transitive_question_rows(cell: &QuestionCell, auth: Option<&str>) -> usize {
+    let rt = build_run_question_runtime("ops.TransitiveGuardRun");
+    let scope_q = ScopeQuery {
+        org_id: Some("org_demo".to_owned()),
+        environment_id: Some("dev".to_owned()),
+    };
+    let _req = norn_cell_do::principal::RequestScope::new(&cell.principals);
+    let actor =
+        norn_cell_do::principal::PrincipalResolver::resolve(&cell.principals, auth, T0_SECS);
+    let ans = get_answer(
+        &cell.host,
+        &scope_q,
+        actor.as_deref(),
+        "test.run_count",
+        &rt,
+    )
+    .expect("question answer");
+    match ans.as_answer() {
+        norn_api::question_routes::QuestionAnswer::Live(res) => res.rows.len(),
+        norn_api::question_routes::QuestionAnswer::Historical(h) => h.result.rows.len(),
+    }
+}
+
+/// Round 3 Finding 2 (Transitive inherited grants, Population + Values):
+/// Run A reads restricted source type `canon.OrderLine`, Run B's
+/// `norn.question@1` reads Run A (`ops.QuestionGuardRun`), and a reader with
+/// Run A + Run B permissions but WITHOUT `canon.OrderLine` clearance (`BLIND`
+/// and `PARTIAL`) is denied when reading Run B via object get/list/history,
+/// `GET /v1/runs/{id}`, export, and question-over-Run.
+#[test]
+fn transitive_run_b_reading_run_a_inherits_secret_clearance() {
+    let cell = QuestionCell::open(true, false);
+    cell.install_order_line_question(60_000, None);
+    cell.install_measurable_guard_flow();
+    cell.install_run_a_question();
+    cell.install_transitive_flow();
+    cell.sync_erpnext(T0);
+
+    let (status, first_run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": GUARD_FLOW_ID, "runId": "q-trans-a" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{first_run}");
+    assert_eq!(first_run["state"], json!("completed"), "{first_run}");
+
+    let (status, second_run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": TRANSITIVE_FLOW_ID, "runId": "q-trans-b" }).to_string(),
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(status, 201, "{second_run}");
+    assert_eq!(second_run["state"], json!("completed"), "{second_run}");
+
+    let (status, admin_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.TransitiveGuardRun/q-trans-b",
+        ADMIN,
+        "",
+    );
+    assert_eq!(status, 200, "{admin_obj}");
+    let (status, admin_run) = cell.call("GET", "/v1/runs/q-trans-b", ADMIN, "");
+    assert_eq!(status, 200, "{admin_run}");
+
+    let (status, blind_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.TransitiveGuardRun/q-trans-b",
+        BLIND,
+        "",
+    );
+    assert_eq!(status, 404, "BLIND must not read Run B object: {blind_obj}");
+    let (status, blind_list) = cell.call("GET", "/v1/objects/ops.TransitiveGuardRun", BLIND, "");
+    assert_eq!(status, 200, "{blind_list}");
+    assert!(
+        !blind_list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == "q-trans-b"),
+        "BLIND must not see Run B in list: {blind_list}"
+    );
+    let (status, blind_hist) = cell.call(
+        "GET",
+        "/v1/objects/ops.TransitiveGuardRun/q-trans-b/history",
+        BLIND,
+        "",
+    );
+    assert_eq!(
+        status, 404,
+        "BLIND must not read Run B history: {blind_hist}"
+    );
+    let (status, blind_run) = cell.call("GET", "/v1/runs/q-trans-b", BLIND, "");
+    assert_eq!(status, 404, "BLIND must not read Run B: {blind_run}");
+
+    let (status, partial_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.TransitiveGuardRun/q-trans-b",
+        PARTIAL,
+        "",
+    );
+    assert_eq!(status, 200, "{partial_obj}");
+    assert_eq!(partial_obj["withheld"], json!(true), "{partial_obj}");
+    assert!(partial_obj["values"].is_null(), "{partial_obj}");
+    let (status, partial_run) = cell.call("GET", "/v1/runs/q-trans-b", PARTIAL, "");
+    assert_eq!(status, 404, "PARTIAL must not read Run B: {partial_run}");
+
+    assert_transitive_export_denied(&cell, "BLIND", BLIND);
+    assert_transitive_export_denied(&cell, "PARTIAL", PARTIAL);
+    assert_eq!(transitive_question_rows(&cell, ADMIN), 1);
+    assert_eq!(transitive_question_rows(&cell, BLIND), 0);
+    assert_eq!(transitive_question_rows(&cell, PARTIAL), 0);
+}
+
+/// Round 3 Finding 2 (Transitive inherited grants, `Sources`): when Run A
+/// settles `StaleSource` (requiring `Sources`) and Run B's `norn.question@1`
+/// reads Run A, Run B transitively inherits `requires_sources = true`, denying
+/// `MEMBER` (who lacks `Sources`) on object read, `GET /v1/runs/{id}`, and
+/// export.
+#[test]
+fn transitive_run_b_reading_stale_run_a_inherits_sources_clearance() {
+    let cell = QuestionCell::open(true, false);
+    cell.install_order_line_question(60_000, None);
+    cell.install_guard_flow_storing_stale_failure(true);
+    cell.install_run_a_question();
+    cell.install_transitive_flow();
+
+    let (status, first_run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": GUARD_FLOW_ID, "runId": "q-trans-stale-a" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{first_run}");
+    assert_eq!(first_run["state"], json!("failed_refused"), "{first_run}");
+
+    let (status, second_run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": TRANSITIVE_FLOW_ID, "runId": "q-trans-stale-b" }).to_string(),
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(status, 201, "{second_run}");
+    assert_eq!(second_run["state"], json!("completed"), "{second_run}");
+
+    let (status, member_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.TransitiveGuardRun/q-trans-stale-b",
+        MEMBER,
+        "",
+    );
+    assert_eq!(
+        status, 404,
+        "MEMBER without Sources must be denied Run B object: {member_obj}"
+    );
+    let (status, member_run) = cell.call("GET", "/v1/runs/q-trans-stale-b", MEMBER, "");
+    assert_eq!(
+        status, 404,
+        "MEMBER without Sources must be denied GET /v1/runs/{{id}}: {member_run}"
+    );
+    assert_transitive_export_denied(&cell, "MEMBER", MEMBER);
+}
+
+/// Round 3 Finding 3 (`ALL_MEMBERS` row-access parity on `GET /v1/runs/{id}`
+/// and exact `POST /v1/runs` retries): a caller (`ROW_BLIND`) holding
+/// collection access on `canon.OrderLine` and full Run permissions, but denied
+/// `ALL_MEMBERS`/row access on `canon.OrderLine`, is refused on `GET /v1/runs/{id}`,
+/// exact `POST /v1/runs` retry (`409 run.exists`, never `200`), and object get.
+#[test]
+fn run_routes_and_start_retries_enforce_all_members_row_gate() {
+    let cell = QuestionCell::open(true, false);
+    cell.install_order_line_question(60_000, None);
+    cell.install_guard_flow(None);
+    cell.sync_erpnext(T0);
+
+    let start_body = json!({ "flow": GUARD_FLOW_ID, "runId": "q-row-gate-1" }).to_string();
+    let (status, run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &start_body,
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{run}");
+    assert_eq!(run["state"], json!("completed"), "{run}");
+
+    // ADMIN sees the run on GET and exact retry.
+    let (status, admin_get) = cell.call("GET", "/v1/runs/q-row-gate-1", ADMIN, "");
+    assert_eq!(status, 200, "{admin_get}");
+    let (status, admin_retry) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &start_body,
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(status, 200, "{admin_retry}");
+
+    // ROW_BLIND has collection access on canon.OrderLine but NO ALL_MEMBERS row access.
+    let (status, row_blind_get) = cell.call("GET", "/v1/runs/q-row-gate-1", ROW_BLIND, "");
+    assert_eq!(
+        status, 404,
+        "ROW_BLIND must be denied GET /v1/runs/{{id}}: {row_blind_get}"
+    );
+    let (status, row_blind_retry) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ROW_BLIND,
+        &start_body,
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(
+        status, 409,
+        "ROW_BLIND exact start_run retry must not leak run state: {row_blind_retry}"
+    );
+    let (status, row_blind_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.QuestionGuardRun/q-row-gate-1",
+        ROW_BLIND,
+        "",
+    );
+    assert_eq!(
+        status, 404,
+        "ROW_BLIND must be denied object read: {row_blind_obj}"
+    );
+}
+
+fn commit_bound_connection(store: &mut CellStore<NativeEngine>, scope: &CellScope) {
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: scope.key(),
+            logical_time: T0,
+            writes: vec![FactWriteRow::Put {
+                object_type: "source.Connection".into(),
+                key: "erpnext.bound".into(),
+                values: BTreeMap::from([
+                    ("id".into(), RuntimeValue::from("erpnext.bound")),
+                    ("system".into(), RuntimeValue::from("erpnext")),
+                    ("label".into(), RuntimeValue::from("Bound ERPNext")),
+                    (
+                        "target".into(),
+                        RuntimeValue::from("http://erpnext-rest:8000"),
+                    ),
+                    ("auth".into(), RuntimeValue::from("api_key")),
+                    ("status".into(), RuntimeValue::from("ok")),
+                    (
+                        "last_sync_started_at".into(),
+                        RuntimeValue::from("2026-08-06T12:00:00Z"),
+                    ),
+                    ("last_sync_ended_at".into(), RuntimeValue::Null),
+                    ("last_trigger".into(), RuntimeValue::from("manual")),
+                    ("watermark".into(), RuntimeValue::from("{}")),
+                    ("rows_read".into(), RuntimeValue::from(0_i64)),
+                    ("rows_landed".into(), RuntimeValue::from(0_i64)),
+                    ("rows_quarantined".into(), RuntimeValue::from(0_i64)),
+                    ("quarantine_reasons".into(), RuntimeValue::from("{}")),
+                    ("last_error_code".into(), RuntimeValue::Null),
+                    ("last_error_message".into(), RuntimeValue::Null),
+                    (
+                        "connector_id".into(),
+                        RuntimeValue::from("erpnext.bound.connector"),
+                    ),
+                    (
+                        "source_schema_id".into(),
+                        RuntimeValue::from("erpnext.rest.source"),
+                    ),
+                    (
+                        "mapping_id".into(),
+                        RuntimeValue::from("erpnext.rest.mapping"),
+                    ),
+                ]),
+            }],
+            ..CommitBatch::default()
+        })
+        .expect("commit bound source.Connection");
+}
+
+/// Round 3 Finding 5 (`STEP-PIN-1` persisted `source.Connection` binding via
+/// `mapping_id`/`connector_id`): upgrading a connector artifact bound solely
+/// through a persisted `source.Connection` record's `mapping_id`/`connector_id`
+/// fields drifts an in-flight `norn.question@1` step with
+/// `question_step.definition_changed`.
+#[test]
+fn source_connection_bound_connector_upgrade_drifts_in_flight_question_step() {
+    let mut extra_conn: ArtifactEnvelope =
+        load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json");
+    extra_conn.artifact_id = "erpnext.bound.connector".to_owned();
+    extra_conn.name = "Bound connector".to_owned();
+    extra_conn.dependencies.clear();
+    let mut payload_json =
+        serde_json::to_value(extra_conn.payload.to_json_value()).expect("payload json");
+    payload_json["extensions"] = json!({});
+    payload_json["mappings"] = json!([]);
+    extra_conn.payload = serde_json::from_value(payload_json).expect("rewritten connector payload");
+
+    let cell = QuestionCell::open_with(
+        true,
+        false,
+        None,
+        std::slice::from_ref(&extra_conn),
+        Some(&commit_bound_connection),
+    );
+    cell.install_order_line_question(60_000, None);
+    cell.install_decide_then_question_flow();
+    cell.sync_erpnext(T0);
+
+    let (status, opened) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        MEMBER,
+        &json!({ "flow": DECIDE_FLOW_ID, "runId": "q-conn-drift-1" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{opened}");
+    assert_eq!(opened["state"], json!("awaiting_perform_ask_review"));
+
+    // Upgrade ONLY the connector bound via `source.Connection.mapping_id`/`connector_id`.
+    cell.upgrade_artifact_version("erpnext.bound.connector", "0.1.1");
+
+    let pending = format!("{SCOPE}&state=pending");
+    let (_, page) = cell.call_at(
+        "GET",
+        "/v1/decisions",
+        &pending,
+        ADMIN,
+        "",
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(page["total"], json!(1), "{page}");
+    let decision_id = page["items"][0]["id"].as_str().unwrap().to_owned();
+
+    let (status, decided) = cell.call_at(
+        "POST",
+        &format!("/v1/decisions/{decision_id}:decide"),
+        SCOPE,
+        ADMIN,
+        &json!({ "choice": "approve", "idempotencyKey": "k-conn-drift" }).to_string(),
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["run"]["state"],
+        json!("failed_refused"),
+        "{decided}"
+    );
+    assert_eq!(cell.melt_status(), 404);
+    let (_, run_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.DecideThenQuestionRun/q-conn-drift-1",
+        ADMIN,
+        "",
+    );
+    assert_eq!(
+        run_obj["values"]["slots"]["failure"],
+        json!({ "_tag": "Refused", "code": question_step_codes::DEFINITION_CHANGED }),
+        "{run_obj}"
+    );
+}
+
+const TWO_ERPNEXT_CONNS: &str = r#"[
+  {"id": "erpnext.rest", "system": "erpnext", "label": "ERPNext Primary",
+   "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+   "instance": "primary", "baseUrl": "http://erpnext-rest:8000",
+   "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"]},
+  {"id": "erpnext.secondary", "system": "erpnext", "label": "ERPNext Secondary",
+   "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+   "instance": "secondary", "baseUrl": "http://erpnext-rest:8000",
+   "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"]}
+]"#;
+
+fn serve_cell(
+    tenant: &mut Tenant<NativeEngine>,
+    connect: &mut Connect,
+    principals: &FixturePrincipals,
+    method: &str,
+    path: &str,
+    body: &str,
+    now_ms: u64,
+) -> Response {
+    let now_s = now_ms.checked_div(1_000).unwrap();
+    match tenant.serve(
+        Some(connect),
+        principals,
+        &server::Request {
+            method,
+            path,
+            query: SCOPE,
+            authorization: ADMIN,
+            now: now_s,
+            body,
+        },
+        now_ms,
+    ) {
+        Served::Cell(resp) => resp,
+        Served::Connect(_) => None.expect("expected cell response"),
+    }
+}
+
+/// Round 3 Finding 6 (Hosted `Tenant::run_due` parity with HTTP configured
+/// sources): a hosted `Tenant` with a synced primary connection and an unsynced
+/// secondary configured connection (`Connect`) waking a sleeping timer flow via
+/// `Tenant::run_due(Some(&connect), due)` must settle the `norn.question@1`
+/// step as `StaleSource` (withholding the downstream action), matching HTTP.
+#[test]
+fn hosted_tenant_run_due_enforces_configured_unsynced_connection() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("cell.sqlite");
+    let scope = CellScope {
+        org_id: "org_demo".into(),
+        environment_id: "dev".into(),
+    };
+    {
+        let seed = QuestionCell::open_with(true, false, Some(&db), &[], None);
+        seed.install_order_line_question(60_000, None);
+        seed.install_timer_question_guard_flow();
+        seed.sync_erpnext(T0);
+    }
+
+    let mut tenant = Tenant::open(
+        scope.clone(),
+        &DEMO_GRANTS,
+        Box::new(move || {
+            NativeEngine::open(&db, StoreOptions::default()).map_err(|e| e.to_string())
+        }),
+        Some(&[7; 32]),
+    )
+    .expect("tenant open");
+    let principals = FixturePrincipals::new(TEST_FIXTURES, tenant.caller());
+    let vars = json!({
+        "NORN_SECRET_ERPNEXT_REST_TOKEN": "key:secret",
+        "NORN_SOURCE_ALLOWED_HOSTS": SANDBOX_HOSTS,
+    })
+    .to_string();
+    let mut connect = Connect::new(&scope, TWO_ERPNEXT_CONNS, &vars).expect("connect");
+
+    let start_ms = T0_SECS.saturating_add(5).saturating_mul(1_000);
+    let start_body = json!({ "flow": TIMER_FLOW_ID, "runId": "q-tenant-wake-1" }).to_string();
+    let started_resp = serve_cell(
+        &mut tenant,
+        &mut connect,
+        &principals,
+        "POST",
+        "/v1/runs",
+        &start_body,
+        start_ms,
+    );
+    assert_eq!(started_resp.status, 201, "{}", started_resp.body);
+    let started: Value = serde_json::from_str(&started_resp.body).unwrap();
+    assert_eq!(started["state"], json!("sleeping_wait_sync"), "{started}");
+
+    let due = tenant.next_due().expect("next_due").expect("timer due");
+    let work = tenant.run_due(Some(&connect), due).expect("tenant run_due");
+    assert_eq!(work.timers, 1, "{work:#?}");
+    assert!(work.steps >= 1, "{work:#?}");
+    assert!(work.failed.is_empty(), "{work:#?}");
+
+    let obj_resp = serve_cell(
+        &mut tenant,
+        &mut connect,
+        &principals,
+        "GET",
+        "/v1/objects/ops.TimerQuestionGuardRun/q-tenant-wake-1",
+        "",
+        due,
+    );
+    assert_eq!(obj_resp.status, 200, "{}", obj_resp.body);
+    let run_obj: Value = serde_json::from_str(&obj_resp.body).unwrap();
+    assert_eq!(
+        run_obj["values"]["slots"]["result"]["outcome"],
+        json!("withheld_stale"),
+        "hosted Tenant::run_due must see configured unsynced secondary connection and settle StaleSource: {run_obj}"
+    );
+
+    let melt_resp = serve_cell(
+        &mut tenant,
+        &mut connect,
+        &principals,
+        "GET",
+        "/v1/objects/constitution.Melt/melt-7",
+        "",
+        due,
+    );
+    assert_eq!(
+        melt_resp.status, 404,
+        "downstream action must be withheld when configured secondary connection is unsynced"
     );
 }

@@ -477,39 +477,11 @@ pub fn export_objects<E: SqlEngine>(
         .collect();
     let guard = host.cell()?;
     let store = guard.store();
-    // QUESTION-STEP-1 / PRIVACY-3: exporting a Run type whose runs persisted
-    // `norn.question@1` reads requires inherited read clearance on every
-    // underlying source object type before any engine export is admitted.
-    let inherited = store
-        .read()
-        .object_type_question_source_types(norn_cell::MAIN_WORLD, object_type)
-        .map_err(Refusal::host)?;
-    if !inherited.is_empty() {
-        let Some(actor_id) = actor else {
-            return Err(crate::authz::read_denied());
-        };
-        if !crate::object_routes::question_sources_permitted(
-            host,
-            access,
-            actor_id,
-            &inherited,
-            ReadCapability::Population,
-        ) || !crate::object_routes::question_sources_permitted(
-            host,
-            access,
-            actor_id,
-            &inherited,
-            ReadCapability::Values,
-        ) {
-            return Err(crate::authz::read_denied());
-        }
-    }
-    // PRIVACY-1: an export carries stored values, so a cell that declares
-    // markings or holds dynamic `_norn_markings` exports nothing; a marked
-    // value leaves only through a reveal. `admit_export` brackets the marking
-    // decision and the exported source at one cell version (S3, #1547) and
-    // issues a non-cloneable permit consumed at export dispatch.
-    let permit = crate::privacy::disclosure::admit_export(host, store, object_type)?;
+    // PRIVACY-1 / QUESTION-STEP-1: an export carries stored values, so
+    // `admit_export` brackets the marking check, inherited Run question source
+    // grants, and the exported source at one sealed cell version (S3, #1547)
+    // and issues a non-cloneable permit consumed at export dispatch.
+    let permit = crate::privacy::disclosure::admit_export(host, store, access, actor, object_type)?;
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
     let mut named = std::collections::BTreeSet::new();
     for column in &columns {

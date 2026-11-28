@@ -308,9 +308,19 @@ fn readable<E: SqlEngine>(
             &[ReadCapability::Population, ReadCapability::Values]
         };
         for &cap in caps {
+            let mut request = access(cap, &req.source_type);
             if !host.read_permitted(&ReadRequest {
                 capability: cap,
-                access: &access(cap, &req.source_type),
+                access: &request,
+            }) {
+                return Ok(false);
+            }
+            req.source_type
+                .clone_into(&mut request.resource_mut().object_type);
+            norn_cell::compute::ALL_MEMBERS.clone_into(&mut request.resource_mut().id);
+            if !host.read_permitted(&ReadRequest {
+                capability: cap,
+                access: &request,
             }) {
                 return Ok(false);
             }
@@ -663,14 +673,16 @@ pub fn get_run<E: SqlEngine>(
         return Err(run_not_found());
     }
     let cell = host.cell()?;
-    let reader = cell.store().read();
-    let Some(row) = reader.flow_run(MAIN_WORLD, id).map_err(Refusal::host)? else {
-        return Err(run_not_found());
+    let row = {
+        let reader = cell.store().read();
+        let Some(row) = reader.flow_run(MAIN_WORLD, id).map_err(Refusal::host)? else {
+            return Err(run_not_found());
+        };
+        if !readable(host, &reader, access, &row)? {
+            return Err(run_not_found());
+        }
+        row
     };
-    if !readable(host, &reader, access, &row)? {
-        return Err(run_not_found());
-    }
-    drop(reader);
     let flow = run_flow(cell.store(), &row)?;
     document(host, actor, cell.store(), &flow, row)
 }

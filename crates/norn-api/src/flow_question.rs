@@ -1,5 +1,5 @@
 //! QUESTION-STEP-1: read-only evaluation of parked `norn.question@1` flow steps
-//! through [`QuestionRuntime`] under the run starter's authority, with
+//! through [`crate::question_routes::QuestionRuntime`] under the run starter's authority, with
 //! `STEP-PIN-1` dependency-closure pinning, `PRIVACY-1`/`PRIVACY-3`/`PRIVACY-4`
 //! disclosure guards, and `#1905` `RequiredSources` freshness enforcement.
 //!
@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use http::StatusCode;
 use norn_cell::compute::{ALL_MEMBERS, QueryResult};
 use norn_cell::engine::SqlEngine;
-use norn_cell::flow_run::{QuestionStep, RunStarter};
+use norn_cell::flow_run::{QuestionStep, RunQuestionRead, RunQuestionSource, RunStarter};
 use norn_cell::{ObjectRecord, StoreReader};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{QuestionIR, RuntimeValue, UtcTimestamp};
@@ -76,6 +76,7 @@ pub(crate) struct StepEvidence {
     pub(crate) has_marked_evidence: bool,
     pub(crate) has_restricted_bucket: bool,
     pub(crate) has_connection_type: bool,
+    pub(crate) inherited_sources: Vec<RunQuestionSource>,
 }
 
 /// Authenticated evaluation bundle for one parked `norn.question@1` step,
@@ -94,24 +95,56 @@ pub(crate) struct QuestionStepContext<'a> {
 }
 
 /// Result of dispatching one parked `norn.question@1` step: the typed outcome
-/// to settle, plus the source object types read (persisted into
+/// to settle, plus the transitive source object types read (persisted into
 /// `_norn_flow_run_source` so Run readers must also hold inherited clearance on
-/// the question's sources, and `Sources` clearance when `StaleSource.sources`
-/// was persisted).
+/// the question's direct and transitive sources, and `Sources` clearance when
+/// `StaleSource.sources` or an inherited source requires it).
 pub(crate) struct QuestionDispatch {
     pub(crate) outcome: StepOutcome,
-    pub(crate) source_types: Vec<String>,
-    pub(crate) requires_sources: bool,
+    pub(crate) sources: Vec<RunQuestionSource>,
 }
 
 impl QuestionDispatch {
     const fn failure(outcome: StepOutcome) -> Self {
         Self {
             outcome,
-            source_types: Vec::new(),
-            requires_sources: false,
+            sources: Vec::new(),
         }
     }
+}
+
+/// Build the settling ledger events that persist `sources` (partitioned by
+/// `requires_sources`) into `_norn_flow_run_source`.
+pub(crate) fn question_read_events(
+    run_id: &str,
+    object_type: &str,
+    sources: &[RunQuestionSource],
+) -> Result<Vec<RuntimeValue>, Refusal> {
+    let mut plain = Vec::new();
+    let mut with_sources = Vec::new();
+    for req in sources {
+        if req.requires_sources {
+            with_sources.push(req.source_type.clone());
+        } else {
+            plain.push(req.source_type.clone());
+        }
+    }
+    let mut events = Vec::new();
+    for (source_types, requires_sources) in [(plain, false), (with_sources, true)] {
+        if !source_types.is_empty() {
+            events.push(
+                RunQuestionRead {
+                    run_id: run_id.to_owned(),
+                    object_type: object_type.to_owned(),
+                    source_types,
+                    requires_sources,
+                }
+                .event()
+                .map_err(Refusal::host)?,
+            );
+        }
+    }
+    Ok(events)
 }
 
 pub(crate) fn pin_mismatch() -> Refusal {
@@ -320,13 +353,56 @@ pub(crate) fn collect_step_evidence<E: SqlEngine>(
         plan.grain().as_str(),
         result,
     )?;
+    let inherited_sources = collect_inherited_sources(store, world, plan, result)?;
     Ok(StepEvidence {
         sources_authorized,
         required_sources,
         has_marked_evidence,
         has_restricted_bucket,
         has_connection_type: store.model().has_type("source.Connection"),
+        inherited_sources,
     })
+}
+
+fn collect_inherited_sources<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    world: &str,
+    plan: &QuestionPlan,
+    result: &QueryResult,
+) -> Result<Vec<RunQuestionSource>, Refusal> {
+    let storage_world = if store.fork_pin().is_some() {
+        norn_cell::MAIN_WORLD
+    } else {
+        world
+    };
+    let reader = store.read();
+    let mut merged: BTreeMap<String, bool> = BTreeMap::new();
+    for ty in plan_source_types(plan) {
+        for req in reader
+            .object_type_question_source_types(storage_world, &ty)
+            .map_err(Refusal::host)?
+        {
+            *merged.entry(req.source_type).or_insert(false) |= req.requires_sources;
+        }
+    }
+    let grain = plan.grain().as_str();
+    for row in result.rows.values() {
+        for id in row.members.keys() {
+            for req in reader
+                .run_question_source_types(storage_world, grain, id)
+                .map_err(Refusal::host)?
+            {
+                *merged.entry(req.source_type).or_insert(false) |= req.requires_sources;
+            }
+        }
+    }
+    Ok(merged
+        .into_iter()
+        .map(|(source_type, requires_sources)| RunQuestionSource {
+            source_type,
+            requires_sources,
+        })
+        .collect())
 }
 
 /// One parked, unsettled `norn.question@1` step queued for timer/alarm wake
@@ -518,28 +594,46 @@ fn evaluate_as_starter<E: SqlEngine>(
         step.freshness.as_ref(),
         eval.evidence.sources_authorized,
     ) {
-        let mut source_types = plan_source_types(&plan);
-        if emitted_sources
-            && eval.evidence.has_connection_type
-            && !source_types.iter().any(|t| t == "source.Connection")
-        {
-            source_types.push("source.Connection".to_owned());
-            source_types.sort();
-        }
+        let sources = merge_dispatch_sources(
+            &plan,
+            eval.evidence.inherited_sources,
+            emitted_sources,
+            emitted_sources && eval.evidence.has_connection_type,
+        );
         return Ok(QuestionDispatch {
             outcome: stale,
-            source_types,
-            requires_sources: emitted_sources,
+            sources,
         });
     }
 
     let outcome = build_answered_output(&step.question, result)?;
-    let source_types = plan_source_types(&plan);
-    Ok(QuestionDispatch {
-        outcome,
-        source_types,
-        requires_sources: false,
-    })
+    let sources = merge_dispatch_sources(&plan, eval.evidence.inherited_sources, false, false);
+    Ok(QuestionDispatch { outcome, sources })
+}
+
+fn merge_dispatch_sources(
+    plan: &QuestionPlan,
+    inherited: Vec<RunQuestionSource>,
+    requires_sources: bool,
+    include_connection: bool,
+) -> Vec<RunQuestionSource> {
+    let mut merged: BTreeMap<String, bool> = BTreeMap::new();
+    for ty in plan_source_types(plan) {
+        *merged.entry(ty).or_insert(false) |= requires_sources;
+    }
+    if include_connection {
+        merged.insert("source.Connection".to_owned(), true);
+    }
+    for req in inherited {
+        *merged.entry(req.source_type).or_insert(false) |= req.requires_sources;
+    }
+    merged
+        .into_iter()
+        .map(|(source_type, req_sources)| RunQuestionSource {
+            source_type,
+            requires_sources: req_sources,
+        })
+        .collect()
 }
 
 fn has_restricted_or_unproven_bucket<E: SqlEngine>(

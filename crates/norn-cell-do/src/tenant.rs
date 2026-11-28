@@ -42,6 +42,7 @@ use norn_ir::MetricDefinition;
 
 use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
+use crate::connect::Connect;
 use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy, RevealSlot};
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::questions::DerivedQuestions;
@@ -599,9 +600,7 @@ impl<E: SqlEngine> Tenant<E> {
     }
 
     /// TIMER-ALARM-1: the cell's earliest deadline (logical milliseconds),
-    /// possibly already passed; `None` for a vacant cell or one with nothing
-    /// pending. The host arms its alarm with it after every request.
-    ///
+    /// or `None` when vacant or idle.
     /// # Errors
     /// A host failure reading the cell.
     pub fn next_due(&self) -> Result<Option<u64>, Refusal> {
@@ -610,15 +609,19 @@ impl<E: SqlEngine> Tenant<E> {
     }
 
     /// TIMER-ALARM-1 / QUESTION-STEP-1: run due work at `now_ms`, including
-    /// parked `norn.question@1` steps under each run's recorded starter.
-    ///
+    /// parked `norn.question@1` steps under each run's starter and configured sources.
     /// # Errors
     /// A host failure reading the cell; an item that fails stays due.
-    pub fn run_due(&self, now_ms: u64) -> Result<norn_api::timers::DueWork, Refusal> {
+    pub fn run_due(
+        &self,
+        connect: Option<&Connect>,
+        now_ms: u64,
+    ) -> Result<norn_api::timers::DueWork, Refusal> {
         let State::Serving(serving) = &self.state else {
             return Ok(norn_api::timers::DueWork::default());
         };
-        self.with_questions(serving, now_ms, None, |questions| {
+        let configured = connect.map(Connect::configured_mappings);
+        self.with_questions(serving, now_ms, configured, |questions| {
             crate::runs::run_due_with_runtime(
                 &serving.host,
                 &self.caller,
@@ -783,7 +786,7 @@ impl<E: SqlEngine> Tenant<E> {
     /// the deployed dispatch.
     pub fn serve(
         &mut self,
-        mut connect: Option<&mut crate::connect::Connect>,
+        mut connect: Option<&mut Connect>,
         principals: &dyn PrincipalResolver,
         request: &Request<'_>,
         now_ms: u64,
@@ -813,9 +816,7 @@ impl<E: SqlEngine> Tenant<E> {
             return Served::Cell(response);
         }
         let clock_ms = now_ms.max(request.now.saturating_mul(1_000));
-        let configured = connect
-            .as_deref()
-            .map(crate::connect::Connect::configured_mappings);
+        let configured = connect.as_deref().map(Connect::configured_mappings);
         Served::Cell(self.handle_admitted(principals, request, member, clock_ms, configured))
     }
 

@@ -41,6 +41,10 @@ use super::{definition_changed, pin_mismatch, pin_unavailable, question_not_foun
 
 /// Internal host-written sync-report mapping; never a domain dependency.
 const HOST_REPORT_MAPPING: &str = "norn.connect.mapping";
+/// Maximum `source.Connection` rows scanned while computing the `STEP-PIN-1`
+/// dependency closure; exceeding this bound fails closed with
+/// `question_step.pin_unavailable` rather than silently omitting bindings.
+const MAX_CONNECTION_SCAN: usize = 1_024;
 
 fn pin_unavailable_cause(error: impl Display) -> Refusal {
     pin_unavailable().with_cause(error)
@@ -79,23 +83,45 @@ fn check_explicit_pin(
 
 /// Live `mapping_id -> {connector_id}` bindings read from `source.Connection`
 /// records in the cell store (empty when the model declares no connections).
+/// Fails closed with `question_step.pin_unavailable` if the connection scan
+/// exceeds [`MAX_CONNECTION_SCAN`].
 fn connection_connectors<E: SqlEngine>(
     host: &DevHost<E>,
 ) -> Result<BTreeMap<String, BTreeSet<String>>, Refusal> {
     let cell = host.cell()?;
     let reader = cell.store().read();
+    connection_connectors_within(&reader, MAX_CONNECTION_SCAN)
+}
+
+fn connection_connectors_within<E: SqlEngine>(
+    reader: &norn_cell::StoreReader<'_, E>,
+    max_connections: usize,
+) -> Result<BTreeMap<String, BTreeSet<String>>, Refusal> {
     if !reader.model().has_type("source.Connection") {
         return Ok(BTreeMap::new());
     }
     let rows = reader
-        .list(MAIN_WORLD, "source.Connection", 1_024)
+        .list(
+            MAIN_WORLD,
+            "source.Connection",
+            max_connections.saturating_add(1),
+        )
         .map_err(Refusal::host)?;
+    if rows.len() > max_connections {
+        return Err(pin_unavailable_cause(format!(
+            "source.Connection count exceeds STEP-PIN-1 scan bound ({max_connections})"
+        )));
+    }
     let mut bindings: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for row in rows {
-        let Some(mapping) = row.values.get("mapping").and_then(RuntimeValue::as_str) else {
+        let Some(mapping) = row.values.get("mapping_id").and_then(RuntimeValue::as_str) else {
             continue;
         };
-        if let Some(connector) = row.values.get("connector").and_then(RuntimeValue::as_str) {
+        if let Some(connector) = row
+            .values
+            .get("connector_id")
+            .and_then(RuntimeValue::as_str)
+        {
             bindings
                 .entry(mapping.to_owned())
                 .or_default()
@@ -335,7 +361,8 @@ pub(crate) fn effective_closure_digest(
         .map_err(pin_unavailable_cause)?;
     let space = derive_space(scope, &artifacts)?;
     let touched = collect_seed_types(&model, plan);
-    let closure_refs = collect_closure_artifact_refs(&model, &artifacts, touched, conn_map)?;
+    let (closure_refs, matched_connections) =
+        collect_closure_artifact_refs(&model, &artifacts, touched, conn_map)?;
     let metric_names = referenced_metric_names(plan);
     let mut derived_metrics: Vec<MetricDefinition> = space
         .candidates()
@@ -359,6 +386,7 @@ pub(crate) fn effective_closure_digest(
         plan.definitions(),
         derived_metrics,
         closure_refs,
+        matched_connections,
     );
     norn_ir::canonical::domain_hash_hex(b"norn.question.step.pin/1\0", &payload)
         .map_err(pin_unavailable_cause)
@@ -469,12 +497,17 @@ fn decode_payload<T: serde::de::DeserializeOwned>(
 /// reference across entities, interfaces, extensions, property types,
 /// markings, relations, derived views, defined concepts, mappings, source
 /// schemas, connectors, laws, and policies.
+type ClosureResult = (
+    Vec<(String, String, String)>,
+    BTreeMap<String, BTreeSet<String>>,
+);
+
 fn collect_closure_artifact_refs(
     model: &norn_cell::Model,
     artifacts: &[ArtifactEnvelope],
     seed_types: BTreeSet<String>,
     conn_map: &BTreeMap<String, BTreeSet<String>>,
-) -> Result<Vec<(String, String, String)>, Refusal> {
+) -> Result<ClosureResult, Refusal> {
     let id_to_idx: BTreeMap<&str, usize> = artifacts
         .iter()
         .enumerate()
@@ -534,7 +567,17 @@ fn collect_closure_artifact_refs(
         refs.push((pin.artifact_id, pin.version, pin.sha256));
     }
     refs.sort();
-    Ok(refs)
+    let matched_connections: BTreeMap<String, BTreeSet<String>> = graph
+        .mapping_ids
+        .into_iter()
+        .filter_map(|mapping_id| {
+            conn_map
+                .get(&mapping_id)
+                .cloned()
+                .map(|connectors| (mapping_id, connectors))
+        })
+        .collect();
+    Ok((refs, matched_connections))
 }
 
 fn entity_artifact_types(
@@ -859,4 +902,100 @@ fn visit_policy(
         return Ok(graph.include(idx, artifact));
     }
     Ok(false)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "STEP-PIN-1 connection binding unit tests"
+)]
+mod tests {
+    use super::*;
+    use crate::flow_question::question_step_codes;
+    use norn_cell::engine::NativeEngine;
+    use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
+
+    fn connection_model() -> Model {
+        let def: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "source.Connection",
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "mapping_id", "type": {"kind": "text"}},
+                {"id": "connector_id", "type": {"kind": "text"}}
+            ]
+        }))
+        .unwrap();
+        Model::from_definitions(&[def], &[]).unwrap()
+    }
+
+    fn put_connection(
+        store: &mut CellStore<NativeEngine>,
+        id: &str,
+        mapping_id: &str,
+        connector_id: &str,
+        at_ms: u64,
+    ) {
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: "org_demo/dev".into(),
+                logical_time: at_ms,
+                writes: vec![FactWriteRow::Put {
+                    object_type: "source.Connection".into(),
+                    key: id.into(),
+                    values: BTreeMap::from([
+                        ("id".to_owned(), RuntimeValue::String(id.to_owned())),
+                        (
+                            "mapping_id".to_owned(),
+                            RuntimeValue::String(mapping_id.to_owned()),
+                        ),
+                        (
+                            "connector_id".to_owned(),
+                            RuntimeValue::String(connector_id.to_owned()),
+                        ),
+                    ]),
+                }],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn connection_connectors_reads_mapping_id_and_connector_id_and_fails_closed_on_truncation() {
+        let mut store = CellStore::open_in_memory(connection_model()).unwrap();
+        put_connection(
+            &mut store,
+            "conn-1",
+            "erpnext.rest.mapping",
+            "erpnext.bound.connector",
+            1_000,
+        );
+        put_connection(
+            &mut store,
+            "conn-2",
+            "other.mapping",
+            "other.connector",
+            2_000,
+        );
+
+        let bindings = connection_connectors_within(&store.read(), 10).unwrap();
+        assert_eq!(
+            bindings,
+            BTreeMap::from([
+                (
+                    "erpnext.rest.mapping".to_owned(),
+                    BTreeSet::from(["erpnext.bound.connector".to_owned()])
+                ),
+                (
+                    "other.mapping".to_owned(),
+                    BTreeSet::from(["other.connector".to_owned()])
+                ),
+            ])
+        );
+
+        let err = connection_connectors_within(&store.read(), 1)
+            .expect_err("truncated connection scan must fail closed");
+        assert_eq!(err.code, question_step_codes::PIN_UNAVAILABLE);
+    }
 }

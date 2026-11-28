@@ -394,7 +394,7 @@ impl CellCore {
     pub fn run_due(&mut self, now_ms: u64) -> Result<Due, String> {
         let work = self
             .tenant
-            .run_due(now_ms)
+            .run_due(self.connect.as_ref(), now_ms)
             .map_err(|refusal| refusal.code)?;
         Ok(Due {
             committed: work.committed(),

@@ -623,7 +623,7 @@ pub(crate) fn deliver_recorded<E: SqlEngine>(
             outcome: step.outcome.clone(),
         },
         step.recorded,
-        (&[], false),
+        &[],
         now,
     )
 }
@@ -895,7 +895,7 @@ fn settle<E: SqlEngine>(
             outcome,
         },
         false,
-        (&[], false),
+        &[],
         now,
     )?;
     Ok(true)
@@ -923,7 +923,7 @@ fn settle_question<E: SqlEngine>(
             outcome: dispatch.outcome,
         },
         false,
-        (&dispatch.source_types, dispatch.requires_sources),
+        &dispatch.sources,
         now,
     )
 }
@@ -935,7 +935,7 @@ fn deliver_in<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     delivery: Delivery<'_>,
     recorded: bool,
-    (question_sources, requires_sources): (&[String], bool),
+    question_sources: &[norn_cell::flow_run::RunQuestionSource],
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     let row = cell
@@ -958,15 +958,12 @@ fn deliver_in<E: SqlEngine>(
     let committed = if question_sources.is_empty() {
         cell.commit_settled(commit, settlement)
     } else {
-        let event = norn_cell::flow_run::RunQuestionRead {
-            run_id: row.run_id,
-            object_type: flow.object_type,
-            source_types: question_sources.to_vec(),
-            requires_sources,
-        }
-        .event()
-        .map_err(Refusal::host)?;
-        cell.attributed(vec![event], |cell| cell.commit_settled(commit, settlement))
+        let events = crate::flow_question::question_read_events(
+            &row.run_id,
+            &flow.object_type,
+            question_sources,
+        )?;
+        cell.attributed(events, |cell| cell.commit_settled(commit, settlement))
     };
     let Err(error) = committed else {
         return Ok(());
