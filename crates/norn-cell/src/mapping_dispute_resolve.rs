@@ -332,7 +332,16 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             return Err(not_pending());
         };
         let is_pending = consumed_seq.is_none();
-        let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
+        let observed: Observed<RuntimeValue> = if let Some(prev_i64) = consumed_seq {
+            let prev_seq = u64::try_from(prev_i64).map_err(|err| CellError::LedgerCorrupt {
+                seq: 0,
+                reason: format!("negative consumed_commit_seq for {dispute_id}: {err}"),
+            })?;
+            let auth_val = self.authenticated_prior_consumed_observed(dispute_id, prev_seq)?;
+            norn_ir::runtime::decode(&auth_val).map_err(CellError::Encoding)?
+        } else {
+            serde_json::from_str(&encoded)?
+        };
         if observed.id.0 != dispute_id {
             return Err(CellError::MappingBundleMismatch);
         }

@@ -135,7 +135,7 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
     // SQLite uses an index range scan instead of scanning `_norn_inbox`.
     let rows = reader.conn.query(
         &format!(
-            "SELECT i.\"observed\", i.\"consumed_commit_seq\" \
+            "SELECT i.\"observation_id\", i.\"observed\", i.\"consumed_commit_seq\" \
              FROM \"{inbox}\" i \
              WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' \
                AND json_extract(i.\"observed\", '$.input.input.connectorInstance') = ?1 \
@@ -158,20 +158,99 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
     )?;
     for raw in rows {
         let row = crate::engine::SqlRow(raw);
-        let encoded: String = row.get(0)?;
-        let consumed_seq: i64 = row.get(1)?;
+        let obs_id: String = row.get(0)?;
+        let encoded: String = row.get(1)?;
+        let consumed_seq: i64 = row.get(2)?;
+        let consumed_u64 = u64::try_from(consumed_seq).map_err(|err| CellError::LedgerCorrupt {
+            seq: 0,
+            reason: format!("negative consumed_commit_seq for {obs_id}: {err}"),
+        })?;
         if reader.commit_is_verified_dispute_resolution(consumed_seq)? {
             continue;
         }
-        if let Ok(observed) = serde_json::from_str::<norn_kernel::Observed<RuntimeValue>>(&encoded)
-            && let Ok(landed) =
-                norn_ir::runtime::decode::<crate::mapping_bundle::MappingBundle>(&observed.input)
-            && landed_bundle_is_newer(reader, &landed, &incoming_version)?
-        {
+        let landed = authenticated_landed_bundle(reader, &obs_id, consumed_u64, &encoded)?;
+        if landed_bundle_is_newer(reader, &landed, &incoming_version)? {
             return Ok(true);
         }
     }
     has_newer_landed_correction(reader, bundle, source, source_id, &incoming_version)
+}
+
+/// Authenticate a consumed `mapping-bundle:` inbox row against its consuming
+/// commit's durable receipt and `_norn_export_journal` `consumed_input` (either
+/// directly consumed or consumed as a member of a page/reprocess commit), and
+/// cryptographically recheck the bundle against retained definitions.
+fn authenticated_landed_bundle<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    obs_id: &str,
+    consumed_seq: u64,
+    inbox_encoded: &str,
+) -> Result<crate::mapping_bundle::MappingBundle, CellError> {
+    let corrupt = |msg: &str| CellError::LedgerCorrupt {
+        seq: consumed_seq,
+        reason: format!("unverified landed bundle {obs_id}: {msg}"),
+    };
+    let Some(receipt) = reader.receipt_at(consumed_seq)? else {
+        return Err(corrupt("missing consuming receipt"));
+    };
+    let has_journal = reader
+        .conn
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+            crate::engine::params![],
+            |_row| Ok(()),
+        )?
+        .is_some();
+    if !has_journal {
+        return Err(corrupt("missing export journal table"));
+    }
+    let Some(export) = crate::export_journal::read_record(reader.conn, consumed_seq)? else {
+        return Err(corrupt("missing consuming export journal record"));
+    };
+    if export.receipt != receipt {
+        return Err(corrupt("export journal receipt mismatch"));
+    }
+    let Some(consumed_val) = export.consumed_input.as_ref() else {
+        return Err(corrupt("consuming export journal missing consumed_input"));
+    };
+    let crate::export_journal::ConsumedInput::Observation {
+        observation_id,
+        observed,
+        members,
+        ..
+    } = crate::export_journal::decode_observation_input(consumed_val)
+        .map_err(|err| corrupt(&format!("invalid consumed_input: {err}")))?
+    else {
+        return Err(corrupt("consuming commit did not consume an observation"));
+    };
+    let auth_observed = if observation_id == obs_id {
+        observed
+    } else if let Some(member) = members.into_iter().find(|m| m.observation_id == obs_id) {
+        member.observed
+    } else {
+        return Err(corrupt(
+            "landed bundle missing from consuming commit consumed_input",
+        ));
+    };
+    let inbox_val = RuntimeValue::from_json_text(inbox_encoded)
+        .map_err(|err| corrupt(&format!("corrupt inbox JSON: {err}")))?;
+    if crate::codec::canonical_json(&inbox_val)? != crate::codec::canonical_json(&auth_observed)? {
+        return Err(corrupt("inbox payload disagrees with export journal"));
+    }
+    let observed_ev: norn_kernel::Observed<RuntimeValue> = norn_ir::runtime::decode(&auth_observed)
+        .map_err(|err| corrupt(&format!("invalid Observed payload: {err}")))?;
+    if observed_ev.id.0 != obs_id {
+        return Err(corrupt("observed id mismatch"));
+    }
+    let landed: crate::mapping_bundle::MappingBundle = norn_ir::runtime::decode(&observed_ev.input)
+        .map_err(|err| corrupt(&format!("invalid MappingBundle payload: {err}")))?;
+    if obs_id != format!("mapping-bundle:{}", landed.digest) {
+        return Err(corrupt("bundle digest mismatch"));
+    }
+    reader
+        .recheck_mapping_bundle(&landed)
+        .map_err(|err| corrupt(&format!("bundle failed recheck: {err}")))?;
+    Ok(landed)
 }
 
 fn has_newer_landed_correction<E: SqlEngine>(

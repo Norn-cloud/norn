@@ -3174,7 +3174,7 @@ fn tampered_dispute_resolution_on_open_cell_fails_closed_and_keeps_quarantine() 
             )
             .expect("clear forged row");
     }
-    cell.resolve_mapping_dispute(&DisputeResolutionInput {
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
         dispute_id: conflict_id.clone(),
         decision: DisputeDecision::AcceptFirst,
         actor: "ops@demo".to_owned(),
@@ -3192,7 +3192,7 @@ fn tampered_dispute_resolution_on_open_cell_fails_closed_and_keeps_quarantine() 
     }
     assert!(
         matches!(
-            cell.resolve_mapping_dispute(&DisputeResolutionInput {
+            cell.resolve_mapping_dispute(DisputeResolutionInput {
                 dispute_id: conflict_id,
                 decision: DisputeDecision::Reject,
                 actor: "ops@demo".to_owned(),
@@ -3286,6 +3286,46 @@ fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
             Err(CellError::LedgerCorrupt { .. })
         ),
         "end-to-end delete processing must also fail closed on forged resolution row"
+    );
+
+    // Clear the forged resolution row, then corrupt the landed v2 bundle's
+    // inbox `source_version` to "0": the landed-version guard must authenticate
+    // against `_norn_export_journal` and fail closed with LedgerCorrupt rather
+    // than trusting tampered inbox bytes or skipping decode failures.
+    {
+        let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
+        raw_conn
+            .execute(
+                "DELETE FROM \"_norn_dispute_resolution\" WHERE \"dispute_id\" = 'mapping-conflict:forged'",
+                [],
+            )
+            .expect("clear forged resolution");
+        let (landed_id, landed_obs): (String, String) = raw_conn
+            .query_row(
+                "SELECT \"observation_id\", \"observed\" FROM \"_norn_inbox\" \
+                 WHERE \"consumed_commit_seq\" = ?1",
+                rusqlite::params![landed_seq],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read landed bundle inbox row");
+        let tampered = landed_obs.replace("\"source_version\":\"2\"", "\"source_version\":\"0\"");
+        assert_ne!(tampered, landed_obs);
+        raw_conn
+            .execute(
+                "UPDATE \"_norn_inbox\" SET \"observed\" = ?1 WHERE \"observation_id\" = ?2",
+                rusqlite::params![&tampered, &landed_id],
+            )
+            .expect("tamper landed bundle version in inbox");
+    }
+    assert!(
+        matches!(
+            norn_cell::mapping_delete::has_newer_or_incomparable_landed_source_version(
+                &cell.store().read(),
+                &del_bundle,
+            ),
+            Err(CellError::LedgerCorrupt { .. })
+        ),
+        "tampered landed bundle in inbox must fail closed with LedgerCorrupt"
     );
 }
 
