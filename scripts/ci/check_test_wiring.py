@@ -7,10 +7,8 @@ Mechanically prevents test suites and gate scripts from silently going dark:
    (direct `python3 <path>` or `python3 -m unittest discover -s <dir>` whose `-p`
    pattern matches the filename), unless listed in `EXEMPT_PY_TESTS`.
 2. Every tracked JS/TS test package (`*.test.ts`, `*.test.tsx`, `*.test.mjs`,
-   `*.e2e.ts`) and every standalone `apps/norn-cell-do/*.test.mjs` file must be
-   executed by an actual `bun test` or `playwright test` simple command inside
-   a subshell/block targeting that package, with standalone filenames passed as
-   arguments to that same `bun test` command.
+   `*.e2e.ts`) must be executed by an actual `bun test` or `playwright test`
+   simple command inside a subshell/block targeting that package.
 3. No shrink-only or CI base script may fall back to `HEAD` (`:-HEAD`), which
    compares a commit against itself and silently passes.
 """
@@ -332,51 +330,20 @@ def _is_js_test_command(argv: list[str]) -> bool:
     return False
 
 
-def _bun_test_file_args(argv: list[str]) -> set[str]:
-    """Return normalized file arguments passed to a single `bun test ...` command."""
-    if not (len(argv) >= 2 and argv[0] == "bun" and argv[1] == "test"):
-        return set()
-    files: set[str] = set()
-    i = 2
-    while i < len(argv):
-        tok = argv[i]
-        if tok in ("--timeout", "--reporter", "--reporter-outfile", "--test-name-pattern", "--shard"):
-            i += 2
-            continue
-        if tok.startswith("-"):
-            i += 1
-            continue
-        files.add(Path(tok).name)
-        i += 1
-    return files
-
-
 def check_js_test_wiring(js_tests: list[str], ci_text: str) -> list[str]:
     pkg_cmds = _extract_pkg_commands(ci_text)
     errors: list[str] = []
     packages: set[str] = set()
-    standalone_mjs: list[str] = []
     for rel in sorted(js_tests):
         parts = Path(rel).parts
         if len(parts) >= 2:
             packages.add(f"{parts[0]}/{parts[1]}")
-        if rel.startswith("apps/norn-cell-do/") and rel.endswith(".test.mjs"):
-            standalone_mjs.append(rel)
 
     for pkg in sorted(packages):
         cmds = pkg_cmds.get(pkg, [])
         if not any(_is_js_test_command(argv) for argv in cmds):
             errors.append(
                 f"unwired JS/TS test package: {pkg} has test files but no active `bun test` or `playwright test` command in scripts/ci/core.sh or .github/workflows/*.yml"
-            )
-
-    cell_do_tested: set[str] = set()
-    for argv in pkg_cmds.get("apps/norn-cell-do", []):
-        cell_do_tested.update(_bun_test_file_args(argv))
-    for rel in standalone_mjs:
-        if Path(rel).name not in cell_do_tested:
-            errors.append(
-                f"unwired standalone test file: {rel} is not passed to `bun test` in apps/norn-cell-do"
             )
     return errors
 

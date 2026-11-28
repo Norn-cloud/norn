@@ -5,7 +5,6 @@ Expects artifacts to have been built during the probe's `prepare` step:
   - <target_dir>/release/norn
   - <rivet_target_dir>/release/norn-cell-rivet
   - <target_dir>/wasm32-unknown-unknown/wasm-release/norn_checker_wasm.wasm
-  - <target_dir>/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm
 
 Gzip sizes use deterministic Python gzip (compresslevel=9, mtime=0). Standard library only.
 """
@@ -46,12 +45,10 @@ def measure_artifacts(target_dir: Path, rivet_target_dir: Path) -> list[dict]:
     norn_cli = target_dir / "release" / "norn"
     rivet_bin = rivet_target_dir / "release" / "norn-cell-rivet"
     checker_wasm = target_dir / "wasm32-unknown-unknown" / "wasm-release" / "norn_checker_wasm.wasm"
-    cell_do_wasm = target_dir / "wasm32-unknown-unknown" / "wasm-release" / "norn_cell_do.wasm"
 
     cli_bytes = _stat_non_empty(norn_cli)
     rivet_bytes = _stat_non_empty(rivet_bin)
     checker_data = _read_non_empty(checker_wasm)
-    cell_do_data = _read_non_empty(cell_do_wasm)
 
     return [
         {
@@ -82,25 +79,6 @@ def measure_artifacts(target_dir: Path, rivet_target_dir: Path) -> list[dict]:
             "statistic": "single",
             "workload": {
                 "crate": "norn-checker-wasm",
-                "target": "wasm32-unknown-unknown",
-                "profile": "wasm-release",
-                "gzip_level": 9,
-            },
-        },
-        {
-            "metric": "binary.norn_cell_do_wasm.bytes",
-            "value": len(cell_do_data),
-            "unit": "bytes",
-            "statistic": "single",
-            "workload": {"crate": "norn-cell-do", "target": "wasm32-unknown-unknown", "profile": "wasm-release"},
-        },
-        {
-            "metric": "binary.norn_cell_do_wasm.gzip_bytes",
-            "value": gzip_size(cell_do_data),
-            "unit": "bytes",
-            "statistic": "single",
-            "workload": {
-                "crate": "norn-cell-do",
                 "target": "wasm32-unknown-unknown",
                 "profile": "wasm-release",
                 "gzip_level": 9,

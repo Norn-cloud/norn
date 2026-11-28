@@ -3835,7 +3835,6 @@ dependencies = [
  "tokio",
  "ureq",
  "url",
- "wasm-bindgen",
  "zeroize",
 ]
 

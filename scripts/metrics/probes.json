@@ -72,10 +72,9 @@
         "crates/norn-cli/Cargo.toml",
         "crates/norn-cell-rivet/Cargo.toml",
         "crates/norn-checker-wasm/Cargo.toml",
-        "crates/norn-cell-do/Cargo.toml",
         "scripts/metrics/probe_binary_sizes.py"
       ],
-      "prepare": "TARGET_DIR=\"${CARGO_TARGET_DIR:-$PWD/target}\"; case \"$TARGET_DIR\" in /*) ;; *) TARGET_DIR=\"$PWD/$TARGET_DIR\" ;; esac; export CARGO_TARGET_DIR=\"$TARGET_DIR\"; rustup target add wasm32-unknown-unknown && cargo build --locked --release -p norn-cli --bin norn && (cd crates/norn-cell-rivet && CARGO_TARGET_DIR=\"$TARGET_DIR/rivet\" cargo build --locked --release --bin norn-cell-rivet) && cargo rustc --locked -p norn-checker-wasm --lib --target wasm32-unknown-unknown --profile wasm-release --crate-type cdylib && cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release",
+      "prepare": "TARGET_DIR=\"${CARGO_TARGET_DIR:-$PWD/target}\"; case \"$TARGET_DIR\" in /*) ;; *) TARGET_DIR=\"$PWD/$TARGET_DIR\" ;; esac; export CARGO_TARGET_DIR=\"$TARGET_DIR\"; rustup target add wasm32-unknown-unknown && cargo build --locked --release -p norn-cli --bin norn && (cd crates/norn-cell-rivet && CARGO_TARGET_DIR=\"$TARGET_DIR/rivet\" cargo build --locked --release --bin norn-cell-rivet) && cargo rustc --locked -p norn-checker-wasm --lib --target wasm32-unknown-unknown --profile wasm-release --crate-type cdylib",
       "run": "TARGET_DIR=\"${CARGO_TARGET_DIR:-$PWD/target}\"; case \"$TARGET_DIR\" in /*) ;; *) TARGET_DIR=\"$PWD/$TARGET_DIR\" ;; esac; python3 scripts/metrics/probe_binary_sizes.py --target-dir \"$TARGET_DIR\" --rivet-target-dir \"$TARGET_DIR/rivet\"",
       "timeout_s": 1800,
       "workload": {

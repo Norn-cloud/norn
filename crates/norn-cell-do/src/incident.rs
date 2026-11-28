@@ -133,8 +133,7 @@ pub fn respond_at(mut refused: Refusal, now: u64) -> Response {
     }
 }
 
-/// Log a panic's payload and location before the runtime aborts (installed
-/// once by the Worker entry point).
+/// Log a panic's payload and location before the runtime aborts.
 pub fn install_panic_log() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
@@ -146,31 +145,6 @@ pub fn install_panic_log() {
     });
 }
 
-#[cfg(target_arch = "wasm32")]
-mod sink {
-    use wasm_bindgen::prelude::*;
-
-    #[wasm_bindgen]
-    extern "C" {
-        #[wasm_bindgen(js_namespace = console, js_name = error)]
-        fn console_error(line: &str);
-        #[wasm_bindgen(catch, js_namespace = crypto, js_name = getRandomValues)]
-        fn get_random_values(buf: &mut [u8]) -> Result<JsValue, JsValue>;
-    }
-
-    pub(super) fn log(line: &str) {
-        console_error(line);
-    }
-
-    pub(super) fn random_bytes() -> Result<[u8; 16], String> {
-        let mut bytes = [0_u8; 16];
-        get_random_values(&mut bytes)
-            .map(|_| bytes)
-            .map_err(|err| format!("{err:?}"))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 mod sink {
     use std::cell::RefCell;
     use std::collections::VecDeque;
@@ -254,17 +228,15 @@ fn random_bytes() -> Result<[u8; 16], String> {
 }
 
 /// #1710: keep the incident lines this thread logs from now on, for
-/// [`recent`] (native builds only; tests and diagnostics opt in). A thread
+/// [`recent`] (tests and diagnostics opt in). A thread
 /// that never calls this keeps nothing in memory; one that does keeps at
 /// most the newest 64 KiB of lines.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn capture() {
     sink::capture();
 }
 
-/// The incident lines this thread logged since it began to [`capture`]
-/// (native builds only); empty on a thread that never did.
-#[cfg(not(target_arch = "wasm32"))]
+/// The incident lines this thread logged since it began to [`capture`];
+/// empty on a thread that never did.
 #[must_use]
 pub fn recent() -> Vec<String> {
     sink::recent()
@@ -282,7 +254,6 @@ mod tests {
         assert_eq!(format_utc(1_709_251_199), "2024-02-29T23:59:59Z");
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn entropy_failure_preserves_internal_refusal_without_issuing_id() {
         super::capture();
@@ -313,7 +284,6 @@ mod tests {
 
     /// #1710: a thread that never opted in keeps nothing; one that did keeps
     /// at most `MAX_RECENT_BYTES`, the newest lines.
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn only_a_capturing_thread_keeps_lines_and_at_most_its_bound() {
         let quiet = std::thread::spawn(|| {

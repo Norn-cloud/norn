@@ -1,7 +1,6 @@
-//! Host conformance seams (`apps/norn-cell-do/conformance`), in `conformance`
+//! Host conformance seams (`apps/norn-cell-rivet/conformance`), in `conformance`
 //! builds only, served only when `NORN_STAGE=test` and
-//! `NORN_CONFORMANCE=synthetic`, and only for the synthetic scope. The native
-//! counterpart of `conformance/worker.mjs`:
+//! `NORN_CONFORMANCE=synthetic`, and only for the synthetic scope:
 //!
 //! - a fixed request clock (`x-norn-conformance-now`), so receipts and heads
 //!   are byte-comparable with the native reference;

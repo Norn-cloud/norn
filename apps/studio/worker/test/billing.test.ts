@@ -8,7 +8,6 @@ import { authOptions, createAuth } from "../auth.ts"
 import { forgetPolarCustomer, grantOf, payerOf, reconcile, snapshotOf, statusOf, type PolarBilling, type PolarSubscription } from "../polar.ts"
 import { billingModeOn, billingModeStatement, entitlementOf, FREE_LIMITS, limitRaised, ownedWorkspaces, UNLIMITED, workspaceMembers, writeLimits, type BillingDb } from "../billing.ts"
 import { BILLING_ENV, parsePlans, PLACEHOLDER_PLANS, polarConfig, POLAR_SCOPES, settingsOf, type PlanTable, type PolarConfig } from "../polar-config.ts"
-import { celldConfig, celldStudio } from "../../celld-config.ts"
 import { README, withBillingSection } from "../../scripts/billing-readme.ts"
 import { DEFAULT_ORIGIN as ORIGIN, cookieOf, createMigratedDb, createWorkerClient, createWorkerEnv } from "./harness.ts"
 
@@ -39,7 +38,7 @@ const CONFIG = polarConfig(POLAR_ENV) as PolarConfig
 const SETTINGS = settingsOf(CONFIG)
 
 const database = (): Database => createMigratedDb("all")
-/** A deployed stage: migrated, its billing mode written by the deploy step (alchemy.run.ts, celld-migrate.ts). */
+/** A deployed stage: migrated, its billing mode written by the deploy step (alchemy.run.ts). */
 function stage(billing: boolean): Env {
   const db = database()
   db.run(billingModeStatement(billing))
@@ -172,15 +171,6 @@ test("the README's billing section is generated from the code's settings, token 
   for (const [scope] of POLAR_SCOPES) expect(readme).toContain(`\`${scope}\``)
   expect(POLAR_SCOPES.map(([scope]) => scope)).toContain("subscriptions:read")
   expect(readme).toContain(JSON.stringify(PLACEHOLDER_PLANS, null, 2))
-})
-
-test("celld carries the Polar settings together, or refuses", () => {
-  const BASE = { STUDIO_STAGE: "demo", STUDIO_BUILD: "a".repeat(40), BETTER_AUTH_URL: "https://studio-demo.norn.cloud", BETTER_AUTH_SECRET: "s".repeat(40), STUDIO_CLIENT_IP_HEADER: "x-real-ip" }
-  expect((celldConfig(celldStudio(BASE)).vars as Record<string, string>).POLAR_ACCESS_TOKEN).toBeUndefined()
-  const vars = celldConfig(celldStudio({ ...BASE, ...POLAR_ENV })).vars as Record<string, string>
-  expect(vars).toMatchObject({ POLAR_ACCESS_TOKEN: "polar_oat_test", POLAR_WEBHOOK_SECRET: WEBHOOK_SECRET, POLAR_SERVER: "sandbox" })
-  expect(JSON.parse(vars.POLAR_PLANS as string)).toEqual(PLANS)
-  expect(() => celldStudio({ ...BASE, POLAR_ACCESS_TOKEN: "t" })).toThrow("go together")
 })
 
 test("Polar's plugin adds no Better Auth tables: 0001 and 0009 are the whole schema", async () => {

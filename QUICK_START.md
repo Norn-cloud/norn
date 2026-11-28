@@ -64,8 +64,7 @@ export NORN_DEV_HOST_BIN="$TARGET/release/norn-dev-host"
 (cd apps/studio && bun install --frozen-lockfile)
 ```
 
-The hosted-cell smoke in [`crates/norn-cell`](crates/norn-cell/README.md) also needs
-`esbuild` and Wrangler 4.157.0 on `PATH` (see that README). To install only the Rust `norn` from a tag:
+To install only the Rust `norn` from a tag:
 `cargo install --locked --git https://github.com/Norn-cloud/norn --tag TAG norn-cli`.
 For a step-by-step walkthrough, follow [the authoring tutorial](docs/authoring/tutorial.md).
 
@@ -127,8 +126,7 @@ exports. Prerequisites, from this checkout: Rust 1.100.0, Bun 1.4.5 and
 `bun install --frozen-lockfile` in `tools/norn-ts`; Studio also needs the
 checker WASM (`wasm-bindgen-cli` 0.2.129, as above; `build-pkg.sh` runs
 binaryen 132.0.0's `wasm-opt` through `npx`, so it needs the network once, or
-`NORN_WASM_OPT=0` to skip it). The hosted cell's own smoke
-(`apps/norn-cell-do/smoke.py`) also needs `esbuild` and Wrangler.
+`NORN_WASM_OPT=0` to skip it).
 
 ```sh
 # Either cache prebuilt binaries once with `bun tools/norn-ts/src/cli.ts setup`,

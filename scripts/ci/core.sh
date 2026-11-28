@@ -381,8 +381,6 @@ run_phase() {
       (cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test && bun run build)
       (cd apps/sidekick-bridge && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test)
       (cd tools/norn-proofs && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test --test-name-pattern 'generated_solver|check_ts_rejects')
-      # TIMER-ALARM-1: the Durable Object's wake rules; OLAP-01: what connections receive (no dependencies).
-      (cd apps/norn-cell-do && bun test ./wake.test.mjs ./worker.test.mjs ./connect_vars.test.mjs)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
       # With Cargo autodiscovery disabled, a new test file must be enrolled in suites.rs.
       python3 scripts/codemods/fold_integration_tests.py --check
@@ -407,7 +405,7 @@ run_phase() {
       python3 scripts/metrics/test_metrics.py
       python3 scripts/metrics/test_unit_economics.py
       python3 scripts/release/test_install.py
-      python3 apps/norn-cell-do/conformance/test_conformance.py
+      python3 apps/norn-cell-rivet/conformance/test_conformance.py
       PYTHONPATH="$PWD/sdks/python/regression" python3 sdks/python/regression/test_receipt.py
       PYTHONPATH="$PWD/tools/norn-py" python3 -m unittest discover -s tools/norn-py/tests -t tools/norn-py/tests
       bash scripts/ci/ascent-no-clock-dependency-tree.sh --self-test
@@ -510,7 +508,6 @@ PY
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-ui-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api -p norn-authoring-py
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
-      cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
       ;;
     clippy)
       cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -544,12 +541,10 @@ PY
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-ui-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api -p norn-authoring-py
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
-      cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
       ;;
     cache-warm-wasm-pkg)
       ensure_checker_wasm_pkg
       ensure_checker_wasm_engine
-      cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release
       ;;
     cache-warm-duckdb)
       ensure_nextest
@@ -643,8 +638,6 @@ PY
       export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
       "$NORN_BIN" compile tools/norn-ts/fixtures/core --org org_demo --env dev --out "$upstream/core-artifacts.json"
       bun -e 'const artifacts = await Bun.file(process.argv[1]).json(); for (const [id, path] of [["toy.contacts.source", "fixtures/ir/synthetic-contact.source_schema.json"], ["toy.rows", "fixtures/ir/synthetic-rows.mapping.json"]]) { const artifact = artifacts.find((value) => value.artifactId === id); if (!artifact) throw new Error(`missing ${id}`); const expected = JSON.stringify(artifact, null, 2) + "\n"; const actual = await Bun.file(path).text(); if (actual !== expected) throw new Error(`${path} drifted from native norn compile`); }' "$upstream/core-artifacts.json"
-      "$NORN_BIN" compile apps/norn-cell-do/probe/probe.ts --org probe-org --env probe --out "$upstream/probe.ir.json"
-      bun -e 'const live = await Bun.file(process.argv[1]).json(); const committed = await Bun.file("apps/norn-cell-do/probe/probe.ir.json").json(); if (JSON.stringify(live) !== JSON.stringify(committed)) throw new Error("apps/norn-cell-do/probe/probe.ir.json drifted from native norn compile");' "$upstream/probe.ir.json"
       "$NORN_BIN" compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
@@ -695,11 +688,6 @@ PY
       # matrix fixtures, decision sheet and lifecycle view machines evaluate in the real WASM checker.
       (cd packages/norn-react && export NORN_CHECKER_WASM_REQUIRED=1 && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test)
       (cd packages/norn-demo-ui && export NORN_CHECKER_WASM_REQUIRED=1 && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test)
-      # TENANT-ISOLATION-1 (S8): the cell Worker's boundary over its real Wasm gate, built as it ships.
-      cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release
-      wasm-bindgen "${CARGO_TARGET_DIR:-$PWD/target}/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
-        --target web --out-name norn_cell_do --out-dir "$upstream/norn-cell-do-pkg"
-      (cd apps/norn-cell-do && NORN_CELL_DO_PKG="$upstream/norn-cell-do-pkg" bun test ./worker.wasm.test.mjs)
       # The ZEN-only engine package pages load (#1325): pages and the checker share one
       # evaluator so they cannot disagree, so it answers every evaluation of the shared
       # corpus exactly as the checker package does.
@@ -755,7 +743,7 @@ PY
       # like formal, it is a Boat gate that no CI plan selects.
       (cd crates/norn-cell-rivet && CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet" cargo build --locked --release --features conformance)
       NORN_CELL_DO_CONFORMANCE_OUT="$upstream/rivet-reference.json" cargo test --locked -p norn-cell-do --test suites conformance_reference::
-      NORN_CELL_RIVET="$CARGO_TARGET_DIR/rivet/release/norn-cell-rivet" python3 apps/norn-cell-do/conformance/conformance.py \
+      NORN_CELL_RIVET="$CARGO_TARGET_DIR/rivet/release/norn-cell-rivet" python3 apps/norn-cell-rivet/conformance/conformance.py \
         --reference "$upstream/rivet-reference.json" --host rivet-native --out "$upstream/rivet-conformance.json"
       ;;
     provenance)

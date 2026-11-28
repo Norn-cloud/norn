@@ -67,7 +67,7 @@ See [the runner image and rehearsal](../../apps/norn-cell-rivet/README.md).
 ```sh
 NORN_CELL_DO_CONFORMANCE_OUT=$P/reference.json cargo test --locked -p norn-cell-do --test suites conformance_reference::
 NORN_CELL_RIVET=crates/norn-cell-rivet/target/release/norn-cell-rivet \
-  python3 apps/norn-cell-do/conformance/conformance.py --reference $P/reference.json --host rivet-native
+  python3 apps/norn-cell-rivet/conformance/conformance.py --reference $P/reference.json --host rivet-native
 ```
 
 `--host rivet-native` runs Rivet Engine 3.1.1 in Docker, pinned by digest,

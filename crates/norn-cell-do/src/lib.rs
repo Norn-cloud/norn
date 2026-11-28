@@ -1,9 +1,8 @@
-//! `norn-cell-do`: one tenant cell per Workers Durable Object (#728, #819).
+//! `norn-cell-do`: shared hosted cell server, `norn-dev-host` and `norn-olapd` (#728, #819).
 //!
-//! Ring 1 host perimeter. The Durable Object is the cell's single writer and
-//! its SQLite storage is the cell's engine (`norn_cell::workers::WorkersEngine`, wasm32 only).
-//! Everything here is portable Rust: the same [`server::handle`] dispatch runs
-//! natively over `NativeEngine`, which is how native/DO parity is checked.
+//! Ring 1 host perimeter. The portable [`server::handle`] dispatch and [`tenant::Tenant`]
+//! run over any [`norn_cell::engine::SqlEngine`] (native SQLite in `norn-dev-host` and
+//! tests, and Rivet's embedded SQLite in `crates/norn-cell-rivet`).
 //!
 //! - [`principal`]: the one seam that turns transport credentials into a Norn
 //!   principal, and the server policy for fixture principals (until #817).
@@ -59,13 +58,10 @@ mod runs;
 pub mod seed;
 pub mod server;
 pub mod tenant;
-#[cfg(target_arch = "wasm32")]
-mod wasm;
 
 /// Whether this build accepts fixture principals (the `fixtures` feature,
-/// local smoke builds only). The Worker and the deploy script read it from the
-/// built Wasm (`NornCell.fixturesEnabled`) and refuse such a build outside a smoke or
-/// test stage.
+/// local smoke and test builds only). Hosts refuse a fixtures build outside a
+/// smoke or test stage.
 #[must_use]
 pub const fn fixtures_enabled() -> bool {
     cfg!(feature = "fixtures")

@@ -86,36 +86,29 @@ class TestCheckTestWiring(unittest.TestCase):
             [
                 "apps/sidekick-bridge/relay.test.ts",
                 "packages/quoted-op/foo.test.ts",
-                "apps/norn-cell-do/bar.test.mjs",
-                "apps/norn-cell-do/foo.test.mjs",
             ],
             "\n".join(
                 [
                     '(cd apps/sidekick-bridge && bun install --frozen-lockfile && echo "run bun test")',
                     '(cd packages/quoted-op && echo "&&" bun test)',
-                    "(cd apps/norn-cell-do && bun test bar.test.mjs && echo foo.test.mjs)",
                 ]
             )
             + "\n",
         )
-        self.assertEqual(len(errors), 3)
+        self.assertEqual(len(errors), 2)
         self.assertTrue(any("apps/sidekick-bridge" in e for e in errors))
         self.assertTrue(any("packages/quoted-op" in e for e in errors))
-        self.assertTrue(any("apps/norn-cell-do/foo.test.mjs" in e for e in errors))
 
-    def test_detects_unwired_js_package_and_standalone_mjs(self) -> None:
+    def test_detects_unwired_js_package(self) -> None:
         errors = ctw.check_js_test_wiring(
             [
                 "apps/sidekick-bridge/relay.test.ts",
-                "apps/norn-cell-do/wake.test.mjs",
-                "apps/norn-cell-do/orphan.test.mjs",
                 "packages/new-pkg/foo.test.ts",
             ],
-            "(cd apps/sidekick-bridge && bun test)\n(cd apps/norn-cell-do && bun test ./wake.test.mjs)\n",
+            "(cd apps/sidekick-bridge && bun test)\n",
         )
-        self.assertEqual(len(errors), 2)
+        self.assertEqual(len(errors), 1)
         self.assertTrue(any("packages/new-pkg" in e for e in errors))
-        self.assertTrue(any("apps/norn-cell-do/orphan.test.mjs" in e for e in errors))
 
     def test_detects_fail_open_head_fallback(self) -> None:
         errors = ctw.check_no_head_base_fallback(

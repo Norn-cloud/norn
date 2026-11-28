@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test"
-import { telemetry } from "../../../norn-cell-do/otlp.mjs"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { CELL_ROUTES, Telemetry, cellRoute, exportConfig, methodOf, telemetry } from "../otlp.mjs"
 import { otelSettings } from "../../deploy-target.ts"
 import { STUDIO_ROUTES, errorClass, instrumented, studioRoute } from "../telemetry.ts"
 
@@ -143,4 +145,54 @@ test("a deploy passes OpenTelemetry settings only when the endpoint is a credent
   expect(() => otelSettings({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://o2.test/api/norn", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20x" })).toThrow()
   expect(() => otelSettings({ OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api/norn", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=a%0Ab" })).toThrow()
   expect(otelSettings({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:5080/api/norn", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20x" })?.endpoint).toBe("http://127.0.0.1:5080/api/norn")
+})
+
+test("CELL_ROUTES covers every route the cell server declares (server.rs routes!) without leaking slugs", () => {
+  const server = readFileSync(join(import.meta.dir, "../../../../crates/norn-cell-do/src/server.rs"), "utf8")
+  const declared = [...server.matchAll(/=> \("(?:GET|POST)", "(\/v1\/[^"]+)"\)/g)].map((m) => m[1]!.replace(/\{[A-Za-z]+\}/g, "{}"))
+  expect(declared.length).toBeGreaterThan(40)
+  const ours = new Set(CELL_ROUTES.map((template) => template.replace(/\{[a-z]+\}/g, "{}")))
+  for (const path of declared) expect(ours.has(path)).toBe(true)
+  for (const template of CELL_ROUTES) {
+    for (const slug of TENANT) {
+      const path = template.replace(/\{[a-z]+\}/g, encodeURIComponent(slug))
+      expect(cellRoute(path)).toBe(template)
+      expect(cellRoute(path)).not.toContain(slug)
+    }
+  }
+  expect(methodOf("GET")).toBe("GET")
+  expect(methodOf("ACME")).toBe("other")
+})
+
+test("OTEL-TLS-1, OTEL-BOUNDED-1 and OTEL-NO-TENANT-2 hold on otlp.mjs", async () => {
+  const ON = { OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.test/api/norn/", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20abc,stream-name=norn", NORN_OTEL_INTERVAL_MS: "1000" }
+  const credentialed = (endpoint: string) => exportConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: endpoint, OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20x" }, "s")
+  expect(credentialed("http://o2.example.com/api/norn")).toBeNull()
+  expect(credentialed("http://10.0.0.5:5080/api/norn")).toBeNull()
+  expect(credentialed("https://user:pw@o2.example.com/api")).toBeNull()
+  expect(credentialed("https://o2.example.com/api/norn")).not.toBeNull()
+  expect(credentialed("http://127.0.0.1:5080/api/norn")).not.toBeNull()
+  expect(credentialed("http://localhost:5080/api/norn")).not.toBeNull()
+  expect(credentialed("http://[::1]:5080/api/norn")).not.toBeNull()
+  expect(exportConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://o2.example.com/api" }, "s")).not.toBeNull()
+
+  // Bounded series & spans
+  const bounded = new Telemetry(exportConfig(ON, "norn-studio")!)
+  for (let i = 0; i < 2100; i++) bounded.count("y_total", { route: `/r${i}` })
+  for (let i = 0; i < 1100; i++) bounded.span("s", {}, 0, 1)
+  const sent: Array<{ url: string; body: any }> = []
+  await bounded.flush((async (url: string, init: RequestInit) => {
+    sent.push({ url, body: JSON.parse(String(init.body)) })
+    return new Response(null, { status: 200 })
+  }) as unknown as typeof fetch)
+  const metrics = sent.find((s) => s.url.endsWith("/v1/metrics"))!.body.resourceMetrics[0].scopeMetrics[0].metrics
+  const spans = sent.find((s) => s.url.endsWith("/v1/traces"))!.body.resourceSpans[0].scopeSpans[0].spans
+  expect(metrics.find((m: any) => m.name === "y_total").sum.dataPoints.length).toBe(2000)
+  expect(metrics.find((m: any) => m.name === "norn_otel_dropped_total").sum.dataPoints[0].asDouble).toBe(200)
+  expect(spans.length).toBe(1000)
+
+  // Resource allowlist
+  const cfg = exportConfig({ ...ON, OTEL_SERVICE_NAME: "acme-corp", OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=prod,tenant=acme-corp,host.name=acme.cells.example" }, "norn-studio")!
+  expect(cfg.service).toBe("norn-studio")
+  expect(cfg.resource).toEqual([["deployment.environment", "prod"]])
 })
