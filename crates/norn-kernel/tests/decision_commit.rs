@@ -912,11 +912,16 @@ proptest! {
         let prepared =
             prepare_decision::<Infallible>(&catalog, &slice, &turn("prop-set"), &set_only)
                 .unwrap();
-        prop_assert!(matches!(
+        let matched_utc_set = matches!(
             prepared.events.as_slice(),
             [FactEvent::Set { value: JsonValue::String(value), .. }]
                 if value == "2024-02-29T12:00:00Z"
-        ));
+        );
+        prop_assert!(
+            matched_utc_set,
+            "expected normalized UTC timestamp set event, got {:?}",
+            prepared.events
+        );
 
         let set_then_transition = output(json!({
             "facts": [

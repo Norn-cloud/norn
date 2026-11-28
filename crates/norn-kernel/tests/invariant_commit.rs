@@ -1795,16 +1795,20 @@ norn_testkit::proptest::proptest! {
         .expect("prop numeric defaults decode");
         let key = FactKey::new("test.PropNumericDefaults", "row");
         let mut cell = new_cell().with_types(vec![object_type]);
+        let commit_res = cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: JsonObject::new(),
+                },
+            }],
+            ..CellCommit::empty()
+        });
         norn_testkit::proptest::prop_assert!(
-            cell.commit(CellCommit {
-                writes: vec![FactWrite {
-                    key: key.clone(),
-                    expected: FactVersion::ABSENT,
-                    mutation: FactMutation::Put { values: JsonObject::new() },
-                }],
-                ..CellCommit::empty()
-            })
-            .is_ok()
+            commit_res.is_ok(),
+            "expected numeric default commit to succeed, got {:?}",
+            commit_res
         );
         let expected = JsonObject::from([
             (
