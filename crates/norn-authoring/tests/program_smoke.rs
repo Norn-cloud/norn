@@ -1,3 +1,5 @@
+//! Program, VFS quota, and symbol-identity smoke tests for `norn-authoring`.
+
 use norn_authoring::{
     AuthoringError, AuthoringProgram, BoundedVfs, DiagnosticCategory, INTRINSICS_VIRTUAL_PATH,
     Profile, VfsLimits,
