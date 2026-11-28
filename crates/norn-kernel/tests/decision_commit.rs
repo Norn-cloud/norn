@@ -819,10 +819,11 @@ fn decision_refuses_false_guard_and_unknown_transition() {
 
 #[test]
 fn offset_timestamps_canonicalize_before_transition_guards() {
-    // (guard, seeded_b, set_a, expected_refusal, expected_status)
+    // (guard, with_types, seeded_b, set_a, expected_refusal, expected_status)
     let cases = [
         (
             "self.a != self.b",
+            true,
             "2024-02-29T12:00:00+02:00",
             None,
             Some("decision.guard_false"),
@@ -830,6 +831,7 @@ fn offset_timestamps_canonicalize_before_transition_guards() {
         ),
         (
             "self.a != self.b",
+            false,
             "2024-02-29T10:00:00Z",
             Some("2024-02-29T12:00:00+02:00"),
             Some("decision.guard_false"),
@@ -837,18 +839,23 @@ fn offset_timestamps_canonicalize_before_transition_guards() {
         ),
         (
             "self.a == self.b",
+            false,
             "2024-02-29T10:00:00Z",
             Some("2024-02-29T12:00:00+02:00"),
             None,
             "accepted",
         ),
     ];
-    for (idx, (guard, seeded_b, set_a, expected_refusal, expected_status)) in
+    for (idx, (guard, with_types, seeded_b, set_a, expected_refusal, expected_status)) in
         cases.into_iter().enumerate()
     {
         let types = timestamp_guard_type(guard);
         let catalog = TypeCatalog::new(&types);
-        let mut cell = cell().with_types(types.clone());
+        let mut cell = if with_types {
+            cell().with_types(types.clone())
+        } else {
+            cell()
+        };
         let id = format!("ts-case-{idx}");
         let row = seed_timestamp_guard_row(&mut cell, &id, "2024-02-29T10:00:00Z", seeded_b);
         let slice = load_slice(&cell, [row.clone()]).unwrap();

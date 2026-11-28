@@ -771,11 +771,12 @@ fn ordered_rows_lifecycle_controls_and_defaults() {
 
 #[test]
 fn ordered_rows_coverage_and_condition_refusals() {
-    let cases: &[(fn(&mut Value, &mut Vec<Value>), &str, &str)] = &[
+    type SupportRefusalCase = (fn(&mut Value, &mut Vec<Value>), &'static str, &'static str);
+    let cases: &[SupportRefusalCase] = &[
         (
             |w, _| {
                 arr_mut(ux_mut(w), "/fields")
-                    .retain(|f| f.at("fieldId") != "create-parent-customer")
+                    .retain(|f| f.at("fieldId") != "create-parent-customer");
             },
             "/forms/",
             "required parent property \"customer_number\"",
@@ -806,7 +807,7 @@ fn ordered_rows_coverage_and_condition_refusals() {
                     "/actionBindings/1/inputMapping",
                     "parent",
                     json!("input.draft.parent.order_number"),
-                )
+                );
             },
             "/actionBindings/1/inputMapping/parent",
             "ZEN mapping",
@@ -818,7 +819,7 @@ fn ordered_rows_coverage_and_condition_refusals() {
                     "/readOnlyWhen/inputs",
                     "rowGridId",
                     json!("create-order-grid"),
-                )
+                );
             },
             "/readOnlyWhen/inputs/rowGridId",
             "exact enclosing ChildGrid",
@@ -834,7 +835,8 @@ fn ordered_rows_coverage_and_condition_refusals() {
 
 #[test]
 fn ordered_rows_bounds_and_computed_child_refusals() {
-    let cases: &[(fn(&mut Value, &mut Vec<Value>), &str, &str)] = &[
+    type SupportRefusalCase = (fn(&mut Value, &mut Vec<Value>), &'static str, &'static str);
+    let cases: &[SupportRefusalCase] = &[
         (
             |w, _| {
                 let form = find_by_mut(
@@ -952,16 +954,16 @@ fn generated_parent_key_controls_require_display_including_inherited_keys() {
                     r#"set . artifactId = "commerce.OrderBase.entity""#,
                     r#"set . name = "commerce.OrderBase""#,
                     r#"set /payload/objectType name = "commerce.OrderBase""#,
-                    r#"set /payload/objectType links = []"#,
-                    r#"set /payload/objectType ownedCollections = []"#,
+                    "set /payload/objectType links = []",
+                    "set /payload/objectType ownedCollections = []",
                 ],
             );
             apply_edits(
                 support.first_mut().req("parent"),
                 &[
-                    r#"set /payload/objectType identity = []"#,
+                    "set /payload/objectType identity = []",
                     r#"set /payload/objectType extends = "commerce.OrderBase""#,
-                    r#"set /payload/objectType properties = []"#,
+                    "set /payload/objectType properties = []",
                 ],
             );
             support.push(base);
@@ -1322,7 +1324,13 @@ fn record_query_dependency_cycles_and_acyclicity() {
     add_customer_detail_from_record(&mut acyclic, "related-customer-copy", "related-customer");
     assert_clean(&widget_findings(acyclic));
 
-    let cases: &[(fn(&mut Value), &str, &[&str], &[&str])] = &[
+    type WidgetCodeCase = (
+        fn(&mut Value),
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+    );
+    let cases: &[WidgetCodeCase] = &[
         (
             |v| {
                 apply_edits(
@@ -1358,7 +1366,7 @@ fn record_query_dependency_cycles_and_acyclicity() {
                     &[
                         r#"set /dataBindings/0/query/filters/0 value = {"kind":"record","property":{"bindingId":"orders","propertyId":"status"}}"#,
                     ],
-                )
+                );
             },
             "/dataBindings/0/query/filters/0/value/property/bindingId",
             &["orders"],
@@ -1372,7 +1380,7 @@ fn record_query_dependency_cycles_and_acyclicity() {
                         r#"set /pages/0/root/children/1/component selection = "single""#,
                         r#"set /dataBindings/0/query/filters/0 value = {"kind":"record","property":{"bindingId":"order-customers","propertyId":"display_name"}}"#,
                     ],
-                )
+                );
             },
             "/dataBindings/0/query/filters/0/value/property/bindingId",
             &["orders", "order-customers"],
@@ -1423,7 +1431,7 @@ fn nullable_filter_literals_require_an_operand_for_every_ordered_operator() {
                 "/dataBindings/0/query/filters/0/property",
                 "propertyId",
                 json!("optional_note"),
-            )
+            );
         });
         let fptr = "/dataBindings/0/query/filters/0";
         for op in ["lt", "lte", "gt", "gte"] {
@@ -1489,7 +1497,7 @@ fn list_sort_binding_index_and_hierarchy_invariants() {
             &[
                 r#"push /dataBindings/0/query/sort = {"property":{"bindingId":"orders","propertyId":"revision"},"direction":"asc"}"#,
             ],
-        )
+        );
     });
     assert_issue(
         &widget_findings(multiple),
@@ -1529,7 +1537,7 @@ fn list_sort_binding_index_and_hierarchy_invariants() {
             "/dataBindings/0/query/sort/0/property",
             "propertyId",
             json!("overflow_sort"),
-        )
+        );
     });
     assert_issue(
         &findings_with_support(overflow, overflow_order_support("overflow_sort"), &[]),
@@ -1546,7 +1554,7 @@ fn list_sort_binding_index_and_hierarchy_invariants() {
             "/dataBindings/0/query/sort/0/property",
             "propertyId",
             json!("base_number"),
-        )
+        );
     });
     assert_clean(&findings_with_support(root_sort, root_support, &[]));
     assert_issue(
@@ -1629,7 +1637,12 @@ fn filters_require_direct_stored_columns_for_binding_indexes() {
     );
 }
 
-const INTEGER_PROOF_CASES: &[(&str, Option<(&str, &str)>, Option<&str>)] = &[
+type IntegerProofCase = (
+    &'static str,
+    Option<(&'static str, &'static str)>,
+    Option<&'static str>,
+);
+const INTEGER_PROOF_CASES: &[IntegerProofCase] = &[
     ("42", None, None),
     ("input.record.revision", None, None),
     ("1.5", None, Some("integer")),
@@ -1764,7 +1777,7 @@ fn integer_action_inputs_require_an_integral_proof() {
                         "/actionBindings/0/inputMapping",
                         "expectedVersion",
                         json!(expression),
-                    )
+                    );
                 })),
                 "/actionBindings/0/inputMapping/expectedVersion",
             ),
@@ -1775,7 +1788,7 @@ fn integer_action_inputs_require_an_integral_proof() {
                         "/actionBindings/0/inputMapping",
                         "metadata",
                         json!(expression),
-                    )
+                    );
                 });
                 let mut support = support_artifacts();
                 set_key(
@@ -1811,11 +1824,11 @@ fn optional_and_display_form_input_contracts() {
             "text",
             Some("input.draft.note"),
             None,
-        )
+        );
     })));
     assert_issue(
         &widget_findings(widget_with(|ux| {
-            add_approve_form_field(ux, "comment", "approve-comment", "text_area", None, None)
+            add_approve_form_field(ux, "comment", "approve-comment", "text_area", None, None);
         })),
         "/forms/0/inputNames/2",
         "no action input mapping",
@@ -1828,7 +1841,7 @@ fn optional_and_display_form_input_contracts() {
             "display",
             Some("input.draft.comment"),
             None,
-        )
+        );
     })));
     assert_edit_matrix(&[
         (
@@ -1868,7 +1881,7 @@ fn a_nullable_form_input_must_stay_clearable() {
                 "text_area",
                 Some("input.draft.comment"),
                 required_when,
-            )
+            );
         }))
         .into_iter()
         .filter(|f| f.code.as_str() == "widget.interaction.nullable_without_clear")
@@ -2326,7 +2339,7 @@ fn composing_one_page_preserves_unrelated_forms_and_override_only_placements() {
             "/pages/1/root",
             "semanticId",
             json!("unrelated-root-semantic"),
-        )
+        );
     });
     assert_clean(&findings_with_base(compose_baseline(host), &[multi]));
 
@@ -2656,7 +2669,7 @@ fn empty_form_draft_and_render_node_contracts() {
     );
     assert_issue(
         &widget_findings(widget_with(|ux| {
-            del_key(ux, "/actionBindings/0/inputs", "draftFormId")
+            del_key(ux, "/actionBindings/0/inputs", "draftFormId");
         })),
         "/forms/0/submitBindingId",
         "declare this form",
@@ -2827,7 +2840,7 @@ fn draft_conditions_require_the_matching_form_at_each_render_site() {
     let cond =
         j(r#"{"expression":"input.draft.reason != \"\"","inputs":{"draftFormId":"approve-form"}}"#);
     assert_clean(&widget_findings(widget_with(|ux| {
-        set_key(ux, "/fields/4", "visibleWhen", cond.clone())
+        set_key(ux, "/fields/4", "visibleWhen", cond.clone());
     })));
     let mut footer = widget_with_secondary_footer_action();
     set_key(
@@ -2845,7 +2858,7 @@ fn draft_conditions_require_the_matching_form_at_each_render_site() {
     ] {
         assert_issue(
             &widget_findings(widget_with(|ux| {
-                set_key(ux, &format!("/{collection}/0"), member, cond.clone())
+                set_key(ux, &format!("/{collection}/0"), member, cond.clone());
             })),
             &format!("/{collection}/0/{member}/inputs/draftFormId"),
             "matching form",
@@ -2918,7 +2931,7 @@ fn selected_record_field_and_form_consumers_require_rendered_list() {
                         &[
                             r#"set /fields/0 visibleWhen = {"expression":"len(input.selection) > 0","inputs":{"selectionBindingId":"orders"}}"#,
                         ],
-                    )
+                    );
                 })
             },
             |v| {
@@ -2927,7 +2940,7 @@ fn selected_record_field_and_form_consumers_require_rendered_list() {
                     &[
                         r#"push /pages/1/root/children = {"nodeId":"borrowed-order-number-node","semanticId":"borrowed-order-number","component":{"kind":"field","fieldId":"order-number"},"children":[]}"#,
                     ],
-                )
+                );
             },
             "/fields/0/visibleWhen/inputs/selectionBindingId",
             "selection",
@@ -2940,7 +2953,7 @@ fn selected_record_field_and_form_consumers_require_rendered_list() {
                     ux_mut(v),
                     "/pages/1/root/children",
                     field_node("customer-order-number-node", "order-number"),
-                )
+                );
             },
             "/fields/0/visibleWhen/inputs/recordBindingId",
             "record input",
@@ -2954,7 +2967,7 @@ fn selected_record_field_and_form_consumers_require_rendered_list() {
                     &[
                         r#"push /pages/1/root/children = {"nodeId":"customer-approve-form-node","component":{"kind":"form","formId":"approve-form"},"children":[]}"#,
                     ],
-                )
+                );
             },
             "/forms/0/dataBindingId",
             "prefill",
@@ -2994,7 +3007,7 @@ fn selected_record_query_and_navigation_consumers_require_rendered_list() {
                     &[
                         r#"push /pages/1/root/children = {"nodeId":"customer-matching-orders-node","component":{"kind":"list","dataBindingId":"matching-orders","fields":[],"selection":"none"},"children":[]}"#,
                     ],
-                )
+                );
             },
             "/dataBindings/3/query/filters/0/value",
             "record value requires",
@@ -3031,7 +3044,7 @@ fn selected_record_navigation_and_detail_consumers_require_rendered_list() {
                         &[
                             r#"set /navigationItems/0 visibleWhen = {"expression":"input.record.status == \"draft\"","inputs":{"recordBindingId":"orders"}}"#,
                         ],
-                    )
+                    );
                 })
             },
             |v| {
@@ -3040,7 +3053,7 @@ fn selected_record_navigation_and_detail_consumers_require_rendered_list() {
                     &[
                         r#"push /pages/1/root/children = {"nodeId":"customer-navigation-borrowed-node","component":{"kind":"navigation","itemId":"customer-nav"},"children":[]}"#,
                     ],
-                )
+                );
             },
             "/navigationItems/0/visibleWhen/inputs/recordBindingId",
             "record input",
@@ -3080,7 +3093,7 @@ fn selected_record_navigation_and_detail_consumers_require_rendered_list() {
             &[
                 r#"set /dataBindings/2/query/key/0 value = {"kind":"record","property":{"bindingId":"orders","propertyId":"customer_number"}}"#,
             ],
-        )
+        );
     });
     assert_issue(
         &widget_findings(detail.clone()),
@@ -3099,7 +3112,7 @@ fn widget_with_unselected_orders() -> Value {
                 r#"set /pages/0/root/children/0/component selection = "none""#,
                 r#"set /dataBindings/1 query = {"kind":"object_list","filters":[],"sort":[],"page":{"size":10,"maxSize":10}}"#,
             ],
-        )
+        );
     })
 }
 
@@ -3197,7 +3210,7 @@ fn row_surface_and_page_navigation_record_isolation() {
                 r#"set /navigationItems/0 visibleWhen = {"expression":"input.record.status == \"draft\"","inputs":{"recordBindingId":"orders"}}"#,
                 r#"set /app navigationItemIds = ["customer-nav"]"#,
             ],
-        )
+        );
     });
     assert_issue(
         &widget_findings(app_nav),
@@ -3392,7 +3405,7 @@ fn metric_buckets_widget(nullable: bool) -> (Value, Vec<Value>) {
                 r#"set /fields/1 format = "metric_buckets""#,
                 r#"set /pages/0/root/children/0/component/fields/1 propertyId = "buckets""#,
             ],
-        )
+        );
     });
     (value, support)
 }
@@ -3405,7 +3418,7 @@ fn metric_bucket_display_format_contracts() {
     }
     assert_issue(
         &widget_findings(widget_with(|ux| {
-            set_key(ux, "/fields/1", "format", json!("metric_buckets"))
+            set_key(ux, "/fields/1", "format", json!("metric_buckets"));
         })),
         "/fields/1/format",
         "json-ext property",
@@ -3422,7 +3435,7 @@ fn metric_bucket_display_format_contracts() {
     assert_issue(&found, "/fields/1/format", "incompatible");
     assert_issue(
         &widget_findings(widget_with(|ux| {
-            set_key(ux, "/fields/4", "format", json!("metric_buckets"))
+            set_key(ux, "/fields/4", "format", json!("metric_buckets"));
         })),
         "/fields/4/format",
         "not an input",
@@ -3765,7 +3778,7 @@ fn record_page_layer_visibility_and_primitive_laws() {
             apply_edits(
                 ux,
                 &[r#"set /pages/0/root/children/1/component heldIn = ["showing"]"#],
-            )
+            );
         }),
         record_page_with(|ux| {
             let children = arr_mut(ux, "/pages/0/root/children");
@@ -3825,7 +3838,7 @@ fn record_page_layer_visibility_and_primitive_laws() {
             &[
                 r#"push /pages/0/root/children = {"nodeId":"held-button","component":{"kind":"catalog","entry":{"entryId":"ui-sdk:button"},"heldIn":["nowhere"]},"children":[]}"#,
             ],
-        )
+        );
     });
     assert_refused_at(
         &record_page_errors(undeclared),
@@ -3842,7 +3855,7 @@ fn record_page_context_read_and_message_text_laws() {
             &[
                 r#"set /catalog/0 machine = {"machineVersion":"0.1","initialStateId":"idle","fields":[],"events":[{"eventId":"go","source":{"kind":"user","nodeId":"self"}}],"states":[{"stateId":"idle","role":"idle"},{"stateId":"reading","role":"pending","awaits":{"kind":"read","bindingId":"record"},"deadlineMs":1000}],"transitions":[{"transitionId":"go","from":"idle","on":"go","target":"reading","effects":[{"kind":"start","call":{"kind":"read","bindingId":"record"}}]}]}"#,
             ],
-        )
+        );
     });
     let found = record_page_errors(cat_read);
     assert_refused_at(
@@ -3862,7 +3875,7 @@ fn record_page_context_read_and_message_text_laws() {
             &[
                 r#"set /pages/0/machine fields = [{"fieldId":"note","type":"json","required":false,"initial":{"msg":{"id":"not-a-hash","source":"data"}}}]"#,
             ],
-        )
+        );
     });
     assert!(
         !record_page_errors(data_msg)
