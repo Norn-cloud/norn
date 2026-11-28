@@ -189,7 +189,7 @@ pub fn lower_module_callbacks(
     Ok(lowered)
 }
 
-fn lower_function_def(
+pub(crate) fn lower_function_def(
     func_def: &StmtFunctionDef,
     lines: &LineTable<'_>,
     ctx: &LowerContext,
@@ -204,7 +204,7 @@ fn lower_function_def(
     lowered.require_expr("callback return value", &ret_span)
 }
 
-fn lower_lambda(
+pub(crate) fn lower_lambda(
     lambda: &ExprLambda,
     lines: &LineTable<'_>,
     ctx: &LowerContext,

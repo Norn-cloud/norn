@@ -15,6 +15,7 @@ name = "suites"
 path = "tests/suites.rs"
 
 [dependencies]
+norn-canonical = { path = "../norn-canonical" }
 ruff_formatter = "=0.0.23"
 ruff_python_ast = "=0.0.23"
 ruff_python_formatter = "=0.0.23"

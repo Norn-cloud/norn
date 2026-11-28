@@ -1,6 +1,11 @@
 //! Integration tests for `norn-authoring-py` porting positive and refusal cases
 //! from `tools/norn-py/tests/test_norn_py.py` and `tools/norn-py/examples/hr_pilot.py`.
 
+#[path = "suites/schema_parity.rs"]
+mod schema_parity;
+#[path = "suites/schema_refusals.rs"]
+mod schema_refusals;
+
 use std::error::Error;
 
 use norn_authoring_py::{
