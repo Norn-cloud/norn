@@ -751,10 +751,10 @@ pub fn canonical_json_byte_len<T: Serialize + ?Sized>(
 }
 
 fn serialized_byte_len(value: &JsonValue) -> Result<usize, CanonicalJsonError> {
-    let mut counter = ByteCounter(0);
+    let mut counter = ByteCounter::default();
     let mut number_bytes = 0;
     write_value(value, &mut counter, 0, true, &mut number_bytes)?;
-    Ok(counter.0)
+    counter.finish()
 }
 
 fn canonical_json_byte_len_text<T: Serialize + ?Sized>(
@@ -764,10 +764,10 @@ fn canonical_json_byte_len_text<T: Serialize + ?Sized>(
         message: error.to_string(),
     })?;
     let tree = parse(&bytes)?;
-    let mut counter = ByteCounter(0);
+    let mut counter = ByteCounter::default();
     let mut number_bytes = 0;
     write_value(&tree, &mut counter, 0, false, &mut number_bytes)?;
-    Ok(counter.0)
+    counter.finish()
 }
 
 /// [`canonical_json_of`] through Serde JSON text: encode, parse, re-serialize.
@@ -1629,20 +1629,43 @@ impl CanonicalSink for String {
     }
 }
 
-struct ByteCounter(usize);
+#[derive(Default)]
+struct ByteCounter {
+    count: usize,
+    overflowed: bool,
+}
+
+impl ByteCounter {
+    fn add(&mut self, bytes: usize) {
+        if let Some(next) = self.count.checked_add(bytes) {
+            self.count = next;
+        } else {
+            self.overflowed = true;
+        }
+    }
+
+    fn finish(self) -> Result<usize, CanonicalJsonError> {
+        if self.overflowed {
+            return Err(CanonicalJsonError::Serialize {
+                message: "canonical JSON byte length overflow".to_owned(),
+            });
+        }
+        Ok(self.count)
+    }
+}
 
 impl CanonicalSink for ByteCounter {
     fn push_char(&mut self, ch: char) {
-        self.0 = self.0.saturating_add(ch.len_utf8());
+        self.add(ch.len_utf8());
     }
 
     fn push_str(&mut self, text: &str) {
-        self.0 = self.0.saturating_add(text.len());
+        self.add(text.len());
     }
 
     fn push_unicode_escape(&mut self, _ch: char) {
         // C0 controls (`\u{0}..=\u{1f}`) always format as 6 ASCII bytes: `\u00XX`.
-        self.0 = self.0.saturating_add(6);
+        self.add(6);
     }
 }
 

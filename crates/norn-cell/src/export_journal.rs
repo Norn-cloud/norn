@@ -277,13 +277,13 @@ pub(crate) fn record<E: SqlEngine>(
     engine: &E,
     model: &Model,
     batch: &CommitBatch,
-    quantity_input: Option<Value>,
+    quantity_input: Option<&Value>,
     receipt: &Receipt,
-    consumed_input: Option<Value>,
-    definition_install: Option<DefinitionInstallRecord>,
+    consumed_input: Option<&Value>,
+    definition_install: Option<&DefinitionInstallRecord>,
     storage_version: Option<u32>,
-    automation: crate::automation_outbox::RecordedAutomation,
-    entries: Vec<LedgerEntry>,
+    automation: &crate::automation_outbox::RecordedAutomation,
+    entries: &[LedgerEntry],
 ) -> Result<(), CellError> {
     let commit_seq = receipt.body.commit_seq;
     let prior: Option<(i64, String)> = engine
@@ -323,7 +323,7 @@ pub(crate) fn record<E: SqlEngine>(
     // just inserted: one read-only pass, so the receipt is verified once.
     let receipts = std::cell::RefCell::default();
     let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
-    for entry in &entries {
+    for entry in entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
     let (pending_observations, source_evidence) = read_late_source_evidence(engine, commit_seq)?;
@@ -344,11 +344,11 @@ pub(crate) fn record<E: SqlEngine>(
         bindings: &bindings,
         previous: &previous,
         batch,
-        quantity_input: quantity_input.as_ref(),
+        quantity_input,
         receipt,
-        entries: &entries,
-        consumed_input: consumed_input.as_ref(),
-        definition_install: definition_install.as_ref(),
+        entries,
+        consumed_input,
+        definition_install,
         initial_model: initial_model.as_ref(),
         storage_version,
         automation_continuation: automation.continuation.as_ref(),
