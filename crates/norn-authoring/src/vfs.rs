@@ -1,15 +1,25 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use tsrs_vfs::{Entries, FS, FileInfo, FileMode, bundled};
 
-use crate::{AuthoringError, INTRINSICS_DTS};
+use crate::{AuthoringError, INTRINSICS_DTS, Profile};
 
 /// Canonical virtual path of the embedded `@norn/authoring` ambient declarations.
 pub const INTRINSICS_VIRTUAL_PATH: &str = "/@norn/authoring/index.d.ts";
 
+/// Canonical virtual root where the pinned `effect` package declarations are mounted.
+pub const PINNED_EFFECT_VIRTUAL_ROOT: &str = "/node_modules/effect";
+
+/// Canonical virtual prefix for pinned `effect` declaration files under `dist/`.
+pub const PINNED_EFFECT_DIST_PREFIX: &str = "/node_modules/effect/dist/";
+
 const BUNDLED_SCHEME: &str = "bundled:///";
+const MAX_PINNED_FILES: usize = 4_096;
+const MAX_PINNED_FILE_BYTES: usize = 16_usize.saturating_mul(1_024).saturating_mul(1_024);
+const MAX_PINNED_TOTAL_BYTES: usize = 64_usize.saturating_mul(1_024).saturating_mul(1_024);
 
 /// Hard resource ceilings enforced by [`BoundedVfs`] on caller-supplied files.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,8 +156,10 @@ fn file_basename(path: &str) -> &str {
 pub struct BoundedVfs {
     limits: VfsLimits,
     files: BTreeMap<String, String>,
+    pinned_files: BTreeMap<String, String>,
     directories: BTreeSet<String>,
     total_bytes: usize,
+    pinned_total_bytes: usize,
     include_intrinsics: bool,
     quota_breached: AtomicBool,
 }
@@ -162,8 +174,10 @@ impl BoundedVfs {
         Self {
             limits,
             files: BTreeMap::new(),
+            pinned_files: BTreeMap::new(),
             directories,
             total_bytes: 0,
+            pinned_total_bytes: 0,
             include_intrinsics: true,
             quota_breached: AtomicBool::new(false),
         }
@@ -178,8 +192,10 @@ impl BoundedVfs {
         Self {
             limits,
             files: BTreeMap::new(),
+            pinned_files: BTreeMap::new(),
             directories,
             total_bytes: 0,
+            pinned_total_bytes: 0,
             include_intrinsics: false,
             quota_breached: AtomicBool::new(false),
         }
@@ -268,6 +284,12 @@ impl BoundedVfs {
                 reason: "reserved for pinned @norn/authoring declarations".to_owned(),
             });
         }
+        if self.pinned_files.contains_key(&normalized) {
+            return Err(AuthoringError::InvalidPath {
+                path: normalized,
+                reason: "reserved for pinned package declarations".to_owned(),
+            });
+        }
 
         let text = content.into();
         let new_len = text.len();
@@ -315,12 +337,197 @@ impl BoundedVfs {
         Ok(normalized)
     }
 
+    /// Inserts a trusted pinned package declaration or manifest file (for
+    /// example under [`PINNED_EFFECT_VIRTUAL_ROOT`]).
+    ///
+    /// Pinned package files are isolated from caller [`VfsLimits`] so large
+    /// declaration bundles do not starve authored sources, while still
+    /// enforcing hard pinned safety bounds and preventing caller overwrites.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthoringError::InvalidPath`] if `path` is malformed or
+    /// collides with [`INTRINSICS_VIRTUAL_PATH`], or
+    /// [`AuthoringError::VfsQuotaExceeded`] if pinned safety limits are
+    /// exceeded.
+    pub fn add_pinned_file(
+        &mut self,
+        path: &str,
+        content: impl Into<String>,
+    ) -> Result<String, AuthoringError> {
+        if self.quota_breached() {
+            return Err(AuthoringError::VfsQuotaExceeded(
+                "virtual filesystem is locked after an earlier quota breach".to_owned(),
+            ));
+        }
+        let normalized = normalize_virtual_path(path)?;
+        if self.include_intrinsics && normalized == INTRINSICS_VIRTUAL_PATH {
+            return Err(AuthoringError::InvalidPath {
+                path: normalized,
+                reason: "reserved for pinned @norn/authoring declarations".to_owned(),
+            });
+        }
+        let text = content.into();
+        let new_len = text.len();
+        if new_len > MAX_PINNED_FILE_BYTES {
+            return Err(AuthoringError::VfsQuotaExceeded(format!(
+                "pinned file `{normalized}` is {new_len} bytes, exceeding pinned cap ({MAX_PINNED_FILE_BYTES})"
+            )));
+        }
+        let existing_len = self.pinned_files.get(&normalized).map_or(0, String::len);
+        let next_count = if self.pinned_files.contains_key(&normalized) {
+            self.pinned_files.len()
+        } else {
+            self.pinned_files.len().saturating_add(1)
+        };
+        if next_count > MAX_PINNED_FILES {
+            return Err(AuthoringError::VfsQuotaExceeded(format!(
+                "pinned file count {next_count} exceeds pinned cap ({MAX_PINNED_FILES})"
+            )));
+        }
+        let reduced = self.pinned_total_bytes.saturating_sub(existing_len);
+        let Some(next_total) = reduced.checked_add(new_len) else {
+            return Err(AuthoringError::VfsQuotaExceeded(
+                "pinned byte count overflowed usize".to_owned(),
+            ));
+        };
+        if next_total > MAX_PINNED_TOTAL_BYTES {
+            return Err(AuthoringError::VfsQuotaExceeded(format!(
+                "pinned total size {next_total} bytes exceeds pinned cap ({MAX_PINNED_TOTAL_BYTES})"
+            )));
+        }
+        self.pinned_total_bytes = next_total;
+        record_ancestor_dirs(&normalized, &mut self.directories);
+        self.pinned_files.insert(normalized.clone(), text);
+        Ok(normalized)
+    }
+
+    /// Loads `package.json` and declaration files (`*.d.ts`, `*.d.mts`,
+    /// `*.d.cts`) from a host package directory into `virtual_root` in memory.
+    ///
+    /// Canonicalizes `disk_dir` once (so package-manager symlinks at the
+    /// package root resolve cleanly), then walks strictly without following
+    /// symlinks or descending into nested `node_modules` directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthoringError::Io`], [`AuthoringError::InvalidPath`], or
+    /// [`AuthoringError::VfsQuotaExceeded`] if reading or mounting fails.
+    pub fn mount_pinned_package_dir(
+        &mut self,
+        virtual_root: &str,
+        disk_dir: &Path,
+    ) -> Result<usize, AuthoringError> {
+        let root_virtual = normalize_virtual_path(virtual_root)?;
+        let canonical_root = std::fs::canonicalize(disk_dir).map_err(|err| AuthoringError::Io {
+            path: disk_dir.display().to_string(),
+            reason: err.to_string(),
+        })?;
+        let mut stack: Vec<(PathBuf, String)> = vec![(canonical_root, root_virtual)];
+        let mut loaded: usize = 0;
+
+        while let Some((dir_path, virtual_prefix)) = stack.pop() {
+            let mut entries: Vec<(String, PathBuf, bool)> = Vec::new();
+            let read_dir = std::fs::read_dir(&dir_path).map_err(|err| AuthoringError::Io {
+                path: dir_path.display().to_string(),
+                reason: err.to_string(),
+            })?;
+            for entry_res in read_dir {
+                let entry = entry_res.map_err(|err| AuthoringError::Io {
+                    path: dir_path.display().to_string(),
+                    reason: err.to_string(),
+                })?;
+                let file_type = entry.file_type().map_err(|err| AuthoringError::Io {
+                    path: entry.path().display().to_string(),
+                    reason: err.to_string(),
+                })?;
+                if file_type.is_symlink() {
+                    continue;
+                }
+                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                if file_type.is_dir() {
+                    if name != "node_modules" {
+                        entries.push((name, entry.path(), true));
+                    }
+                } else if file_type.is_file() && is_declaration_or_manifest(&name) {
+                    entries.push((name, entry.path(), false));
+                }
+            }
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            for (name, full_path, is_dir) in entries {
+                let next_virtual = format!("{virtual_prefix}/{name}");
+                if is_dir {
+                    stack.push((full_path, next_virtual));
+                } else {
+                    let content =
+                        std::fs::read_to_string(&full_path).map_err(|err| AuthoringError::Io {
+                            path: full_path.display().to_string(),
+                            reason: err.to_string(),
+                        })?;
+                    self.add_pinned_file(&next_virtual, content)?;
+                    loaded = loaded.saturating_add(1);
+                }
+            }
+        }
+        Ok(loaded)
+    }
+
+    /// Validates that `disk_dir/package.json` matches the profile's pinned
+    /// `effect` version and mounts its declarations under
+    /// [`PINNED_EFFECT_VIRTUAL_ROOT`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthoringError::PinMismatch`] if the package version differs
+    /// from [`Profile::pins`], or [`AuthoringError::Io`] /
+    /// [`AuthoringError::VfsQuotaExceeded`] if loading fails.
+    pub fn mount_pinned_effect_dir(
+        &mut self,
+        disk_dir: &Path,
+        profile: &Profile,
+    ) -> Result<usize, AuthoringError> {
+        let pkg_path = disk_dir.join("package.json");
+        let pkg_text = std::fs::read_to_string(&pkg_path).map_err(|err| AuthoringError::Io {
+            path: pkg_path.display().to_string(),
+            reason: err.to_string(),
+        })?;
+        let pkg_json: serde_json::Value =
+            serde_json::from_str(&pkg_text).map_err(|err| AuthoringError::Io {
+                path: pkg_path.display().to_string(),
+                reason: err.to_string(),
+            })?;
+        let actual_version = pkg_json
+            .get("version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        if actual_version != profile.pins.effect.version {
+            return Err(AuthoringError::PinMismatch {
+                package: "effect".to_owned(),
+                expected: profile.pins.effect.version.clone(),
+                actual: actual_version.to_owned(),
+            });
+        }
+        self.mount_pinned_package_dir(PINNED_EFFECT_VIRTUAL_ROOT, disk_dir)
+    }
+
     fn read_virtual(&self, normalized: &str) -> Option<&str> {
         if self.include_intrinsics && normalized == INTRINSICS_VIRTUAL_PATH {
             return Some(INTRINSICS_DTS);
         }
+        if let Some(pinned) = self.pinned_files.get(normalized) {
+            return Some(pinned.as_str());
+        }
         self.files.get(normalized).map(String::as_str)
     }
+}
+
+fn is_declaration_or_manifest(name: &str) -> bool {
+    name == "package.json"
+        || name.ends_with(".d.ts")
+        || name.ends_with(".d.mts")
+        || name.ends_with(".d.cts")
 }
 
 impl Default for BoundedVfs {
@@ -419,6 +626,7 @@ impl FS for BoundedVfs {
             .files
             .keys()
             .map(String::as_str)
+            .chain(self.pinned_files.keys().map(String::as_str))
             .chain(self.include_intrinsics.then_some(INTRINSICS_VIRTUAL_PATH))
         {
             if let Some(rest) = file_path.strip_prefix(&prefix)

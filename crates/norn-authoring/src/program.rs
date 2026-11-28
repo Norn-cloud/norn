@@ -96,7 +96,7 @@ pub fn default_compiler_options() -> CompilerOptions {
 /// Strip a leading `"..."` module-path prefix emitted by `getFullyQualifiedName`.
 ///
 /// Mirrors `/^"[^"]*"(?:\.(.*))?$/` in `tools/norn-ts/src/check.ts`.
-fn strip_quoted_module_prefix(fqn: &str) -> &str {
+pub(crate) fn strip_quoted_module_prefix(fqn: &str) -> &str {
     let Some(after_open) = fqn.strip_prefix('"') else {
         return fqn;
     };
@@ -115,7 +115,7 @@ fn strip_quoted_module_prefix(fqn: &str) -> &str {
 ///
 /// Matches `resolveSymbol` in `tools/norn-ts/src/check.ts`: lookalike copies
 /// under arbitrary `node_modules/` directories never receive a profile ID.
-fn resolve_profile_module(
+pub(crate) fn resolve_profile_module(
     declaring_file: &str,
     intrinsics_module: &str,
     effect_dist_prefix: Option<&str>,
@@ -283,6 +283,14 @@ impl AuthoringProgram {
     #[must_use]
     pub fn vfs(&self) -> &BoundedVfs {
         &self.vfs
+    }
+
+    pub(crate) fn raw_program(&self) -> &'static Program {
+        self.program
+    }
+
+    pub(crate) fn effect_dist_prefix(&self) -> Option<&str> {
+        self.effect_dist_prefix.as_deref()
     }
 
     /// Collects syntactic diagnostics for `file_name` (or all program files when `None`).
@@ -453,7 +461,7 @@ impl AuthoringProgram {
         })
     }
 
-    fn source_file(&self, file_name: &str) -> Result<P<SourceFile>, AuthoringError> {
+    pub(crate) fn source_file(&self, file_name: &str) -> Result<P<SourceFile>, AuthoringError> {
         let normalized = normalize_virtual_path(file_name)?;
         self.program
             .get_source_file(&normalized)
