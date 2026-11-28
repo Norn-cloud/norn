@@ -20,6 +20,10 @@ pub struct VfsLimits {
     pub max_total_bytes: usize,
     /// Maximum `UTF-8` byte length of any single caller-supplied file.
     pub max_file_bytes: usize,
+    /// Maximum `UTF-8` byte length of any virtual file path.
+    pub max_path_bytes: usize,
+    /// Maximum number of path segments (directory nesting depth plus filename).
+    pub max_path_depth: usize,
 }
 
 impl Default for VfsLimits {
@@ -28,6 +32,8 @@ impl Default for VfsLimits {
             max_files: 1_024,
             max_total_bytes: 32_usize.saturating_mul(1_024).saturating_mul(1_024),
             max_file_bytes: 4_usize.saturating_mul(1_024).saturating_mul(1_024),
+            max_path_bytes: 512,
+            max_path_depth: 32,
         }
     }
 }
@@ -225,7 +231,37 @@ impl BoundedVfs {
             ));
         }
 
+        if path.len() > self.limits.max_path_bytes {
+            self.quota_breached.store(true, Ordering::Release);
+            return Err(AuthoringError::VfsQuotaExceeded(format!(
+                "path length {} bytes exceeds max_path_bytes ({})",
+                path.len(),
+                self.limits.max_path_bytes
+            )));
+        }
+
         let normalized = normalize_virtual_path(path)?;
+        if normalized.len() > self.limits.max_path_bytes {
+            self.quota_breached.store(true, Ordering::Release);
+            return Err(AuthoringError::VfsQuotaExceeded(format!(
+                "normalized path `{normalized}` is {} bytes, exceeding max_path_bytes ({})",
+                normalized.len(),
+                self.limits.max_path_bytes
+            )));
+        }
+
+        let depth = normalized
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .count();
+        if depth > self.limits.max_path_depth {
+            self.quota_breached.store(true, Ordering::Release);
+            return Err(AuthoringError::VfsQuotaExceeded(format!(
+                "path depth {depth} exceeds max_path_depth ({})",
+                self.limits.max_path_depth
+            )));
+        }
+
         if self.include_intrinsics && normalized == INTRINSICS_VIRTUAL_PATH {
             return Err(AuthoringError::InvalidPath {
                 path: normalized,

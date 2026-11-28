@@ -5,9 +5,7 @@ use tsrs_compiler::{ProgramOptions, ProgramRegions, new_compiler_host, new_progr
 use tsrs_core::arena::Region;
 use tsrs_core::context::Context;
 use tsrs_core::tspath::{self, ComparePathsOptions};
-use tsrs_core::{
-    CompilerOptions, P, TextChange, Tristate, ensure_script_kind_from_file_name,
-};
+use tsrs_core::{CompilerOptions, P, TextChange, Tristate, ensure_script_kind_from_file_name};
 use tsrs_ls::autoimport::{self, ProjectID};
 use tsrs_ls::format::api::{FormatContext, format_document, with_format_code_settings};
 use tsrs_ls::host::Host as LsHost;
@@ -28,33 +26,36 @@ use tsrs_parser::parse_source_file_owned;
 use tsrs_tsoptions::new_parsed_command_line;
 use tsrs_vfs::{FS, bundled};
 
-use crate::{AuthoringError, BoundedVfs, VfsLimits, default_compiler_options, normalize_virtual_path};
+use crate::{
+    AuthoringError, BoundedVfs, VfsLimits, default_compiler_options, normalize_virtual_path,
+};
 
 /// Returns the canonical Norn TypeScript [`FormatCodeSettings`] matching
 /// `FORMAT_SETTINGS` in `tools/norn-ts/src/fmt.ts`.
 #[must_use]
 pub fn norn_format_settings() -> FormatCodeSettings {
-    let mut settings = get_default_format_code_settings();
-    settings.editor_settings = EditorSettings {
-        base_indent_size: 0,
-        indent_size: 2,
-        tab_size: 2,
-        new_line_character: "\n".to_owned(),
-        convert_tabs_to_spaces: Tristate::True,
-        indent_style: IndentStyle::SMART,
-        trim_trailing_whitespace: Tristate::True,
-    };
-    settings.semicolons = SemicolonPreference::Remove;
-    settings.insert_space_after_comma_delimiter = Tristate::True;
-    settings.insert_space_after_semicolon_in_for_statements = Tristate::True;
-    settings.insert_space_before_and_after_binary_operators = Tristate::True;
-    settings.insert_space_after_keywords_in_control_flow_statements = Tristate::True;
-    settings.insert_space_after_opening_and_before_closing_nonempty_braces = Tristate::True;
-    settings.insert_space_after_opening_and_before_closing_nonempty_brackets = Tristate::False;
-    settings.insert_space_after_opening_and_before_closing_nonempty_parenthesis = Tristate::False;
-    settings.place_open_brace_on_new_line_for_functions = Tristate::False;
-    settings.place_open_brace_on_new_line_for_control_blocks = Tristate::False;
-    settings
+    FormatCodeSettings {
+        editor_settings: EditorSettings {
+            base_indent_size: 0,
+            indent_size: 2,
+            tab_size: 2,
+            new_line_character: "\n".to_owned(),
+            convert_tabs_to_spaces: Tristate::True,
+            indent_style: IndentStyle::SMART,
+            trim_trailing_whitespace: Tristate::True,
+        },
+        semicolons: SemicolonPreference::Remove,
+        insert_space_after_comma_delimiter: Tristate::True,
+        insert_space_after_semicolon_in_for_statements: Tristate::True,
+        insert_space_before_and_after_binary_operators: Tristate::True,
+        insert_space_after_keywords_in_control_flow_statements: Tristate::True,
+        insert_space_after_opening_and_before_closing_nonempty_braces: Tristate::True,
+        insert_space_after_opening_and_before_closing_nonempty_brackets: Tristate::False,
+        insert_space_after_opening_and_before_closing_nonempty_parenthesis: Tristate::False,
+        place_open_brace_on_new_line_for_functions: Tristate::False,
+        place_open_brace_on_new_line_for_control_blocks: Tristate::False,
+        ..get_default_format_code_settings()
+    }
 }
 
 struct FormatLsHost {
@@ -75,8 +76,10 @@ impl FormatLsHost {
                 None
             }
         });
-        let mut preferences = new_default_user_preferences();
-        preferences.format_code_settings = norn_format_settings();
+        let preferences = UserPreferences {
+            format_code_settings: norn_format_settings(),
+            ..new_default_user_preferences()
+        };
         Self {
             file_name,
             text,
@@ -140,39 +143,62 @@ impl LsHost for FormatLsHost {
     }
 }
 
-/// Applies non-overlapping byte-offset edits safely in reverse start order.
+/// Validates all byte-offset edits against the original `UTF-8` `source`,
+/// rejects any out-of-bounds, non-char-boundary, or overlapping ranges, and
+/// applies the validated batch in a single forward pass.
 fn apply_byte_edits(
     source: &str,
     mut edits: Vec<(usize, usize, String)>,
 ) -> Result<String, AuthoringError> {
-    edits.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
-    let mut current = source.to_owned();
-    for (start, end, replacement) in edits {
-        let len = current.len();
+    let len = source.len();
+    for &(start, end, _) in &edits {
         if start > end
             || end > len
-            || !current.is_char_boundary(start)
-            || !current.is_char_boundary(end)
+            || !source.is_char_boundary(start)
+            || !source.is_char_boundary(end)
         {
             return Err(AuthoringError::InvalidEditRange { start, end, len });
         }
-        let Some(head) = current.get(..start) else {
-            return Err(AuthoringError::InvalidEditRange { start, end, len });
-        };
-        let Some(tail) = current.get(end..) else {
-            return Err(AuthoringError::InvalidEditRange { start, end, len });
-        };
-        let mut next = String::with_capacity(
-            head.len()
-                .saturating_add(replacement.len())
-                .saturating_add(tail.len()),
-        );
-        next.push_str(head);
-        next.push_str(&replacement);
-        next.push_str(tail);
-        current = next;
     }
-    Ok(current)
+
+    edits.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+
+    for pair in edits.windows(2) {
+        if let [first, second] = pair
+            && first.1 > second.0
+        {
+            return Err(AuthoringError::OverlappingEdits {
+                first_start: first.0,
+                first_end: first.1,
+                second_start: second.0,
+                second_end: second.1,
+            });
+        }
+    }
+
+    let mut out = String::with_capacity(len);
+    let mut cursor = 0_usize;
+    for (start, end, replacement) in edits {
+        let Some(unchanged) = source.get(cursor..start) else {
+            return Err(AuthoringError::InvalidEditRange {
+                start: cursor,
+                end: start,
+                len,
+            });
+        };
+        out.push_str(unchanged);
+        out.push_str(&replacement);
+        cursor = end;
+    }
+    let Some(tail) = source.get(cursor..) else {
+        return Err(AuthoringError::InvalidEditRange {
+            start: cursor,
+            end: len,
+            len,
+        });
+    };
+    out.push_str(tail);
+    Ok(out)
 }
 
 fn apply_text_changes(source: &str, changes: Vec<TextChange>) -> Result<String, AuthoringError> {
@@ -204,18 +230,22 @@ fn sort_imports_non_destructive(file_name: &str, text: &str) -> Result<String, A
         max_files: 4,
         max_file_bytes: text.len().max(1_024),
         max_total_bytes: text.len().saturating_add(1_024),
+        ..VfsLimits::default()
     };
     let mut vfs = BoundedVfs::without_intrinsics(limits);
     let normalized = vfs.add_file(file_name, text)?;
-    let fs_dyn: Arc<dyn FS> = Arc::new(vfs);
+    let vfs_arc = Arc::new(vfs);
+    let fs_dyn: Arc<dyn FS> = vfs_arc;
     let compiler_host = new_compiler_host("/", fs_dyn, &bundled::lib_path(), None, None, None);
 
     let config_region = Region::new_scratch(32_usize.saturating_mul(1_024));
     let parsed_command_line = {
         let _scope = config_region.enter();
-        let mut options: CompilerOptions = default_compiler_options();
-        options.no_lib = Tristate::True;
-        options.lib = None;
+        let options = CompilerOptions {
+            no_lib: Tristate::True,
+            lib: None,
+            ..default_compiler_options()
+        };
         let options_ptr = P::new(options);
         let compare_paths = ComparePathsOptions {
             use_case_sensitive_file_names: true,
@@ -243,7 +273,8 @@ fn sort_imports_non_destructive(file_name: &str, text: &str) -> Result<String, A
 
     let ls_host = Arc::new(FormatLsHost::new(normalized.clone(), text.to_owned()));
     let converters = ls_host.converters();
-    let ls_host_dyn: Arc<dyn LsHost> = Arc::clone(&ls_host);
+    let ls_host_for_service = Arc::clone(&ls_host);
+    let ls_host_dyn: Arc<dyn LsHost> = ls_host_for_service;
     let language_service = new_language_service(
         ProjectID("norn-fmt".to_owned()),
         program,
@@ -348,4 +379,58 @@ pub fn format_source(file_name: &str, text: &str) -> Result<String, AuthoringErr
     out.push_str(trimmed);
     out.push('\n');
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_byte_edits;
+    use crate::AuthoringError;
+
+    #[test]
+    fn rejects_overlapping_edit_ranges() {
+        let err = apply_byte_edits(
+            "abcdef",
+            vec![(1, 4, "X".to_owned()), (3, 5, "Y".to_owned())],
+        )
+        .expect_err("overlapping edits must fail closed");
+        assert!(matches!(
+            err,
+            AuthoringError::OverlappingEdits {
+                first_start: 1,
+                first_end: 4,
+                second_start: 3,
+                second_end: 5,
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_and_non_utf8_boundary_edits() {
+        let oob = apply_byte_edits("abc", vec![(0, 4, "X".to_owned())])
+            .expect_err("out-of-bounds edit must be rejected");
+        assert!(matches!(oob, AuthoringError::InvalidEditRange { .. }));
+
+        let inverted = apply_byte_edits("abc", vec![(2, 1, "X".to_owned())])
+            .expect_err("inverted edit range must be rejected");
+        assert!(matches!(inverted, AuthoringError::InvalidEditRange { .. }));
+
+        // "é" is 2 UTF-8 bytes ([0..2)); byte offset 1 is inside the scalar.
+        let mid_char = apply_byte_edits("éa", vec![(0, 1, "e".to_owned())])
+            .expect_err("mid-UTF-8 edit must be rejected");
+        assert!(matches!(mid_char, AuthoringError::InvalidEditRange { .. }));
+    }
+
+    #[test]
+    fn applies_non_overlapping_and_adjacent_edits_against_original_offsets() {
+        let result = apply_byte_edits(
+            "abcdef",
+            vec![
+                (4, 6, "EF".to_owned()),
+                (0, 2, "AB".to_owned()),
+                (2, 2, "-".to_owned()),
+            ],
+        )
+        .expect("adjacent and zero-width edits should succeed");
+        assert_eq!(result, "AB-cdEF");
+    }
 }

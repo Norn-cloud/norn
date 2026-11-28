@@ -38,4 +38,19 @@ pub enum AuthoringError {
         /// Total `UTF-8` byte length of the source document.
         len: usize,
     },
+
+    /// Two text edits in the same batch overlapped.
+    #[error(
+        "overlapping text edit ranges [{first_start}..{first_end}) and [{second_start}..{second_end})"
+    )]
+    OverlappingEdits {
+        /// Byte start offset of the first edit.
+        first_start: usize,
+        /// Byte end offset of the first edit.
+        first_end: usize,
+        /// Byte start offset of the second edit.
+        second_start: usize,
+        /// Byte end offset of the second edit.
+        second_end: usize,
+    },
 }

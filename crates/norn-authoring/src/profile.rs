@@ -8,8 +8,7 @@ use crate::AuthoringError;
 pub const PROFILE_JSON: &str = include_str!("../../../tools/norn-ts/profile/norn-effect-1.json");
 
 /// Ambient TypeScript declarations for `@norn/authoring`.
-pub const INTRINSICS_DTS: &str =
-    include_str!("../../../tools/norn-ts/profile/norn-authoring.d.ts");
+pub const INTRINSICS_DTS: &str = include_str!("../../../tools/norn-ts/profile/norn-authoring.d.ts");
 
 /// How an admitted profile symbol may be used in authored TypeScript.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -207,11 +206,7 @@ impl Profile {
     /// Returns the stable diagnostic code for a non-admitted symbol from a profile module.
     #[must_use]
     pub fn code_for(&self, symbol_id: &str) -> &str {
-        if let Some(rejected) = self
-            .rejected
-            .iter()
-            .find(|entry| entry.symbol == symbol_id)
-        {
+        if let Some(rejected) = self.rejected.iter().find(|entry| entry.symbol == symbol_id) {
             return rejected.code.as_str();
         }
         let module = symbol_id

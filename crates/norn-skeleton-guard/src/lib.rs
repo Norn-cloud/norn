@@ -169,11 +169,7 @@ pub const CRATES: &[CrateRule] = &[
         &["norn-ir", "norn-kernel"],
         &["serde", "serde_json", "geo", "h3o"],
     ),
-    rule(
-        "norn-authoring",
-        Ring::One,
-        &["norn-canonical", "norn-ir"],
-    ),
+    rule("norn-authoring", Ring::One, &["norn-canonical", "norn-ir"]),
     rule(
         "norn-ui-checker",
         Ring::One,

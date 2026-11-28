@@ -4,7 +4,10 @@ use norn_authoring::format_source;
 fn removes_semicolons_and_normalizes_spacing() {
     let input = "export const x={a:1,b:2};\nexport const sum=1+2;\n";
     let formatted = format_source("/product.ts", input).expect("format should succeed");
-    assert!(!formatted.contains(';'), "expected semicolons removed: {formatted}");
+    assert!(
+        !formatted.contains(';'),
+        "expected semicolons removed: {formatted}"
+    );
     assert!(
         formatted.contains("export const x = { a: 1, b: 2 }"),
         "expected brace and operator spacing: {formatted}"
@@ -20,7 +23,10 @@ fn removes_semicolons_and_normalizes_spacing() {
 fn uses_two_space_indentation() {
     let input = "export function add(a: number, b: number) {\n\tif (a > 0) {\n\t\treturn a + b;\n\t}\n\treturn b;\n}\n";
     let formatted = format_source("/indent.ts", input).expect("format should succeed");
-    assert!(!formatted.contains('\t'), "expected tabs converted to spaces: {formatted}");
+    assert!(
+        !formatted.contains('\t'),
+        "expected tabs converted to spaces: {formatted}"
+    );
     assert!(
         formatted.contains("\n  if (a > 0) {\n    return a + b\n  }\n"),
         "expected 2-space indent: {formatted}"
@@ -62,7 +68,10 @@ fn fmt_semantic_1_preserves_unused_imports_while_sorting() {
 fn normalizes_crlf_and_trailing_newlines() {
     let input = "export const a = 1;\r\nexport const b = 2;\r\n\r\n\r\n";
     let formatted = format_source("/crlf.ts", input).expect("format should succeed");
-    assert!(!formatted.contains('\r'), "CRLF must be normalized to LF: {formatted:?}");
+    assert!(
+        !formatted.contains('\r'),
+        "CRLF must be normalized to LF: {formatted:?}"
+    );
     assert_eq!(formatted, "export const a = 1\nexport const b = 2\n");
 }
 

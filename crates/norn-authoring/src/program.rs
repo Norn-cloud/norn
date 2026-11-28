@@ -11,9 +11,7 @@ use tsrs_scanner::get_ecma_line_and_byte_offset_of_position;
 use tsrs_tsoptions::new_parsed_command_line;
 use tsrs_vfs::{FS, bundled};
 
-use crate::{
-    AuthoringError, BoundedVfs, INTRINSICS_VIRTUAL_PATH, Profile, normalize_virtual_path,
-};
+use crate::{AuthoringError, BoundedVfs, INTRINSICS_VIRTUAL_PATH, Profile, normalize_virtual_path};
 
 /// Diagnostic severity reported by [`AuthoringProgram`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +80,10 @@ pub fn default_compiler_options() -> CompilerOptions {
         target: ScriptTarget::ES2022,
         module: ModuleKind::ES_NEXT,
         module_resolution: ModuleResolutionKind::BUNDLER,
-        lib: Some(vec!["lib.esnext.d.ts".to_owned(), "lib.dom.d.ts".to_owned()]),
+        lib: Some(vec![
+            "lib.esnext.d.ts".to_owned(),
+            "lib.dom.d.ts".to_owned(),
+        ]),
         types: Some(Vec::new()),
         skip_lib_check: Tristate::True,
         no_emit: Tristate::True,
@@ -108,29 +109,27 @@ fn strip_quoted_module_prefix(fqn: &str) -> &str {
     after_close.strip_prefix('.').unwrap_or(fqn)
 }
 
-fn format_declaring_module(
+/// Maps a declaring virtual file path to its profile module name ONLY when it
+/// lives inside a pinned profile origin (the embedded `@norn/authoring`
+/// declarations or the explicitly configured pinned `effect` declaration root).
+///
+/// Matches `resolveSymbol` in `tools/norn-ts/src/check.ts`: lookalike copies
+/// under arbitrary `node_modules/` directories never receive a profile ID.
+fn resolve_profile_module(
     declaring_file: &str,
     intrinsics_module: &str,
     effect_dist_prefix: Option<&str>,
-) -> String {
+) -> Option<String> {
     if declaring_file == INTRINSICS_VIRTUAL_PATH {
-        return intrinsics_module.to_owned();
+        return Some(intrinsics_module.to_owned());
     }
     if let Some(prefix) = effect_dist_prefix
         && let Some(rel) = declaring_file.strip_prefix(prefix)
     {
         let stripped = rel.strip_suffix(".d.ts").unwrap_or(rel);
-        return format!("effect/{stripped}");
+        return Some(format!("effect/{stripped}"));
     }
-    if let Some((_, after_nm)) = declaring_file.split_once("/node_modules/") {
-        let stripped = after_nm.strip_suffix(".d.ts").unwrap_or(after_nm);
-        return stripped.to_owned();
-    }
-    declaring_file
-        .strip_suffix(".d.ts")
-        .or_else(|| declaring_file.strip_suffix(".ts"))
-        .unwrap_or(declaring_file)
-        .to_owned()
+    None
 }
 
 fn summarize_diagnostic(diag: P<Diagnostic>) -> DiagnosticSummary {
@@ -212,7 +211,8 @@ impl AuthoringProgram {
         }
 
         let vfs_arc = Arc::new(vfs);
-        let fs_dyn: Arc<dyn FS> = Arc::clone(&vfs_arc);
+        let vfs_for_host = Arc::clone(&vfs_arc);
+        let fs_dyn: Arc<dyn FS> = vfs_for_host;
         let host = new_compiler_host("/", fs_dyn, &bundled::lib_path(), None, None, None);
 
         let config_region = Region::new_scratch(64_usize.saturating_mul(1_024));
@@ -249,17 +249,23 @@ impl AuthoringProgram {
             program,
             vfs: vfs_arc,
             profile,
-            effect_dist_prefix: Some("/node_modules/effect/dist/".to_owned()),
+            effect_dist_prefix: None,
             _regions: regions,
             _config_region: config_region,
         })
     }
 
-    /// Configures a custom virtual path prefix for the pinned `effect` package's
-    /// `dist/` directory when computing `effect/<subpath>#<name>` identities.
+    /// Configures the pinned `effect` package `dist/` virtual path prefix used
+    /// when computing `effect/<subpath>#<name>` profile identities.
+    ///
+    /// Declarations outside [`INTRINSICS_VIRTUAL_PATH`] and this exact pinned
+    /// prefix never receive a profile [`SymbolIdentity`].
     #[must_use]
     pub fn with_effect_dist_prefix(mut self, prefix: impl Into<String>) -> Self {
         let mut prefix = prefix.into();
+        if !prefix.starts_with('/') {
+            prefix.insert(0, '/');
+        }
         if !prefix.ends_with('/') {
             prefix.push('/');
         }
@@ -431,13 +437,13 @@ impl AuthoringProgram {
         let &declaration = target.declarations().first()?;
         let decl_sf = get_source_file_of_node(declaration)?;
         let declaring_file = decl_sf.file_name().to_owned();
-        let fqn = checker.get_fully_qualified_name_exported(target);
-        let qualified_name = strip_quoted_module_prefix(&fqn).to_owned();
-        let module_part = format_declaring_module(
+        let module_part = resolve_profile_module(
             &declaring_file,
             &self.profile.intrinsics_module,
             self.effect_dist_prefix.as_deref(),
-        );
+        )?;
+        let fqn = checker.get_fully_qualified_name_exported(target);
+        let qualified_name = strip_quoted_module_prefix(&fqn).to_owned();
         let id = format!("{module_part}#{qualified_name}");
         Some(SymbolIdentity {
             id,
