@@ -92,30 +92,119 @@ describe("pins", () => {
   })
 
   test("every locked package carries an allowed license (MIT / Apache-2.0)", () => {
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === "object" && value !== null && !Array.isArray(value)
     const lock = readFileSync(join(TOOL_ROOT, "bun.lock"), "utf8")
-    const parsed = Bun.JSONC.parse(lock) as {
-      packages: Record<
-        string,
-        [string, string, { os?: string | string[]; cpu?: string | string[]; optionalDependencies?: Record<string, string> }, string]
-      >
+    const parsed = Bun.JSONC.parse(lock)
+    if (!isRecord(parsed) || !isRecord(parsed.workspaces) || !isRecord(parsed.packages)) {
+      throw new Error("unexpected bun.lock structure: expected workspaces and packages objects")
     }
-    const optionalNames = new Set<string>()
-    for (const [, , info] of Object.values(parsed.packages)) {
-      for (const opt of Object.keys(info.optionalDependencies ?? {})) optionalNames.add(opt)
+    const packages = parsed.packages
+    const splitLockKey = (key: string): string[] => {
+      const raw = key.split("/")
+      const pkgs: string[] = []
+      for (let i = 0; i < raw.length; i++) {
+        const part = raw[i]
+        if (!part) throw new Error(`malformed bun.lock package key: ${key}`)
+        if (part.startsWith("@")) {
+          const next = raw[++i]
+          if (!next) throw new Error(`malformed scoped bun.lock package key: ${key}`)
+          pkgs.push(`${part}/${next}`)
+        } else {
+          pkgs.push(part)
+        }
+      }
+      return pkgs
     }
-    const matchesHost = (value: string | string[] | undefined, current: string) =>
-      value === undefined ? true : Array.isArray(value) ? value.includes(current) : value === current
-    const entries = Object.entries(parsed.packages)
+    const resolveDepKey = (parentSegments: string[], depName: string): string => {
+      for (let depth = parentSegments.length; depth >= 0; depth--) {
+        const candidate = [...parentSegments.slice(0, depth), depName].join("/")
+        if (Object.hasOwn(packages, candidate)) return candidate
+      }
+      return depName
+    }
+    const matchesPlatformConstraint = (value: unknown, current: string): boolean => {
+      if (value === undefined) return true
+      const items = typeof value === "string" ? [value] : Array.isArray(value) ? value : null
+      if (!items || !items.every((item): item is string => typeof item === "string")) return true
+      const positive: string[] = []
+      for (const item of items) {
+        if (item.startsWith("!")) {
+          if (item.slice(1) === current) return false
+        } else {
+          positive.push(item)
+        }
+      }
+      return positive.length === 0 || positive.includes(current)
+    }
+
+    const requiredKeys = new Set<string>()
+    const optionalKeys = new Set<string>()
+    const recordEdges = (parentSegments: string[], container: Record<string, unknown>) => {
+      const optPeers = new Set<string>(
+        Array.isArray(container.optionalPeers)
+          ? container.optionalPeers.filter((p): p is string => typeof p === "string")
+          : [],
+      )
+      if (isRecord(container.peerDependenciesMeta)) {
+        for (const [dep, meta] of Object.entries(container.peerDependenciesMeta)) {
+          if (isRecord(meta) && meta.optional === true) optPeers.add(dep)
+        }
+      }
+      for (const field of ["dependencies", "devDependencies"] as const) {
+        if (isRecord(container[field])) {
+          for (const dep of Object.keys(container[field])) {
+            requiredKeys.add(resolveDepKey(parentSegments, dep))
+          }
+        }
+      }
+      if (isRecord(container.peerDependencies)) {
+        for (const dep of Object.keys(container.peerDependencies)) {
+          const target = resolveDepKey(parentSegments, dep)
+          if (optPeers.has(dep)) optionalKeys.add(target)
+          else requiredKeys.add(target)
+        }
+      }
+      if (isRecord(container.optionalDependencies)) {
+        for (const dep of Object.keys(container.optionalDependencies)) {
+          optionalKeys.add(resolveDepKey(parentSegments, dep))
+        }
+      }
+    }
+
+    for (const [wsPath, ws] of Object.entries(parsed.workspaces)) {
+      if (!isRecord(ws)) throw new Error(`malformed bun.lock workspace entry: ${wsPath}`)
+      recordEdges([], ws)
+    }
+    const entries = Object.entries(packages)
     expect(entries.length).toBeGreaterThan(0)
-    for (const [name, [, , info]] of entries) {
-      if (optionalNames.has(name) && (!matchesHost(info.os, process.platform) || !matchesHost(info.cpu, process.arch))) {
-        continue
+    const parsedEntries: Array<[string, string[], Record<string, unknown>]> = []
+    for (const [key, entry] of entries) {
+      if (!Array.isArray(entry) || entry.length < 3 || !isRecord(entry[2])) {
+        throw new Error(`malformed bun.lock package tuple for ${key}`)
       }
-      const meta = JSON.parse(readFileSync(join(TOOL_ROOT, "node_modules", name, "package.json"), "utf8")) as {
-        license: string
+      const segments = splitLockKey(key)
+      recordEdges(segments, entry[2])
+      parsedEntries.push([key, segments, entry[2]])
+    }
+
+    for (const [key, segments, info] of parsedEntries) {
+      const manifestPath = join(TOOL_ROOT, ...segments.flatMap((pkg) => ["node_modules", pkg]), "package.json")
+      if (!existsSync(manifestPath)) {
+        const hostExcluded =
+          !matchesPlatformConstraint(info.os, process.platform) ||
+          !matchesPlatformConstraint(info.cpu, process.arch)
+        if (optionalKeys.has(key) && !requiredKeys.has(key) && hostExcluded) {
+          continue
+        }
       }
-      expect({ name, license: meta.license, allowed: LICENSES.has(meta.license) }).toEqual({
-        name,
+      const meta = JSON.parse(readFileSync(manifestPath, "utf8")) as { license?: string }
+      expect({
+        name: key,
+        license: meta.license,
+        allowed: typeof meta.license === "string" && LICENSES.has(meta.license),
+      }).toEqual({
+        name: key,
         license: meta.license,
         allowed: true,
       })
