@@ -36,7 +36,6 @@ mod capture;
 
 use std::collections::BTreeMap;
 
-use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::source_cursor::SourceLease;
@@ -48,6 +47,9 @@ use crate::pull::{Limits, Pull, PullError, PullProfile, Request, Watermark, obse
 use crate::scope::CellScope;
 pub use auth::secret_env;
 use auth::{auth_headers, client_credentials};
+pub use capture::{
+    KeptUpload, UPLOAD_TYPE, ensure_upload_records, keep_upload, kept_upload, kept_upload_key,
+};
 
 /// The server variable listing the hosts a base URL may name although they
 /// are internal or plain http (SYNC-URL-1): comma-separated host names or IP
@@ -227,6 +229,8 @@ struct Run {
     /// Rows the current step mapped.
     mapped: usize,
     pull: Option<Pull>,
+    drain_only: bool,
+    mapping_binding: Option<String>,
     auth: Vec<(String, String)>,
     /// The first data request, held while an access token is fetched.
     held: Option<Request>,
@@ -351,6 +355,16 @@ impl Sources {
         &self.connections
     }
 
+    /// Scoped `(connection_id -> mapping_id)` bindings from configured connections.
+    #[must_use]
+    pub fn configured_mappings(&self) -> BTreeMap<String, String> {
+        self.connections
+            .iter()
+            .filter(|conn| !conn.mapping.is_empty())
+            .map(|conn| (conn.id.clone(), conn.mapping.clone()))
+            .collect()
+    }
+
     /// Whether `id` is running a sync now.
     #[must_use]
     pub fn running(&self, id: &str) -> bool {
@@ -380,29 +394,57 @@ impl Sources {
             return Err(ClaimError::Running);
         }
         let run = format!("{id}/{now_ms}");
-        state.run = Some(Run {
-            id: run.clone(),
-            trigger,
-            actor: actor.to_owned(),
-            started_ms: now_ms,
-            stepped_ms: now_ms,
-            step_rows: crate::host::PAGE_ROWS,
-            mapped: 0,
-            pull: None,
-            auth: Vec::new(),
-            held: None,
-            pending_captures: std::collections::VecDeque::new(),
-            after: None,
-            lease: None,
-            watermark_from: String::new(),
-            committed_watermarks: BTreeMap::new(),
-            committed_cursor_json: BTreeMap::new(),
-            read: 0,
-            landed: 0,
-            quarantined: 0,
-            reasons: BTreeMap::new(),
-        });
+        state.run = Some(new_run(run.clone(), trigger, actor, now_ms, None));
         Ok(run)
+    }
+
+    /// SYNC-ONE-1 + SOURCE-CAPTURE-1: claim a sync of `id` for `actor` and
+    /// acquire its durable fencing lease on `host` immediately so the returned
+    /// run ID (`{id}/{now_ms}/g{generation}`) matches both `RunSummary.run` and
+    /// the stored `source.SyncRun` record.
+    ///
+    /// # Errors
+    /// Outer `Err` reports a durable lease-store failure; inner `Err` reports
+    /// [`ClaimError::Unknown`], [`ClaimError::Running`] (including an active
+    /// durable lease held by another worker), or [`ClaimError::Busy`].
+    pub fn claim_on<E: SqlEngine>(
+        &mut self,
+        host: &DevHost<E>,
+        id: &str,
+        trigger: Trigger,
+        actor: &str,
+        now_ms: u64,
+    ) -> Result<Result<String, ClaimError>, String> {
+        let Some(config) = self.connections.iter().find(|c| c.id == id).cloned() else {
+            return Ok(Err(ClaimError::Unknown));
+        };
+        if !auth::owns(host.scope(), &config) {
+            return Ok(Err(ClaimError::Unknown));
+        }
+        if let Some(other) = self.syncing(now_ms).filter(|other| other != id) {
+            return Ok(Err(ClaimError::Busy(other)));
+        }
+        if self
+            .state
+            .get(id)
+            .and_then(|s| s.run.as_ref())
+            .is_some_and(|run| held(run, now_ms))
+        {
+            return Ok(Err(ClaimError::Running));
+        }
+        let base = format!("{id}/{now_ms}");
+        let lease_id = capture::next_lease_id(&base);
+        let lease = match host.acquire_source_lease(id, &lease_id, now_ms, RUN_LEASE_MS) {
+            Ok(lease) => lease,
+            Err(crate::host::SourceCaptureError::LeaseFenced(_)) => {
+                return Ok(Err(ClaimError::Running));
+            }
+            Err(error) => return Err(error.code_and_message().1),
+        };
+        let run = format!("{base}/g{}", lease.generation);
+        let state = self.state.entry(id.to_owned()).or_default();
+        state.run = Some(new_run(run.clone(), trigger, actor, now_ms, Some(lease)));
+        Ok(Ok(run))
     }
 
     /// SYNC-YIELD-2: map at most `rows` (1 to a page) in each step of the run
@@ -568,7 +610,7 @@ impl Sources {
         run.stepped_ms = now_ms;
         run.mapped = 0;
         let outcome = match response {
-            None if run.pull.is_some() => drain(host, run, now_ms),
+            None if run.pull.is_some() || run.drain_only => drain(host, run, now_ms),
             None => begin(host, &config, &self.secrets, run, watermarks_known, now_ms),
             Some((status, body)) => {
                 advance(host, &config, run, status, body, now_ms).and_then(|after| {
@@ -604,21 +646,21 @@ impl Sources {
                 "no sync is running",
             ));
         };
-        let superseded = capture::is_lease_superseded(
-            host,
-            &config.id,
-            run.lease.as_ref(),
-            error.as_ref(),
-            now_ms,
-        );
+        let superseded = capture::is_lease_superseded(host, config, &run, error.as_ref(), now_ms);
+        let has_unresolved_quarantine = error.is_none()
+            && run.quarantined == 0
+            && !config.mapping.is_empty()
+            && !host
+                .unresolved_quarantined_datasets(&config.mapping, Some(&config.id))
+                .is_ok_and(|datasets| datasets.is_empty());
         let outcome = if error.is_some() {
             "failed"
-        } else if run.quarantined > 0 {
+        } else if run.quarantined > 0 || has_unresolved_quarantine {
             "partial"
         } else {
             "ok"
         };
-        let summary = RunSummary {
+        let mut summary = RunSummary {
             run: run.id.clone(),
             outcome,
             rows_read: run.read,
@@ -627,18 +669,31 @@ impl Sources {
             quarantine_reasons: run.reasons.clone(),
             error,
         };
-        if !superseded {
-            state.last_end_ms = Some(now_ms);
-            let watermarks = if run.pull.is_some() {
+        if superseded {
+            capture::mark_fenced(
+                &mut summary,
+                fail(
+                    "source.lease_fenced",
+                    "sync lease or mapping revision was superseded",
+                ),
+            );
+        } else {
+            let watermarks = if run.pull.is_some() || !run.committed_watermarks.is_empty() {
                 run.committed_watermarks.clone()
             } else {
                 state.watermarks.clone().unwrap_or_default()
             };
-            state.watermarks = Some(watermarks.clone());
             let watermark = watermark_text(&watermarks);
-            // SOURCE-CAPTURE-1: report `source.Connection` while still holding
-            // the durable lease, then release the lease afterward.
-            report(host, config, &run, &summary, &watermark, Some(now_ms));
+            // SOURCE-CAPTURE-1: report while holding the lease, then update
+            // cached state only if the report was not fenced.
+            if let Some(fenced) = report(host, config, &run, &summary, &watermark, Some(now_ms)) {
+                capture::mark_fenced(&mut summary, fenced);
+            } else {
+                if !run.drain_only {
+                    state.last_end_ms = Some(now_ms);
+                }
+                state.watermarks = Some(watermarks);
+            }
         }
         if let Some(lease) = &run.lease {
             let _released =
@@ -666,6 +721,39 @@ fn failed_summary(run: &str, code: &str, message: &str) -> RunSummary {
     }
 }
 
+fn new_run(
+    id: String,
+    trigger: Trigger,
+    actor: &str,
+    now_ms: u64,
+    lease: Option<SourceLease>,
+) -> Run {
+    Run {
+        id,
+        trigger,
+        actor: actor.to_owned(),
+        started_ms: now_ms,
+        stepped_ms: now_ms,
+        step_rows: crate::host::PAGE_ROWS,
+        mapped: 0,
+        pull: None,
+        drain_only: false,
+        mapping_binding: None,
+        auth: Vec::new(),
+        held: None,
+        pending_captures: std::collections::VecDeque::new(),
+        after: None,
+        lease,
+        watermark_from: String::new(),
+        committed_watermarks: BTreeMap::new(),
+        committed_cursor_json: BTreeMap::new(),
+        read: 0,
+        landed: 0,
+        quarantined: 0,
+        reasons: BTreeMap::new(),
+    }
+}
+
 fn begin<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
@@ -674,55 +762,78 @@ fn begin<E: SqlEngine>(
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
 ) -> Result<Next, Failure> {
-    let (mut profile, payload) = capture::load_connector_profile(host, config)?;
-    // SYNC-PAGE-1: the host's page size, when it sets one.
-    if let Some(rows) = config.page_size {
-        for feed in &mut profile.feeds {
-            match &mut feed.paging {
-                crate::pull::Paging::Keyset { size } | crate::pull::Paging::Cursor { size, .. } => {
-                    *size = rows;
-                }
-            }
+    let lease = if let Some(lease) = run.lease.clone() {
+        let current = host
+            .source_lease(&config.id)
+            .map_err(|r| fail("source.ingest", r.message))?;
+        if !current.is_some_and(|cur| {
+            cur.lease_id == lease.lease_id
+                && cur.generation == lease.generation
+                && now_ms < cur.expires_at_ms
+        }) {
+            return Err(fail(
+                "source.lease_fenced",
+                "sync lease expired or was superseded before sync began",
+            ));
         }
-    }
+        lease
+    } else {
+        let lease_id = capture::next_lease_id(&run.id);
+        let lease = host
+            .acquire_source_lease(&config.id, &lease_id, now_ms, RUN_LEASE_MS)
+            .map_err(|error| {
+                let (code, message) = error.code_and_message();
+                fail(code, message)
+            })?;
+        run.id = format!("{}/g{}", run.id, lease.generation);
+        run.lease = Some(lease.clone());
+        lease
+    };
+    let (profile, payload, expected_binding) = capture::load_connector_profile(host, config)?;
+    run.mapping_binding = Some(expected_binding.clone());
     let token = client_credentials(&payload, secrets, config)?;
     if token.is_none() {
         run.auth = auth_headers(&payload, secrets, config)?;
     }
-    let lease = host
-        .acquire_source_lease(&config.id, &run.id, now_ms, RUN_LEASE_MS)
-        .map_err(|error| {
-            let (code, message) = error.code_and_message();
-            fail(code, message)
-        })?;
-    let (watermarks, raw_cursors) =
-        capture::load_and_seed_watermarks(host, &config.id, &lease, known, now_ms)?;
     let pending = capture::load_pending_captures(host, &config.id)?;
-    run.lease = Some(lease);
+    let (watermarks, raw_cursors, drain_only) = capture::load_and_seed_watermarks(
+        host,
+        config,
+        &lease,
+        &expected_binding,
+        known,
+        !pending.is_empty(),
+        now_ms,
+    )?;
+    run.drain_only = drain_only;
+    if drain_only {
+        run.mapping_binding = None;
+    }
     run.watermark_from = watermark_text(&watermarks);
     run.committed_watermarks = watermarks.clone();
     run.committed_cursor_json = raw_cursors;
     run.pending_captures.extend(pending);
-    let mut pull = Pull::new(profile, watermarks, Limits::default());
-    let first = pull.next_request();
-    run.pull = Some(pull);
-    report(
+    let first = (!drain_only)
+        .then(|| {
+            let mut pull = Pull::new(profile, watermarks, Limits::default());
+            let first = pull.next_request();
+            run.pull = Some(pull);
+            first
+        })
+        .flatten();
+    if let Some(fenced) = report(
         host,
         config,
         run,
-        &RunSummary {
-            run: run.id.clone(),
-            outcome: "running",
-            rows_read: 0,
-            rows_landed: 0,
-            rows_quarantined: 0,
-            quarantine_reasons: BTreeMap::new(),
-            error: None,
-        },
+        &capture::running_summary(&run.id),
         &run.watermark_from,
         None,
-    );
-    let next_req = if let Some(token) = token {
+    ) {
+        return Err(fenced);
+    }
+    let next_req = if drain_only {
+        None
+    } else if let Some(token) = token {
         run.held = first;
         Some(token)
     } else {
@@ -803,6 +914,7 @@ fn advance<E: SqlEngine>(
         accepted,
         &mut capture::CaptureTurn {
             lease,
+            mapping_binding: run.mapping_binding.as_deref(),
             committed_cursor_json: &mut run.committed_cursor_json,
             step_rows: run.step_rows,
             now_ms,
@@ -831,55 +943,53 @@ fn advance<E: SqlEngine>(
 /// ephemeral `Pull` cursor and deleting `_norn_source_pending` once all rows of
 /// that page have been processed.
 fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run, now_ms: u64) -> Result<Next, Failure> {
-    let done_front = match run.pending_captures.front_mut() {
+    let fence = capture::drain_fence(run.lease.as_ref(), now_ms);
+    let (done_front, step_res) = match run.pending_captures.front_mut() {
         Some(capture::ActiveCapture::Captured {
             pending, outcomes, ..
         }) => {
-            let step = host
-                .process_source_page_step(pending, outcomes, run.step_rows)
-                .map_err(|refusal| fail("source.ingest", refusal.message))?;
-            run.mapped = step.len();
-            for ingested in step {
-                crate::pull::tally_outcome(
-                    &ingested.outcome,
-                    &mut run.landed,
-                    &mut run.quarantined,
-                    &mut run.reasons,
-                );
-            }
-            pending.pages.is_empty() && pending.records.is_empty()
+            let step =
+                host.process_source_page_step_checked(pending, outcomes, run.step_rows, fence);
+            let done = pending.pages.is_empty() && pending.records.is_empty();
+            (done, Some(step))
         }
         Some(capture::ActiveCapture::DisputeFallback { state, .. }) => {
-            let step = host
-                .step_source_dispute_fallback(state, now_ms, run.step_rows)
-                .map_err(|error| {
-                    let (code, message) = error.code_and_message();
-                    fail(code, message)
-                })?;
-            run.mapped = step.len();
-            for ingested in step {
-                crate::pull::tally_outcome(
-                    &ingested.outcome,
-                    &mut run.landed,
-                    &mut run.quarantined,
-                    &mut run.reasons,
-                );
-            }
-            state.is_complete()
+            let step = host.step_source_dispute_fallback(state, now_ms, run.step_rows);
+            (state.is_complete(), Some(step))
         }
-        None => false,
+        None => (false, None),
     };
+    if let Some(step) = step_res {
+        let step = step.map_err(|error| {
+            let (code, message) = error.code_and_message();
+            fail(code, message)
+        })?;
+        run.mapped = step.len();
+        for ingested in step {
+            crate::pull::tally_outcome(
+                &ingested.outcome,
+                &mut run.landed,
+                &mut run.quarantined,
+                &mut run.reasons,
+            );
+        }
+    }
     if done_front && let Some(finished) = run.pending_captures.pop_front() {
         let advance = match finished {
             capture::ActiveCapture::Captured {
                 pending, advance, ..
             } => {
-                host.complete_source_pending(
+                let lease = capture::drain_fence(run.lease.as_ref(), now_ms).lease;
+                host.complete_source_pending_checked(
                     &pending.connection_id,
                     &pending.dataset,
                     &pending.page_digest,
+                    lease,
                 )
-                .map_err(|refusal| fail("source.ingest", refusal.message))?;
+                .map_err(|error| {
+                    let (code, message) = error.code_and_message();
+                    fail(code, message)
+                })?;
                 advance
             }
             capture::ActiveCapture::DisputeFallback { advance, .. } => Some(advance),
@@ -1062,6 +1172,8 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         step_rows: crate::host::PAGE_ROWS,
         mapped: 0,
         pull: None,
+        drain_only: false,
+        mapping_binding: None,
         auth: Vec::new(),
         held: None,
         pending_captures: std::collections::VecDeque::new(),
@@ -1113,56 +1225,20 @@ fn report<E: SqlEngine>(
     summary: &RunSummary,
     watermark: &str,
     ended_ms: Option<u64>,
-) {
+) -> Option<Failure> {
+    if run.drain_only && ended_ms.is_none() {
+        return None;
+    }
     let started = rfc3339(run.started_ms);
     let ended = ended_ms.map(rfc3339);
-    let reasons = summary
-        .quarantine_reasons
-        .iter()
-        .map(|(code, n)| format!("{code}={n}"))
-        .collect::<Vec<_>>()
-        .join("; ");
-    let (error_code, error_message) = summary
-        .error
-        .clone()
-        .map_or((None, None), |(c, m)| (Some(c), Some(m)));
-    let status = if ended.is_none() {
-        "syncing"
-    } else {
-        summary.outcome
-    };
-    let auth = if config.connector.is_empty() {
-        "presigned_upload"
-    } else {
-        "api_key"
-    };
-    let connection = norn_ir::runtime_object! {
-        "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
-        "target" => config.base_url.as_str(), "auth" => auth, "status" => status,
-        "last_sync_started_at" => started.as_str(), "last_sync_ended_at" => ended,
-        "last_trigger" => run.trigger.as_str(), "watermark" => watermark,
-        "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
-        "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
-        "last_error_code" => error_code, "last_error_message" => error_message,
-        "connector_id" => config.connector.as_str(), "source_schema_id" => source_schema_id(&config.mapping),
-        "mapping_id" => config.mapping.as_str(),
-    };
     let phase = if ended.is_some() { "end" } else { "start" };
-    let mut rows = vec![("connection", config.id.clone(), connection)];
-    if ended.is_some() {
-        rows.push((
-            "sync_run",
-            run.id.clone(),
-            norn_ir::runtime_object! {
-                "id" => run.id.as_str(), "connection_id" => config.id.as_str(), "trigger" => run.trigger.as_str(),
-                "run_by" => run.actor.as_str(), "started_at" => started.as_str(), "ended_at" => ended,
-                "outcome" => summary.outcome, "watermark_from" => run.watermark_from.as_str(), "watermark_to" => watermark,
-                "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
-                "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
-                "error_code" => error_code, "error_message" => error_message,
-            },
-        ));
-    }
+    let rows = capture::report_rows(
+        host,
+        config,
+        run,
+        summary,
+        (&started, ended.as_deref(), watermark),
+    );
     let profile = connect_profile();
     let now = ended_ms.unwrap_or(run.started_ms);
     let batch: Vec<_> = rows
@@ -1199,7 +1275,17 @@ fn report<E: SqlEngine>(
             now,
         )
     });
-    let _reported = host.ingest_source_report_checked(&batch, lease_check);
+    let expected_binding = run
+        .mapping_binding
+        .as_deref()
+        .map(|binding| (config.mapping.as_str(), binding));
+    match host.ingest_source_report_checked(&batch, lease_check, expected_binding) {
+        Ok(()) => None,
+        Err(error) => {
+            let (code, message) = error.code_and_message();
+            Some(fail(code, message))
+        }
+    }
 }
 
 fn connect_profile() -> PullProfile {
@@ -1209,195 +1295,6 @@ fn connect_profile() -> PullProfile {
         feeds: Vec::new(),
         token: None,
     }
-}
-
-/// The object type of a completed upload's durable record.
-pub const UPLOAD_TYPE: &str = "source.Upload";
-
-/// UPLOAD-RECORD-1: a completed upload as the cell keeps it, written through
-/// its own `norn-connect` mapping when `:complete` reads the object back, so
-/// it outlives the host. Every value is what the cell read or decided,
-/// never what a client claimed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeptUpload {
-    /// The sealed upload id.
-    pub upload_id: String,
-    /// The store the object is in.
-    pub store: crate::uploads::Store,
-    /// The object's URI.
-    pub uri: String,
-    /// The SHA-256 of the bytes the cell read.
-    pub sha256: String,
-    /// Their size.
-    pub size: u64,
-    /// The content type the upload began with.
-    pub content_type: String,
-    /// The file name the upload began with.
-    pub file_name: String,
-    /// Whether the bytes are CSV the cell profiled.
-    pub csv: bool,
-    /// The profile's columns.
-    pub columns: Vec<crate::uploads::Column>,
-    /// Who completed it.
-    pub owner: String,
-    /// When, as RFC 3339.
-    pub completed_at: String,
-}
-
-/// The record key of the upload `upload_id`: its SHA-256.
-#[must_use]
-pub fn kept_upload_key(upload_id: &str) -> String {
-    crate::uploads::sha256_hex(upload_id.as_bytes())
-}
-
-/// Keep `upload` in the cell (UPLOAD-RECORD-1). The same bytes kept again
-/// are already kept; new bytes for the same upload are its next version.
-/// A cell whose definitions predate `source.Upload` first gets the cell's
-/// own sources pack through the governed install ([`ensure_upload_records`]).
-///
-/// # Errors
-/// The pack could not be installed, the cell refused the record, or the
-/// write failed.
-pub fn keep_upload<E: SqlEngine>(
-    host: &DevHost<E>,
-    upload: &KeptUpload,
-    now_ms: u64,
-) -> Result<(), String> {
-    ensure_upload_records(host, now_ms)?;
-    let key = kept_upload_key(&upload.upload_id);
-    let columns = serde_json::to_string(&upload.columns).map_err(|e| e.to_string())?;
-    let store = match upload.store {
-        crate::uploads::Store::Uploads => "uploads",
-        crate::uploads::Store::Documents => "documents",
-    };
-    let payload = norn_ir::runtime_object! {
-        "id" => key.as_str(), "upload_id" => upload.upload_id.as_str(), "store" => store,
-        "uri" => upload.uri.as_str(), "sha256" => upload.sha256.as_str(), "size" => upload.size,
-        "content_type" => upload.content_type.as_str(), "file_name" => upload.file_name.as_str(),
-        "format" => if upload.csv { "csv" } else { "other" }, "columns" => columns.as_str(),
-        "owner" => upload.owner.as_str(), "completed_at" => upload.completed_at.as_str(),
-    };
-    let profile = connect_profile();
-    let row = crate::pull::Row {
-        dataset: "upload".to_owned(),
-        source_id: key,
-        version: upload.sha256.clone(),
-        payload,
-    };
-    let raw = observation(&profile, &row, now_ms)?;
-    let input = MappingInput {
-        mapping: REPORT_MAPPING.to_owned(),
-        dataset: "upload".to_owned(),
-        connector_instance: CELL_INSTANCE.to_owned(),
-        partition: "upload".to_owned(),
-        recorded_at: norn_ir::provenance::UtcTimestamp(rfc3339(now_ms)),
-    };
-    let ingested = host
-        .ingest(&[(raw, input)])
-        .map_err(|refusal| refusal.message)?;
-    match ingested.first().map(|i| &i.outcome) {
-        Some(MappingOutcome::Landed | MappingOutcome::AlreadyLanded) => Ok(()),
-        Some(MappingOutcome::Quarantined(reasons)) => Err(format!(
-            "the cell refused the upload record: {}",
-            reasons
-                .iter()
-                .map(|r| format!("{}: {}", r.code, r.reason))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
-        None => Err("the cell captured no upload record".to_owned()),
-    }
-}
-
-/// The cell's own sources pack: connections, sync runs and upload records,
-/// and the mapping that lands the cell's reports as them.
-const SOURCES_PACK: [&str; 6] = [
-    include_str!("../../../registry/packs/sources/artifacts/source.Synced.interface.json"),
-    include_str!("../../../registry/packs/sources/artifacts/source.Connection.entity.json"),
-    include_str!("../../../registry/packs/sources/artifacts/source.SyncRun.entity.json"),
-    include_str!("../../../registry/packs/sources/artifacts/source.Upload.entity.json"),
-    include_str!("../../../registry/packs/sources/artifacts/norn.connect.source.json"),
-    include_str!("../../../registry/packs/sources/artifacts/norn.connect.mapping.json"),
-];
-
-/// UPLOAD-RECORD-1 for a cell provisioned before `source.Upload`: install the
-/// cell's own sources pack as the next governed definitions version (the
-/// shared install path, DEFS-REOPEN-1), once. `Ok(true)` when it installed.
-///
-/// # Errors
-/// The pack is refused or the install fails; the upload is then refused,
-/// never completed without its record.
-pub fn ensure_upload_records<E: SqlEngine>(
-    host: &DevHost<E>,
-    installed_at: u64,
-) -> Result<bool, String> {
-    if host
-        .serves_object_type(UPLOAD_TYPE)
-        .map_err(|refusal| refusal.message)?
-    {
-        return Ok(false);
-    }
-    let pack = SOURCES_PACK
-        .iter()
-        .map(|text| serde_json::from_str::<norn_ir::ArtifactEnvelope>(text))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("the sources pack: {e}"))?;
-    host.install_artifacts(&pack, installed_at)
-        .map_err(|reason| format!("the sources pack was not installed: {reason}"))?;
-    Ok(true)
-}
-
-/// The kept record of the upload `upload_id`, if the cell completed it.
-///
-/// # Errors
-/// A store failure, or a kept record the cell cannot read back.
-pub fn kept_upload<E: SqlEngine>(
-    host: &DevHost<E>,
-    upload_id: &str,
-) -> Result<Option<KeptUpload>, String> {
-    if !host
-        .serves_object_type(UPLOAD_TYPE)
-        .map_err(|refusal| refusal.message)?
-    {
-        return Ok(None);
-    }
-    let Some(object) = host
-        .host_object(UPLOAD_TYPE, &kept_upload_key(upload_id))
-        .map_err(|refusal| refusal.message)?
-    else {
-        return Ok(None);
-    };
-    let text = |name: &str| {
-        object
-            .get(name)
-            .and_then(RuntimeValue::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| format!("a kept upload has no {name}"))
-    };
-    if text("upload_id")? != upload_id {
-        return Ok(None);
-    }
-    let store = match text("store")?.as_str() {
-        "documents" => crate::uploads::Store::Documents,
-        _ => crate::uploads::Store::Uploads,
-    };
-    Ok(Some(KeptUpload {
-        upload_id: upload_id.to_owned(),
-        store,
-        uri: text("uri")?,
-        sha256: text("sha256")?,
-        size: object
-            .get("size")
-            .and_then(RuntimeValue::as_i64)
-            .and_then(|n| u64::try_from(n).ok())
-            .ok_or("a kept upload has no size")?,
-        content_type: text("content_type")?,
-        file_name: text("file_name")?,
-        csv: text("format")? == "csv",
-        columns: serde_json::from_str(&text("columns")?).map_err(|e| e.to_string())?,
-        owner: text("owner")?,
-        completed_at: text("completed_at").unwrap_or_default(),
-    }))
 }
 
 #[cfg(test)]

@@ -436,17 +436,25 @@ impl IncrementalQuestion {
         if self.members.len() > usize::try_from(self.plan.max_items()).map_err(|_n| stale())? {
             return Err(refused("core.compute.bound_exceeded"));
         }
+        let required = store.required_sources_for_plan_in_tx(
+            &context.world,
+            &self.plan,
+            self.knowledge,
+            context.now_ms,
+            &BTreeMap::new(),
+        )?;
+        let query_pin = super::historical::query_pin(
+            store.model().model_hash(),
+            &self.plan,
+            &definition_pin,
+            self.knowledge,
+        )?;
         let mut result = finish(
             &self.plan,
             (context, exclusions),
+            &required,
             head,
-            super::historical::query_pin(
-                store.model().model_hash(),
-                &self.plan,
-                &definition_pin,
-                self.knowledge,
-            )?,
-            definition_pin,
+            (query_pin, definition_pin),
             &self.contributions,
             &self.totals,
         )?;

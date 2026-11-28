@@ -7,6 +7,8 @@ mod as_of;
 #[cfg(feature = "datafusion")]
 mod df_transform;
 pub mod fork;
+/// QUERY-FRESH-1: model-derived required external sources and live freshness.
+pub(crate) mod freshness;
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
@@ -27,6 +29,7 @@ pub use fork::{
     ForkQuestionResult, WorldCompareDelta, WorldCompareResult, WorldFrontierPin, compare_forks,
     compare_main_and_fork, fork_query_pin, fork_result_pin, main_result_pin,
 };
+pub use freshness::{RequiredSources, SourceFreshnessSnapshot, mapping_binding_key};
 pub use historical::HistoricalQuestionResult;
 
 use crate::{
@@ -578,12 +581,19 @@ impl<E: SqlEngine> CellStore<E> {
             };
             let (query_pin, definition_pin) =
                 self.question_pins(plan, cutoff.filter(|_| !answered))?;
+            let required = self.required_sources_for_plan_in_tx(
+                &context.world,
+                plan,
+                cutoff,
+                context.now_ms,
+                &BTreeMap::new(),
+            )?;
             let mut result = materialize(
                 plan,
                 (context, collected.exclusions),
+                &required,
                 revision,
-                query_pin,
-                definition_pin,
+                (query_pin, definition_pin),
                 &collected.contributions,
             )?;
             result.unlinked = collected.unlinked;
@@ -822,9 +832,9 @@ pub(crate) fn bucket_key(value: &Contribution) -> Result<String, CellError> {
 pub(crate) fn materialize(
     plan: &QuestionPlan,
     population: QuestionPopulation,
+    required: &RequiredSources,
     revision: LedgerHead,
-    query_pin: String,
-    definition_pin: String,
+    pins: (String, String),
     contributions: &Contributions,
 ) -> Result<QueryResult, CellError> {
     let mut totals = Totals::default();
@@ -834,9 +844,9 @@ pub(crate) fn materialize(
     finish(
         plan,
         population,
+        required,
         revision,
-        query_pin,
-        definition_pin,
+        pins,
         contributions,
         &totals,
     )
@@ -849,12 +859,13 @@ pub(crate) fn materialize(
 pub(crate) fn finish(
     plan: &QuestionPlan,
     population: QuestionPopulation,
+    required: &RequiredSources,
     revision: LedgerHead,
-    query_pin: String,
-    definition_pin: String,
+    pins: (String, String),
     contributions: &Contributions,
     totals: &Totals,
 ) -> Result<QueryResult, CellError> {
+    let (query_pin, definition_pin) = pins;
     let (context, exclusions) = population;
     let totals_in = totals;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
@@ -907,32 +918,8 @@ pub(crate) fn finish(
             ))
         })
         .collect::<Result<_, CellError>>()?;
-    let mut complete = exclusions.is_empty();
-    let (mut stale, mut aged) = (false, false);
-    let age = match plan.question().freshness {
-        FreshnessPolicy::Live { max_age_ms } | FreshnessPolicy::Delayed { max_age_ms } => {
-            Some(max_age_ms.0)
-        }
-        FreshnessPolicy::AsOf { .. } => None,
-    };
-    for (source, partitions) in &context.source_cursors {
-        complete &= !partitions.is_empty();
-        for (partition, consumed) in partitions {
-            match context
-                .watermarks
-                .get(source)
-                .and_then(|w| w.get(partition))
-            {
-                Some(w) => {
-                    complete &= w.complete && &w.observed == consumed && w.heartbeat_ms.is_some();
-                    let lag = w.heartbeat_ms.and_then(|at| context.now_ms.checked_sub(at));
-                    stale |= lag.is_none_or(|lag| age.is_some_and(|age| lag > age));
-                    aged |= age.is_some() && lag.is_some_and(|lag| lag > 0);
-                }
-                None => complete = false,
-            }
-        }
-    }
+    let (freshness, complete) =
+        freshness::evaluate_freshness(plan, &context, required, !exclusions.is_empty());
     let evidence = FindingEvidence {
         context: &context,
         exclusions: &exclusions,
@@ -948,15 +935,7 @@ pub(crate) fn finish(
         grain: plan.grain().clone(),
         lineage_ref,
         rows,
-        freshness: if !complete {
-            Freshness::Incomplete
-        } else if stale {
-            Freshness::Stale
-        } else if aged {
-            Freshness::Fresh
-        } else {
-            Freshness::Exact
-        },
+        freshness,
         complete,
         unlinked: 0,
         source_disagreements: None,

@@ -422,7 +422,7 @@ pub(crate) fn answer(
     // The hosted host's definition kinds: an approval names hosted roles.
     let kinds = super::policy::dev_kinds();
     // The active revision's metrics, derived before the request runs.
-    let questions = match questions.questions(host) {
+    let questions = match questions.questions_at(host, request.now.saturating_mul(1_000)) {
         Ok(questions) => questions,
         Err(refused) => return refusal(&refused),
     };

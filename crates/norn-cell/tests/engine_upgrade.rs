@@ -493,43 +493,24 @@ fn add_function_receipt_table(image: &mut Value) {
 /// every older cell. Older engines ignore them, so they need no storage version.
 fn add_source_cursor_tables(image: &mut Value) {
     let schema = image["schema"].as_array_mut().expect("schema");
-    schema.push(serde_json::json!({
-        "type": "table",
-        "name": "_norn_source_lease",
-        "table": "_norn_source_lease",
-        "sql": "CREATE TABLE \"_norn_source_lease\" (\n  \"connection_id\" TEXT NOT NULL PRIMARY KEY,\n  \"lease_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"acquired_at_ms\" INTEGER NOT NULL,\n  \"expires_at_ms\" INTEGER NOT NULL\n)",
-    }));
-    schema.push(serde_json::json!({
-        "type": "table",
-        "name": "_norn_source_cursor",
-        "table": "_norn_source_cursor",
-        "sql": "CREATE TABLE \"_norn_source_cursor\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"cursor_json\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL,\n  PRIMARY KEY (\"connection_id\", \"dataset\")\n)",
-    }));
-    schema.push(serde_json::json!({
-        "type": "table",
-        "name": "_norn_source_pending",
-        "table": "_norn_source_pending",
-        "sql": "CREATE TABLE \"_norn_source_pending\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"captured_at_ms\" INTEGER NOT NULL,\n  \"processed\" INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY (\"connection_id\", \"dataset\", \"page_digest\")\n)",
-    }));
+    add_source_cursor_schema(schema);
+    add_source_cursor_indexes(schema);
     let tables = image["tables"].as_object_mut().expect("tables");
-    tables.insert(
-        "_norn_source_lease".to_owned(),
-        serde_json::json!({
-            "columns": [
+    for (name, columns) in [
+        (
+            "_norn_source_lease",
+            &[
                 "rowid",
                 "connection_id",
                 "lease_id",
                 "generation",
                 "acquired_at_ms",
-                "expires_at_ms"
-            ],
-            "rows": [],
-        }),
-    );
-    tables.insert(
-        "_norn_source_cursor".to_owned(),
-        serde_json::json!({
-            "columns": [
+                "expires_at_ms",
+            ][..],
+        ),
+        (
+            "_norn_source_cursor",
+            &[
                 "rowid",
                 "connection_id",
                 "dataset",
@@ -538,15 +519,12 @@ fn add_source_cursor_tables(image: &mut Value) {
                 "page_digest",
                 "pages_json",
                 "records_json",
-                "updated_at_ms"
-            ],
-            "rows": [],
-        }),
-    );
-    tables.insert(
-        "_norn_source_pending".to_owned(),
-        serde_json::json!({
-            "columns": [
+                "updated_at_ms",
+            ][..],
+        ),
+        (
+            "_norn_source_pending",
+            &[
                 "rowid",
                 "connection_id",
                 "dataset",
@@ -554,11 +532,113 @@ fn add_source_cursor_tables(image: &mut Value) {
                 "pages_json",
                 "records_json",
                 "captured_at_ms",
-                "processed"
-            ],
-            "rows": [],
-        }),
-    );
+                "processed",
+            ][..],
+        ),
+        (
+            "_norn_source_binding",
+            &[
+                "rowid",
+                "connection_id",
+                "mapping_id",
+                "generation",
+                "updated_at_ms",
+            ][..],
+        ),
+        (
+            "_norn_source_evidence",
+            &[
+                "rowid",
+                "observation_id",
+                "connection_id",
+                "captured_commit_seq",
+            ][..],
+        ),
+    ] {
+        tables.insert(
+            name.to_owned(),
+            serde_json::json!({ "columns": columns, "rows": [] }),
+        );
+    }
+}
+
+fn add_source_cursor_schema(schema: &mut Vec<Value>) {
+    for (name, sql) in [
+        (
+            "_norn_source_lease",
+            "CREATE TABLE \"_norn_source_lease\" (\n  \"connection_id\" TEXT NOT NULL PRIMARY KEY,\n  \"lease_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"acquired_at_ms\" INTEGER NOT NULL,\n  \"expires_at_ms\" INTEGER NOT NULL\n)",
+        ),
+        (
+            "_norn_source_cursor",
+            "CREATE TABLE \"_norn_source_cursor\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"cursor_json\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL,\n  PRIMARY KEY (\"connection_id\", \"dataset\")\n)",
+        ),
+        (
+            "_norn_source_pending",
+            "CREATE TABLE \"_norn_source_pending\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"captured_at_ms\" INTEGER NOT NULL,\n  \"processed\" INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY (\"connection_id\", \"dataset\", \"page_digest\")\n)",
+        ),
+        (
+            "_norn_source_binding",
+            "CREATE TABLE \"_norn_source_binding\" (\n  \"connection_id\" TEXT NOT NULL PRIMARY KEY,\n  \"mapping_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL\n)",
+        ),
+        (
+            "_norn_source_evidence",
+            "CREATE TABLE \"_norn_source_evidence\" (\n  \"observation_id\" TEXT NOT NULL,\n  \"connection_id\" TEXT NOT NULL,\n  \"captured_commit_seq\" INTEGER NOT NULL,\n  PRIMARY KEY (\"observation_id\", \"connection_id\")\n)",
+        ),
+    ] {
+        schema.push(serde_json::json!({
+            "type": "table",
+            "name": name,
+            "table": name,
+            "sql": sql,
+        }));
+    }
+}
+
+fn add_source_cursor_indexes(schema: &mut Vec<Value>) {
+    for (table, name, sql) in [
+        (
+            "_norn_source_evidence",
+            "_norn_source_evidence/captured",
+            "CREATE INDEX \"_norn_source_evidence/captured\" ON \"_norn_source_evidence\" (\"captured_commit_seq\", \"observation_id\", \"connection_id\")",
+        ),
+        (
+            "_norn_inbox",
+            "_norn_inbox/conflict_accepted",
+            "CREATE INDEX \"_norn_inbox/conflict_accepted\" ON \"_norn_inbox\" (json_extract(\"observed\", '$.input.acceptedBundleId'), \"observation_id\") WHERE substr(\"observation_id\", 1, 17) = 'mapping-conflict:'",
+        ),
+        (
+            "_norn_fact_values",
+            "_norn_fact_values/root_first_version",
+            "CREATE INDEX \"_norn_fact_values/root_first_version\" ON \"_norn_fact_values\" (\"world\", \"root_type\", \"commit_seq\", \"id\") WHERE \"version\" = 1",
+        ),
+        (
+            "_norn_fact_values",
+            "_norn_fact_values/connection_commit",
+            "CREATE INDEX \"_norn_fact_values/connection_commit\" ON \"_norn_fact_values\" (\"world\", \"id\", \"commit_seq\", \"version\") WHERE \"root_type\" = 'source.Connection'",
+        ),
+        (
+            "_norn_fact_values",
+            "_norn_fact_values/connection_mapping",
+            "CREATE INDEX \"_norn_fact_values/connection_mapping\" ON \"_norn_fact_values\" (\"world\", \"id\", COALESCE(json_extract(\"snapshot\", '$.values.mapping_id'), ''), \"version\") WHERE \"root_type\" = 'source.Connection'",
+        ),
+        (
+            "_norn_fact_values",
+            "_norn_fact_values/connection_nonfailed",
+            "CREATE INDEX \"_norn_fact_values/connection_nonfailed\" ON \"_norn_fact_values\" (\"world\", \"id\", \"version\") WHERE \"root_type\" = 'source.Connection' AND COALESCE(json_extract(\"snapshot\", '$.values.status'), '') != 'failed'",
+        ),
+        (
+            "_norn_fact_values",
+            "_norn_fact_values/connection_watermark",
+            "CREATE INDEX \"_norn_fact_values/connection_watermark\" ON \"_norn_fact_values\" (\"world\", \"id\", COALESCE(json_extract(\"snapshot\", '$.values.watermark'), ''), \"version\") WHERE \"root_type\" = 'source.Connection' AND COALESCE(json_extract(\"snapshot\", '$.values.status'), '') != 'failed'",
+        ),
+    ] {
+        schema.push(serde_json::json!({
+            "type": "index",
+            "name": name,
+            "table": table,
+            "sql": sql,
+        }));
+    }
 }
 
 /// The marking history storage version (storage version 5, #1547) adds the

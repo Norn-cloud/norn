@@ -26,6 +26,7 @@ use norn_cell::reactive::DecodeBudget;
 use norn_cell::source_provenance::InstanceSourceProvenance;
 use norn_cell::system::GENESIS_HASH;
 use norn_cell::{CellError, CellStore, MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
+use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{DataQualityFinding, FactRef, MaskPolicy, RuntimeValue};
 use serde::Serialize;
 
@@ -547,37 +548,48 @@ fn withhold_cutoff_receipt(
     Ok(())
 }
 
-/// Project one evaluated [`QuestionAnswer`] under D53 bucket suppression,
-/// keyed handles, and cutoff-receipt keying.
+/// Project one [`QuestionAnswer`] under D53 and `Sources`-gated cursor keying.
 pub(crate) fn project_answer<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
-    (actor, key): (&str, &[u8]),
+    (actor, question, key, plan): (&str, &str, &[u8], &QuestionPlan),
     withheld: &BTreeSet<String>,
     mut answer: QuestionAnswer,
 ) -> Result<DisclosedAnswer, Refusal> {
     let world = withheld.is_empty() && world_values(host, runtime, store, actor);
-    let result = match &mut answer {
-        QuestionAnswer::Live(result) => result,
+    let (result, historical) = match &mut answer {
+        QuestionAnswer::Live(result) => (result, None),
         QuestionAnswer::Historical(historical) => {
             withhold_cutoff_receipt(historical, key, world)?;
-            &mut historical.result
+            let at = (
+                historical.result.known_as_of,
+                historical.result.context.now_ms,
+            );
+            (&mut historical.result, Some(at))
         }
     };
+    let sources_granted = super::source_grants::result_sources_granted(
+        host,
+        runtime,
+        store,
+        (actor, question, plan),
+        (result, historical),
+    )?;
     withhold_ledger_head(result, key, world);
     withhold_exclusions(result, key, world);
+    super::source_grants::withhold_source_cursors(result, key, sources_granted);
     withhold_values(result, withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(DisclosedAnswer { inner: answer })
 }
 
-/// Core 08 (#1944, DATA-VALUES-1, D53): project one simulated
-/// [`ForkQuestionResult`] under D53 bucket suppression, keyed revision/pin
-/// handles, and recomputed fork result pin so unredacted row hashes and raw
-/// ledger heads never leave the host while disclosed answers remain
-/// self-consistent for host world comparisons.
+/// Core 08 (#1944, DATA-VALUES-1, DATA-SOURCES-1, D53): project one simulated
+/// [`ForkQuestionResult`] under D53 bucket suppression, `Sources`-gated cursor
+/// keying, keyed revision/pin handles, and recomputed fork result pin so
+/// unredacted row hashes, raw cursors, and raw ledger heads never leave the
+/// host while disclosed answers remain self-consistent for host comparisons.
 pub(crate) fn project_fork_answer<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
-    (actor, key): (&str, &[u8]),
+    (actor, question, key, plan): (&str, &str, &[u8], &QuestionPlan),
     withheld: &BTreeSet<String>,
     mut fork: ForkQuestionResult,
 ) -> Result<DisclosedForkAnswer, Refusal> {
@@ -593,6 +605,13 @@ pub(crate) fn project_fork_answer<E: SqlEngine>(
         return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
     }
     let world = withheld.is_empty() && world_values(host, runtime, store, actor);
+    let sources_granted = super::source_grants::result_sources_granted(
+        host,
+        runtime,
+        store,
+        (actor, question, plan),
+        (&fork.result, None),
+    )?;
     let base_genesis = fork.pin.base.seq == 0 && fork.pin.base.hash == GENESIS_HASH;
     if !(world || base_genesis) {
         fork.pin.base.hash = keyed_revision_handle(key, &fork.pin.base.hash);
@@ -602,6 +621,7 @@ pub(crate) fn project_fork_answer<E: SqlEngine>(
     }
     withhold_ledger_head(&mut fork.result, key, world);
     withhold_exclusions(&mut fork.result, key, world);
+    super::source_grants::withhold_source_cursors(&mut fork.result, key, sources_granted);
     withhold_values(&mut fork.result, withheld, runtime.min_disclosed_bucket());
     fork.result.lineage_ref = keyed_lineage_handle(key, &fork.result.lineage_ref);
     fork.result_pin = fork_result_pin(
@@ -613,12 +633,10 @@ pub(crate) fn project_fork_answer<E: SqlEngine>(
     Ok(DisclosedForkAnswer { inner: fork })
 }
 
-/// Project one evaluated [`NumericTrace`] under PRIVACY-1 contribution
-/// redaction (`fact_digest`, `source`, projected `values`), keyed receipt and
-/// ledger handles, and D53 bucket suppression.
+/// Project one [`NumericTrace`] under PRIVACY-1 redaction and cursor keying.
 pub(crate) fn project_trace<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
-    (actor, world_name): (&str, &str),
+    (actor, question, world_name, plan): (&str, &str, &str, &QuestionPlan),
     (key, lineage): (&[u8], &str),
     withheld: &BTreeSet<String>,
     mut trace: NumericTrace,
@@ -630,8 +648,19 @@ pub(crate) fn project_trace<E: SqlEngine>(
         &mut trace.contributions,
     )?;
     let world = !any_marked && withheld.is_empty() && world_values(host, runtime, store, actor);
+    let head = store.read().head_commit_seq().map_err(Refusal::host)?;
+    let historical = (head != trace.result.known_as_of)
+        .then_some((trace.result.known_as_of, trace.result.context.now_ms));
+    let sources_granted = super::source_grants::result_sources_granted(
+        host,
+        runtime,
+        store,
+        (actor, question, plan),
+        (&trace.result, historical),
+    )?;
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
+    super::source_grants::withhold_source_cursors(&mut trace.result, key, sources_granted);
     if !world {
         for receipt in trace
             .contributions
