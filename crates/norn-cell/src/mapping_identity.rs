@@ -189,9 +189,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     pub(crate) fn identity_evidence(&self) -> Result<Vec<(u64, IdentityEvidence)>, CellError> {
         let rows = self.conn.query(
             &format!(
-                "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id LIKE 'mapping-identity:%' AND consumed_commit_seq IS NULL \
-                 ORDER BY position"
+                "SELECT position, observation_id, observed FROM \"{INBOX}\" \
+                 WHERE observation_id LIKE 'mapping-identity:%' \
+                   AND NOT EXISTS (SELECT 1 FROM \"{res}\" r WHERE r.\"dispute_id\" = \"{INBOX}\".\"observation_id\") \
+                 ORDER BY position",
+                res = crate::link_claim_frontier::DISPUTE_RESOLUTION,
             ),
             params![],
         )?;

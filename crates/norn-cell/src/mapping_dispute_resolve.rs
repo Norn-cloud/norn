@@ -173,10 +173,17 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         &self,
         pending_only: bool,
     ) -> Result<Vec<(u64, MappingConflict, Option<u64>)>, CellError> {
+        // Quarantine release requires a recorded governed resolution in
+        // `_norn_dispute_resolution` (pre-v13 generic consumption without a
+        // governed resolution keeps the dispute active).
         let filter = if pending_only {
-            " AND consumed_commit_seq IS NULL"
+            format!(
+                " AND NOT EXISTS (SELECT 1 FROM \"{}\" r WHERE r.\"dispute_id\" = \"{}\".\"observation_id\")",
+                crate::link_claim_frontier::DISPUTE_RESOLUTION,
+                crate::system::INBOX,
+            )
         } else {
-            ""
+            String::new()
         };
         let rows = self.conn.query(
             &format!(
@@ -338,25 +345,44 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         &self,
         conflict: &MappingConflict,
         accepted_id: &str,
+        accepted_position: u64,
         accepted: &MappingBundle,
     ) -> Result<(), CellError> {
         self.recheck_mapping_bundle(&conflict.incoming)?;
+        let keys = crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?;
         if conflict.accepted_bundle_id != accepted_id
-            || crate::mapping_identity::keys(&accepted.raw, &accepted.input)?
-                != crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
+            || crate::mapping_identity::keys(&accepted.raw, &accepted.input)? != keys
         {
             return Err(CellError::MappingBundleMismatch);
         }
-        // Only valid when no earlier capture for this event already exists in `_norn_inbox`.
-        if self.mapping_conflict(&conflict.incoming)?.is_some() {
+        // Verify `accepted` at `accepted_position` strictly precedes every
+        // existing `mapping-bundle:` for this source event in `_norn_inbox`,
+        // proving it is genuinely the first capture even if a later capture
+        // matching `conflict.incoming` is already in `_norn_inbox`.
+        let [connector, partition, source, source_id, event_id] = keys;
+        let min_existing: Option<i64> = self
+            .conn
+            .query_optional(
+                &format!(
+                    "SELECT MIN(\"position\") FROM \"{}\" \
+                     WHERE \"observation_id\" LIKE 'mapping-bundle:%' \
+                       AND json_extract(\"observed\", '$.input.input.connectorInstance') = ?1 \
+                       AND json_extract(\"observed\", '$.input.input.partition') = ?2 \
+                       AND json_extract(\"observed\", '$.input.raw.source') = ?3 \
+                       AND json_extract(\"observed\", '$.input.raw.source_id') = ?4 \
+                       AND json_extract(\"observed\", '$.input.raw.event_id') = ?5",
+                    crate::system::INBOX,
+                ),
+                crate::engine::params![connector, partition, source, source_id, event_id],
+                |row| row.get::<Option<i64>>(0),
+            )?
+            .flatten();
+        if let Some(pos) = min_existing
+            && crate::read::to_u64(pos, "inbox position")? <= accepted_position
+        {
             return Err(CellError::MappingBundleMismatch);
         }
-        if crate::mapping_conflict::build_mapping_conflict(
-            accepted_id.to_owned(),
-            accepted,
-            &conflict.incoming,
-        )?
-        .as_ref()
+        if build_mapping_conflict(accepted_id.to_owned(), accepted, &conflict.incoming)?.as_ref()
             != Some(conflict)
         {
             return Err(CellError::MappingBundleMismatch);
@@ -582,6 +608,83 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         }
         self.plan_observed_links(&scope, fresh_claims, commit, model, Some(dispute_id))
     }
+}
+
+/// Construct a [`MappingConflict`] between `accepted` and `incoming` when
+/// their immutable source event contents differ, or `Ok(None)` if identical.
+pub(crate) fn build_mapping_conflict(
+    accepted_id: String,
+    accepted: &MappingBundle,
+    incoming: &MappingBundle,
+) -> Result<Option<MappingConflict>, CellError> {
+    let old = crate::mapping_conflict::content(accepted)?;
+    let new = crate::mapping_conflict::content(incoming)?;
+    if old == new {
+        return Ok(None);
+    }
+    let evidence = norn_ir::canonical::domain_hash_hex(
+        b"norn.source.conflict.v1\0",
+        &(
+            &incoming.input.connector_instance,
+            &incoming.input.partition,
+            crate::mapping_conflict::field(incoming, "source")?,
+            crate::mapping_conflict::field(incoming, "source_id")?,
+            crate::mapping_conflict::field(incoming, "event_id")?,
+            old,
+            new,
+        ),
+    )?;
+    let subjects = accepted
+        .records
+        .iter()
+        .chain(&incoming.records)
+        .map(|r| norn_ir::DataQualitySubject::new(r.object_type.clone(), &r.key))
+        .chain(
+            accepted
+                .deletes
+                .iter()
+                .chain(&incoming.deletes)
+                .map(|d| norn_ir::DataQualitySubject::new(d.object_type.clone(), &d.key)),
+        )
+        .collect();
+    let observation_ids = vec![
+        accepted_id.clone(),
+        format!("mapping-bundle:{}", incoming.digest),
+    ];
+    let lineage = accepted
+        .records
+        .iter()
+        .chain(&incoming.records)
+        .map(|r| &r.provenance)
+        .chain(
+            accepted
+                .deletes
+                .iter()
+                .chain(&incoming.deletes)
+                .map(|d| &d.provenance),
+        )
+        .map(|p| norn_ir::DataQualityLineage::new(p.clone(), observation_ids.clone()))
+        .collect();
+    let finding = norn_ir::DataQualityFinding::v2(
+        norn_ir::DataQualityRuleRef::Builtin {
+            id: "core.boundary.import_finding".into(),
+            version: "1".into(),
+        },
+        subjects,
+        norn_ir::DataQualitySeverity::Error,
+        "conflicting immutable source event content",
+        norn_ir::DataQualityOutcome::NotSatisfied,
+        lineage,
+        incoming.input.recorded_at.clone(),
+        incoming.input.recorded_at.clone(),
+        norn_ir::DataQualityFindingStatus::Open,
+    )?
+    .with_evidence_digest(evidence)?;
+    Ok(Some(MappingConflict {
+        accepted_bundle_id: accepted_id,
+        incoming: incoming.clone(),
+        finding,
+    }))
 }
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {

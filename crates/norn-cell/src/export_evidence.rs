@@ -191,15 +191,35 @@ fn already_exported_pending<E: SqlEngine>(
 fn append_conflict_dependencies<E: SqlEngine>(
     conn: &E,
     prev_seq: i64,
+    current_seq: i64,
     pending: &mut Vec<crate::PendingObservation>,
     seen_pending: &mut BTreeSet<String>,
 ) -> Result<(), CellError> {
     let inbox = crate::system::INBOX;
-    let dep_ids: Vec<String> = pending
+    let mut dep_ids: Vec<String> = pending
         .iter()
         .filter(|row| row.observation_id.starts_with("mapping-conflict:"))
         .filter_map(|row| conflict_accepted_bundle_id(&row.observed).map(str::to_owned))
         .collect();
+    // Immediate `accept-first` consumes the conflict at `current_seq` while
+    // leaving a legacy pending first capture unconsumed; carry that dependency
+    // in `pending_observations` if it has not already been exported.
+    let consumed_conflicts = conn.query(
+        &format!(
+            "SELECT json_extract(\"observed\", '$.input.acceptedBundleId') \
+             FROM \"{inbox}\" \
+             WHERE substr(\"observation_id\", 1, 17) = 'mapping-conflict:' \
+               AND \"consumed_commit_seq\" = ?1"
+        ),
+        params![current_seq],
+    )?;
+    for raw in consumed_conflicts {
+        if let Some(id) = SqlRow(raw).get::<Option<String>>(0)?
+            && id.starts_with("mapping-bundle:")
+        {
+            dep_ids.push(id);
+        }
+    }
     for dep_id in dep_ids {
         if !seen_pending.insert(dep_id.clone())
             || already_exported_pending(conn, &dep_id, prev_seq)?
@@ -282,7 +302,7 @@ pub(crate) fn read_late_source_evidence<E: SqlEngine>(
             });
         }
     }
-    append_conflict_dependencies(conn, prev_seq, &mut pending, &mut seen_pending)?;
+    append_conflict_dependencies(conn, prev_seq, current_seq, &mut pending, &mut seen_pending)?;
     pending.sort_by(|a, b| {
         a.position
             .cmp(&b.position)
@@ -368,18 +388,46 @@ fn restore_pending_observations<'a, E: SqlEngine>(
         let has_prev_evidence = entries.iter().any(|entry| {
             entry.observation_id == row.observation_id && entry.captured_commit_seq == prev_seq
         });
+        let referenced_by_pending_conflict = pending.iter().any(|other| {
+            other.observation_id.starts_with("mapping-conflict:")
+                && other.position > row.position
+                && conflict_accepted_bundle_id(&other.observed) == Some(row.observation_id.as_str())
+                && entries.iter().any(|entry| {
+                    entry.observation_id == other.observation_id
+                        && entry.captured_commit_seq == prev_seq
+                })
+        });
+        let referenced_by_consumed_conflict = !has_prev_evidence
+            && !referenced_by_pending_conflict
+            && row.observation_id.starts_with("mapping-bundle:")
+            && reader
+                .conn
+                .query_optional(
+                    &format!(
+                        "SELECT 1 FROM \"{inbox}\" c \
+                         WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+                           AND c.\"consumed_commit_seq\" IS NULL \
+                           AND c.\"position\" > ?1 \
+                           AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2 \
+                           AND NOT EXISTS ( \
+                               SELECT 1 FROM \"{table}\" e \
+                               WHERE e.\"observation_id\" = c.\"observation_id\" \
+                                 AND e.\"captured_commit_seq\" >= 0 \
+                                 AND e.\"captured_commit_seq\" < ?3 \
+                           ) \
+                         LIMIT 1"
+                    ),
+                    params![
+                        to_i64(row.position, "position")?,
+                        row.observation_id.as_str(),
+                        prev_seq,
+                    ],
+                    |_row| Ok(()),
+                )?
+                .is_some();
         let is_legacy_conflict_dep = !has_prev_evidence
             && row.observation_id.starts_with("mapping-bundle:")
-            && pending.iter().any(|other| {
-                other.observation_id.starts_with("mapping-conflict:")
-                    && other.position > row.position
-                    && conflict_accepted_bundle_id(&other.observed)
-                        == Some(row.observation_id.as_str())
-                    && entries.iter().any(|entry| {
-                        entry.observation_id == other.observation_id
-                            && entry.captured_commit_seq == prev_seq
-                    })
-            })
+            && (referenced_by_pending_conflict || referenced_by_consumed_conflict)
             && reader
                 .conn
                 .query_optional(
@@ -701,7 +749,12 @@ fn valid_evidence_with_pending<E: SqlEngine>(
         return Ok(false);
     };
     Ok(reader
-        .recheck_mapping_conflict_against(&conflict, &pending.observation_id, &pending_bundle)
+        .recheck_mapping_conflict_against(
+            &conflict,
+            &pending.observation_id,
+            pending.position,
+            &pending_bundle,
+        )
         .is_ok())
 }
 

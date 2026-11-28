@@ -5,10 +5,7 @@ use crate::{
     mapping_bundle::MappingBundle,
     system::INBOX,
 };
-use norn_ir::{
-    DataQualityFinding, DataQualityFindingStatus, DataQualityLineage, DataQualityOutcome,
-    DataQualityRuleRef, DataQualitySeverity, DataQualitySubject, RuntimeValue,
-};
+use norn_ir::{DataQualityFinding, RuntimeValue};
 use norn_kernel::{ObservationId, Observed};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,7 +22,7 @@ pub struct MappingConflict {
     pub finding: DataQualityFinding,
 }
 
-fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError> {
+pub(crate) fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError> {
     bundle
         .raw
         .get(name)
@@ -34,7 +31,7 @@ fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError
         .ok_or(CellError::MappingBundleMismatch)
 }
 
-fn content(bundle: &MappingBundle) -> Result<String, CellError> {
+pub(crate) fn content(bundle: &MappingBundle) -> Result<String, CellError> {
     let kind = field(bundle, "kind")?;
     let source_version = field(bundle, "source_version")?;
     let payload_digest = field(bundle, "payload_digest")?;
@@ -120,7 +117,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(SourceEventCapture::Fresh);
         };
         let accepted_id = format!("mapping-bundle:{}", accepted.digest);
-        if let Some(conflict) = build_mapping_conflict(accepted_id, accepted, incoming)? {
+        if let Some(conflict) =
+            crate::mapping_dispute_resolve::build_mapping_conflict(accepted_id, accepted, incoming)?
+        {
             return Ok(SourceEventCapture::Conflict(Box::new(conflict)));
         }
         if incoming.reprocesses.is_none()
@@ -173,83 +172,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         Ok(())
     }
-}
-
-/// Construct a [`MappingConflict`] between `accepted` and `incoming` when
-/// their immutable source event contents differ, or `Ok(None)` if identical.
-pub(crate) fn build_mapping_conflict(
-    accepted_id: String,
-    accepted: &MappingBundle,
-    incoming: &MappingBundle,
-) -> Result<Option<MappingConflict>, CellError> {
-    let old = content(accepted)?;
-    let new = content(incoming)?;
-    if old == new {
-        return Ok(None);
-    }
-    let evidence = norn_ir::canonical::domain_hash_hex(
-        b"norn.source.conflict.v1\0",
-        &(
-            &incoming.input.connector_instance,
-            &incoming.input.partition,
-            field(incoming, "source")?,
-            field(incoming, "source_id")?,
-            field(incoming, "event_id")?,
-            old,
-            new,
-        ),
-    )?;
-    let subjects = accepted
-        .records
-        .iter()
-        .chain(&incoming.records)
-        .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
-        .chain(
-            accepted
-                .deletes
-                .iter()
-                .chain(&incoming.deletes)
-                .map(|d| DataQualitySubject::new(d.object_type.clone(), &d.key)),
-        )
-        .collect();
-    let observation_ids = vec![
-        accepted_id.clone(),
-        format!("mapping-bundle:{}", incoming.digest),
-    ];
-    let lineage = accepted
-        .records
-        .iter()
-        .chain(&incoming.records)
-        .map(|r| &r.provenance)
-        .chain(
-            accepted
-                .deletes
-                .iter()
-                .chain(&incoming.deletes)
-                .map(|d| &d.provenance),
-        )
-        .map(|p| DataQualityLineage::new(p.clone(), observation_ids.clone()))
-        .collect();
-    let finding = DataQualityFinding::v2(
-        DataQualityRuleRef::Builtin {
-            id: "core.boundary.import_finding".into(),
-            version: "1".into(),
-        },
-        subjects,
-        DataQualitySeverity::Error,
-        "conflicting immutable source event content",
-        DataQualityOutcome::NotSatisfied,
-        lineage,
-        incoming.input.recorded_at.clone(),
-        incoming.input.recorded_at.clone(),
-        DataQualityFindingStatus::Open,
-    )?
-    .with_evidence_digest(evidence)?;
-    Ok(Some(MappingConflict {
-        accepted_bundle_id: accepted_id,
-        incoming: incoming.clone(),
-        finding,
-    }))
 }
 
 /// FEED-CURSOR-1: comparison and evidence capture share the caller's write transaction.
@@ -617,9 +539,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             None => "\"consumed_commit_seq\" IS NULL".to_owned(),
         };
+        let res = crate::link_claim_frontier::DISPUTE_RESOLUTION;
+        let unresolved_dispute = match frontier_i64 {
+            Some(f) => format!(
+                "NOT EXISTS (SELECT 1 FROM \"{res}\" r WHERE r.\"dispute_id\" = \"{INBOX}\".\"observation_id\" AND r.\"commit_seq\" <= {f})"
+            ),
+            None => format!(
+                "NOT EXISTS (SELECT 1 FROM \"{res}\" r WHERE r.\"dispute_id\" = \"{INBOX}\".\"observation_id\")"
+            ),
+        };
         let disputes_sql = format!(
             "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
-             WHERE {unconsumed_pred} \
+             WHERE {unresolved_dispute} \
                AND (\"observation_id\" LIKE 'mapping-conflict:%' OR \"observation_id\" LIKE 'mapping-identity:%')"
         );
         for values in self.conn.query(&disputes_sql, params![])? {
