@@ -31,6 +31,8 @@ async function holdingsCell(page: Page) {
   return asked
 }
 
+const shots = process.env.SHOTS
+
 for (const scheme of ["light", "dark"] as const) {
   test(`metrics: Explore a metric runs at once and answers with a number and a chart (${scheme})`, async ({ page }, info) => {
     test.skip(Boolean(process.env.E2E_BASE), "this row uses the recorded alpha answers as a stand-in")
@@ -50,7 +52,7 @@ for (const scheme of ["light", "dark"] as const) {
     // The window is filled in: Run answers without a date to pick.
     await expect(page.locator('[data-field="window"] input').nth(0)).not.toHaveValue("")
     await expect(page.locator('[data-field="window"] input').nth(1)).not.toHaveValue("")
-    await page.screenshot({ path: info.outputPath(`metrics-builder-before-${scheme}.png`) })
+    if (shots) await page.screenshot({ path: info.outputPath(`metrics-builder-before-${scheme}.png`) })
     await page.getByRole("button", { name: "Run", exact: true }).click()
     await expect(page.getByText("Checked by the server")).toBeVisible()
     // One unit group (grams on hand): its total, then its answer per week with the chart.
@@ -60,7 +62,7 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page.locator("main")).not.toContainText(/No data yet|Nothing is run yet|Not run/)
     expect(asked.length).toBe(2)
     expect(asked[1]?.filter?.length).toBe(3)
-    await page.screenshot({ path: info.outputPath(`metrics-builder-after-${scheme}.png`), fullPage: true })
+    if (shots) await page.screenshot({ path: info.outputPath(`metrics-builder-after-${scheme}.png`), fullPage: true })
   })
 }
 
