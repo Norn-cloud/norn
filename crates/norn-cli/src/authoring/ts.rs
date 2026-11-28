@@ -20,9 +20,10 @@ use super::AuthoringFailure;
 use super::atomic_io::write_file_atomic;
 use super::fs_io::{
     BoundedJsonArray, InvocationBudget, LoadedFile, SourceLang, classify_source_file,
-    discover_tool_root, display_posix_path,
+    discover_tool_root, display_posix_path, is_json_file,
 };
 use super::trusted_dir::{TrustedDir, open_regular_file_pinned};
+use super::ts_imports::extract_relative_specifiers;
 
 const MAX_LOCAL_IMPORTS: usize = 128;
 const MAX_LOCAL_IMPORT_DEPTH: usize = 16;
@@ -44,10 +45,12 @@ pub(crate) enum TsCompileTarget<'a> {
         display_path: &'a Path,
         content: String,
     },
-    /// Directory already opened as a trusted fd with pre-loaded top-level `.ts`/`.tsx` files.
+    /// Directory already opened as a trusted fd with pre-loaded top-level `.ts`/`.tsx`
+    /// root files and pre-loaded top-level `.json` support files.
     Directory {
         root_dir: &'a TrustedDir,
         root_files: Vec<LoadedFile>,
+        support_files: &'a [LoadedFile],
     },
 }
 
@@ -92,34 +95,8 @@ fn mount_pinned_packages(
     Ok(Some(PINNED_EFFECT_DIST_PREFIX))
 }
 
-fn extract_relative_specifiers(source: &str) -> Vec<String> {
-    let mut specs = Vec::new();
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if !(trimmed.starts_with("import ")
-            || trimmed.starts_with("export ")
-            || trimmed.starts_with('}'))
-        {
-            continue;
-        }
-        if let Some((_, after_from)) = trimmed.split_once(" from ")
-            && let Some(spec) = first_quoted_literal(after_from.trim())
-            && (spec.starts_with("./") || spec.starts_with("../"))
-        {
-            specs.push(spec);
-        }
-    }
-    specs
-}
-
-fn first_quoted_literal(text: &str) -> Option<String> {
-    let quote = text.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let rest = text.get(1..)?;
-    let (inner, _) = rest.split_once(quote)?;
-    Some(inner.to_owned())
+fn is_ts_support_file(_name: &str, path: &Path) -> bool {
+    classify_source_file(path) == Some(SourceLang::TypeScript) || is_json_file(path)
 }
 
 fn normalize_lexical_relative(path: &Path) -> PathBuf {
@@ -227,16 +204,25 @@ fn virtual_path_from_rel(rel: &Path, up_levels: usize) -> Result<String, Authori
     Ok(format!("/workspace/{}", parts.join("/")))
 }
 
-fn collect_ts_import_closure(
-    base_dir: &TrustedDir,
+struct TsClosureInputs<'a> {
     root_files: Vec<LoadedFile>,
-    package_hint_path: &Path,
-    budget: &mut InvocationBudget,
-) -> Result<(Vec<PathBuf>, Vec<LoadedFile>), AuthoringFailure> {
+    support_files: &'a [LoadedFile],
+    subdir_files: Vec<LoadedFile>,
+    package_hint_path: &'a Path,
+}
+
+struct SeededClosure {
+    visited: BTreeSet<PathBuf>,
+    root_rels: Vec<PathBuf>,
+    queue: VecDeque<(LoadedFile, usize)>,
+    loaded: Vec<LoadedFile>,
+}
+
+fn seed_closure_inputs(inputs: TsClosureInputs<'_>) -> SeededClosure {
     let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
     let mut queue: VecDeque<(LoadedFile, usize)> = VecDeque::new();
-    let mut root_rels: Vec<PathBuf> = Vec::with_capacity(root_files.len());
-    for file in root_files {
+    let mut root_rels: Vec<PathBuf> = Vec::with_capacity(inputs.root_files.len());
+    for file in inputs.root_files {
         let norm_rel = normalize_lexical_relative(&file.rel_path);
         if visited.insert(norm_rel.clone()) {
             root_rels.push(norm_rel.clone());
@@ -251,10 +237,59 @@ fn collect_ts_import_closure(
         }
     }
 
-    let mut loaded: Vec<LoadedFile> = Vec::with_capacity(queue.len());
+    let capacity = queue
+        .len()
+        .saturating_add(inputs.support_files.len())
+        .saturating_add(inputs.subdir_files.len());
+    let mut loaded: Vec<LoadedFile> = Vec::with_capacity(capacity);
+    for file in inputs.support_files {
+        let norm_rel = normalize_lexical_relative(&file.rel_path);
+        if visited.insert(norm_rel.clone()) {
+            loaded.push(LoadedFile {
+                display_path: file.display_path.clone(),
+                rel_path: norm_rel,
+                content: file.content.clone(),
+            });
+        }
+    }
+    for file in inputs.subdir_files {
+        let norm_rel = normalize_lexical_relative(&file.rel_path);
+        if visited.insert(norm_rel.clone()) {
+            let normalized = LoadedFile {
+                display_path: file.display_path,
+                rel_path: norm_rel,
+                content: file.content,
+            };
+            if is_json_file(&normalized.display_path) {
+                loaded.push(normalized);
+            } else {
+                queue.push_back((normalized, 0));
+            }
+        }
+    }
+    SeededClosure {
+        visited,
+        root_rels,
+        queue,
+        loaded,
+    }
+}
+
+fn collect_ts_import_closure(
+    base_dir: &TrustedDir,
+    inputs: TsClosureInputs<'_>,
+    budget: &mut InvocationBudget,
+) -> Result<(Vec<PathBuf>, Vec<LoadedFile>), AuthoringFailure> {
+    let package_hint_path = inputs.package_hint_path;
+    let SeededClosure {
+        mut visited,
+        root_rels,
+        mut queue,
+        mut loaded,
+    } = seed_closure_inputs(inputs);
     let mut imported_count: usize = 0;
     while let Some((current, depth)) = queue.pop_front() {
-        if depth < MAX_LOCAL_IMPORT_DEPTH {
+        if depth < MAX_LOCAL_IMPORT_DEPTH && !is_json_file(&current.display_path) {
             for spec in extract_relative_specifiers(&current.content) {
                 for candidate in relative_candidates(&current.rel_path, &spec) {
                     if visited.contains(&candidate) {
@@ -294,18 +329,20 @@ fn collect_ts_import_closure(
 
 fn mount_ts_closure(
     base_dir: &TrustedDir,
-    root_files: Vec<LoadedFile>,
-    package_hint_path: &Path,
+    inputs: TsClosureInputs<'_>,
     explicit_tool_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<MountedTsContext, AuthoringFailure> {
     let profile = Profile::load().map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     let mut vfs = BoundedVfs::default();
-    let effect_dist_prefix =
-        mount_pinned_packages(&mut vfs, &profile, package_hint_path, explicit_tool_root)?;
+    let effect_dist_prefix = mount_pinned_packages(
+        &mut vfs,
+        &profile,
+        inputs.package_hint_path,
+        explicit_tool_root,
+    )?;
 
-    let (root_rels, loaded) =
-        collect_ts_import_closure(base_dir, root_files, package_hint_path, budget)?;
+    let (root_rels, loaded) = collect_ts_import_closure(base_dir, inputs, budget)?;
     let up_levels = loaded
         .iter()
         .map(|file| count_leading_parent_dirs(&file.rel_path))
@@ -355,13 +392,13 @@ fn mount_single_file_closure(
         rel_path: PathBuf::from(file_name),
         content: initial_content,
     };
-    mount_ts_closure(
-        parent_dir,
-        vec![root_file],
-        display_path,
-        explicit_tool_root,
-        budget,
-    )
+    let inputs = TsClosureInputs {
+        root_files: vec![root_file],
+        support_files: &[],
+        subdir_files: Vec::new(),
+        package_hint_path: display_path,
+    };
+    mount_ts_closure(parent_dir, inputs, explicit_tool_root, budget)
 }
 
 fn open_single_ts_file_pinned(
@@ -576,13 +613,19 @@ pub(crate) fn compile_ts_targets_into(
         TsCompileTarget::Directory {
             root_dir,
             root_files,
-        } => mount_ts_closure(
-            root_dir,
-            root_files,
-            root_dir.display_path(),
-            opts.tool_root,
-            budget,
-        )?,
+            support_files,
+        } => {
+            let subdir_files = root_dir
+                .read_subdir_files(is_ts_support_file, budget)
+                .map_err(AuthoringFailure::Io)?;
+            let inputs = TsClosureInputs {
+                root_files,
+                support_files,
+                subdir_files,
+                package_hint_path: root_dir.display_path(),
+            };
+            mount_ts_closure(root_dir, inputs, opts.tool_root, budget)?
+        }
     };
     let mut sink = ArtifactSink {
         seen_ids,

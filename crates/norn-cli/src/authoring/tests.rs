@@ -603,3 +603,82 @@ fn compile_and_fmt_refuse_symlink_inputs() -> TestResult {
     assert!(fmt_out.stderr.contains("symlink"));
     Ok(())
 }
+
+#[test]
+fn ts_multiline_imports_compile_in_directory_and_single_file_modes() -> TestResult {
+    let ts_root = tools_norn_ts_root();
+    let scratch = TempWorkspace::new("ts-multiline-imports")?;
+    scratch.write(
+        "support/nested.ts",
+        r#"import { Norn } from "@norn/authoring"
+
+export const nestedHelper = Norn.fn<{
+  readonly invoiceId: string
+}, { readonly receiptId: string }>({
+  id: "billing.multiline_nested",
+  version: "1.0.0",
+})
+"#,
+    )?;
+    scratch.write(
+        "support/helper.ts",
+        r#"import { Norn } from "@norn/authoring"
+export {
+  nestedHelper,
+}
+  from "./nested"
+
+export const helper = Norn.fn<{
+  readonly invoiceId: string
+}, { readonly id: string }>({
+  id: "billing.multiline_helper",
+  version: "1.0.0",
+})
+"#,
+    )?;
+    let flow_path = scratch.write(
+        "flow.ts",
+        r#"import { Effect } from "effect"
+import { Norn } from "@norn/authoring"
+// import { missingLine } from "./does-not-exist"
+/*
+  import { missingBlock }
+    from "./also-missing"
+*/
+import {
+  helper,
+  nestedHelper,
+}
+  from "./support/helper"
+
+export default Norn.flow(
+  { id: "billing.multiline_flow", version: "1.0.0" },
+  Effect.gen(function* () {
+    const first = yield* Norn.perform("first", helper, { invoiceId: "inv-1" })
+    const second = yield* Norn.perform("second", nestedHelper, { invoiceId: first.id })
+    return { invoice: first.id, receipt: second.receiptId }
+  }),
+)
+"#,
+    )?;
+
+    for target in [scratch.path().to_path_buf(), flow_path] {
+        let compiled = execute_compile(&CompileArgs {
+            path: target,
+            org: "local".to_owned(),
+            env: "dev".to_owned(),
+            forbid_unsafe_zen: false,
+            out: None,
+            tool_root: Some(ts_root.clone()),
+        });
+        assert_eq!(
+            compiled.exit_code, 0,
+            "multiline TS import compile failed: stdout={} stderr={}",
+            compiled.stdout, compiled.stderr
+        );
+        let parsed: Value = serde_json::from_str(&compiled.stdout)?;
+        let items = parsed.as_array().ok_or("expected JSON artifact array")?;
+        assert_eq!(items.len(), 1);
+    }
+    Ok(())
+}

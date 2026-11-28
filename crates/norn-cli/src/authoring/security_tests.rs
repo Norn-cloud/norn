@@ -715,6 +715,40 @@ export default Norn.flow(
 }
 
 #[test]
+fn ts_directory_compile_reuses_preloaded_top_level_json_without_double_read() -> TestResult {
+    let ts_root = tools_norn_ts_root();
+    let scratch = SecWorkspace::new("ts-top-json-single-read")?;
+    let config_json = "{\"version\":\"1.0.0\"}\n";
+    let importer_src = r#"import { Norn } from "@norn/authoring"
+import config from "./config.json"
+
+export const ping = Norn.fn<{ readonly v: string }, { readonly ok: boolean }>({
+  id: "demo.ping",
+  version: config.version,
+})
+"#;
+    scratch.write("config.json", config_json)?;
+    scratch.write("importer.ts", importer_src)?;
+
+    let expected_bytes = u64::try_from(config_json.len().saturating_add(importer_src.len()))?;
+    let mut budget = InvocationBudget::with_limits(100, 2, 65_536, expected_bytes, 65_536);
+    let outcome = compile_path_to_json(
+        scratch.path(),
+        "local",
+        "dev",
+        false,
+        Some(&ts_root),
+        &mut budget,
+    );
+    assert!(
+        matches!(outcome, Err(AuthoringFailure::Diagnostics(_))),
+        "expected profile diagnostics without IO/budget double-read for top-level .json import"
+    );
+    assert_eq!(budget.bytes_read(), expected_bytes);
+    Ok(())
+}
+
+#[test]
 fn bounded_json_array_emits_canonical_json_with_sorted_keys_and_zero_norm() -> TestResult {
     let mut budget = InvocationBudget::new();
     let mut array = BoundedJsonArray::new();

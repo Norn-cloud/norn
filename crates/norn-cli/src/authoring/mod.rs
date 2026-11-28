@@ -13,6 +13,7 @@ mod security_tests;
 mod tests;
 mod trusted_dir;
 mod ts;
+mod ts_imports;
 mod zero_ci;
 
 use std::collections::BTreeSet;
@@ -355,6 +356,7 @@ fn compile_source_dir_entries(
             TsCompileTarget::Directory {
                 root_dir: source_dir,
                 root_files: typescript_files,
+                support_files: &json_files,
             },
             &ts_opts,
             state.seen_ids,

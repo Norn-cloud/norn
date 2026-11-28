@@ -35,6 +35,11 @@ pub(crate) struct PinnedLoadedFile {
     pub(crate) content: String,
 }
 
+enum TopEntry {
+    File(PathBuf, std::fs::File),
+    Dir(TrustedDir),
+}
+
 /// Single-open FD-pinned CLI source target (either a directory or a pinned regular file).
 pub(crate) enum PinnedSourceTarget {
     /// Verified directory descriptor.
@@ -319,13 +324,68 @@ impl TrustedDir {
         &self,
         budget: &mut InvocationBudget,
     ) -> Result<Vec<LoadedFile>, String> {
+        let mut files = Vec::new();
+        self.visit_top_entries(budget, &mut |name, entry, entry_budget| match entry {
+            TopEntry::File(child, opened) => {
+                entry_budget.charge_accepted_file(&child)?;
+                let content = read_opened_file_budgeted(opened, &child, entry_budget)?;
+                files.push(LoadedFile {
+                    display_path: child,
+                    rel_path: PathBuf::from(name),
+                    content,
+                });
+                Ok(())
+            }
+            TopEntry::Dir(_) => Ok(()),
+        })?;
+        Ok(files)
+    }
+
+    /// Recursively reads accepted files from subdirectories below `self` without re-reading
+    /// any top-level regular files directly inside `self`.
+    pub(crate) fn read_subdir_files(
+        &self,
+        accept: fn(&str, &Path) -> bool,
+        budget: &mut InvocationBudget,
+    ) -> Result<Vec<LoadedFile>, String> {
+        let mut files = Vec::new();
+        self.visit_top_entries(budget, &mut |name, entry, entry_budget| match entry {
+            TopEntry::File(_, _) => Ok(()),
+            TopEntry::Dir(child_dir) => {
+                if should_skip_dir(name) {
+                    return Ok(());
+                }
+                let child_arc = Arc::new(child_dir);
+                walk_dir_shared(
+                    &child_arc,
+                    Path::new(name),
+                    1,
+                    accept,
+                    entry_budget,
+                    &mut |_parent, _fname, display_path, rel_path, content| {
+                        files.push(LoadedFile {
+                            display_path,
+                            rel_path,
+                            content,
+                        });
+                    },
+                )
+            }
+        })?;
+        Ok(files)
+    }
+
+    fn visit_top_entries(
+        &self,
+        budget: &mut InvocationBudget,
+        on_entry: &mut dyn FnMut(&str, TopEntry, &mut InvocationBudget) -> Result<(), String>,
+    ) -> Result<(), String> {
         #[cfg(unix)]
         {
             use std::os::fd::AsFd as _;
-            let names =
-                read_sorted_dir_names_budgeted(self.fd.as_fd(), &self.display_path, budget)?;
-            let mut files = Vec::new();
-            for entry in names {
+            for entry in
+                read_sorted_dir_names_budgeted(self.fd.as_fd(), &self.display_path, budget)?
+            {
                 let name = entry.to_str().map_err(|err| {
                     format!(
                         "non-UTF-8 name under {}: {err}",
@@ -339,23 +399,47 @@ impl TrustedDir {
                     .map_err(|err| format!("{}: {err}", child.display()))?
                     .file_type();
                 if kind.is_file() {
-                    budget.charge_accepted_file(&child)?;
-                    let content = read_opened_file_budgeted(opened, &child, budget)?;
-                    files.push(LoadedFile {
-                        display_path: child,
-                        rel_path: PathBuf::from(name),
-                        content,
-                    });
-                } else if !kind.is_dir() {
+                    on_entry(name, TopEntry::File(child, opened), budget)?;
+                } else if kind.is_dir() {
+                    let child_dir = Self::from_fd(std::os::fd::OwnedFd::from(opened), child);
+                    on_entry(name, TopEntry::Dir(child_dir), budget)?;
+                } else {
                     return Err(format!("{}: not a regular file", child.display()));
                 }
             }
-            Ok(files)
         }
         #[cfg(not(unix))]
         {
-            read_top_level_files_non_unix(&self.display_path, budget)
+            for entry in read_sorted_entries_non_unix(&self.display_path, budget)? {
+                let raw_name = entry.file_name();
+                let Some(name) = raw_name.to_str() else {
+                    return Err(format!(
+                        "non-UTF-8 name under {}",
+                        self.display_path.display()
+                    ));
+                };
+                let child = entry.path();
+                let kind = std::fs::symlink_metadata(&child)
+                    .map_err(|err| format!("{}: {err}", child.display()))?
+                    .file_type();
+                if kind.is_symlink() {
+                    return Err(format!("{}: symlinks are refused", child.display()));
+                }
+                if kind.is_file() {
+                    let opened = std::fs::File::open(&child)
+                        .map_err(|err| format!("{}: {err}", child.display()))?;
+                    on_entry(name, TopEntry::File(child, opened), budget)?;
+                } else if kind.is_dir() {
+                    let child_dir = Self {
+                        display_path: child,
+                    };
+                    on_entry(name, TopEntry::Dir(child_dir), budget)?;
+                } else {
+                    return Err(format!("{}: not a regular file", child.display()));
+                }
+            }
         }
+        Ok(())
     }
 
     /// Recursively walks `self`, retaining the exact opened parent [`TrustedDir`] handle
@@ -368,6 +452,8 @@ impl TrustedDir {
         let mut files = Vec::new();
         walk_dir_shared(
             self,
+            Path::new(""),
+            0,
             accept,
             budget,
             &mut |parent, name, display_path, _rel_path, content| {
@@ -385,17 +471,19 @@ impl TrustedDir {
 
 fn walk_dir_shared(
     root: &Arc<TrustedDir>,
+    rel_prefix: &Path,
+    depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
     on_file: &mut dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String),
 ) -> Result<(), String> {
     #[cfg(unix)]
     {
-        walk_unix_dir(root, Path::new(""), 0, accept, budget, on_file)
+        walk_unix_dir(root, rel_prefix, depth, accept, budget, on_file)
     }
     #[cfg(not(unix))]
     {
-        walk_non_unix_dir(root, Path::new(""), 0, accept, budget, on_file)
+        walk_non_unix_dir(root, rel_prefix, depth, accept, budget, on_file)
     }
 }
 
@@ -521,10 +609,10 @@ fn walk_unix_dir(
 }
 
 #[cfg(not(unix))]
-fn read_top_level_files_non_unix(
+fn read_sorted_entries_non_unix(
     dir: &Path,
     budget: &mut InvocationBudget,
-) -> Result<Vec<LoadedFile>, String> {
+) -> Result<Vec<std::fs::DirEntry>, String> {
     let mut entries = Vec::new();
     for item in std::fs::read_dir(dir).map_err(|err| format!("{}: {err}", dir.display()))? {
         let entry = item.map_err(|err| format!("{}: {err}", dir.display()))?;
@@ -532,34 +620,7 @@ fn read_top_level_files_non_unix(
         entries.push(entry);
     }
     entries.sort_by_key(std::fs::DirEntry::file_name);
-    let mut files = Vec::new();
-    for entry in entries {
-        let raw_name = entry.file_name();
-        let Some(name) = raw_name.to_str() else {
-            return Err(format!("non-UTF-8 name under {}", dir.display()));
-        };
-        let child = entry.path();
-        let kind = std::fs::symlink_metadata(&child)
-            .map_err(|err| format!("{}: {err}", child.display()))?
-            .file_type();
-        if kind.is_symlink() {
-            return Err(format!("{}: symlinks are refused", child.display()));
-        }
-        if kind.is_file() {
-            budget.charge_accepted_file(&child)?;
-            let opened =
-                std::fs::File::open(&child).map_err(|err| format!("{}: {err}", child.display()))?;
-            let content = read_opened_file_budgeted(opened, &child, budget)?;
-            files.push(LoadedFile {
-                display_path: child,
-                rel_path: PathBuf::from(name),
-                content,
-            });
-        } else if !kind.is_dir() {
-            return Err(format!("{}: not a regular file", child.display()));
-        }
-    }
-    Ok(files)
+    Ok(entries)
 }
 
 #[cfg(not(unix))]
@@ -578,15 +639,7 @@ fn walk_non_unix_dir(
             dir_path.display()
         ));
     }
-    let mut entries = Vec::new();
-    for item in
-        std::fs::read_dir(dir_path).map_err(|err| format!("{}: {err}", dir_path.display()))?
-    {
-        let entry = item.map_err(|err| format!("{}: {err}", dir_path.display()))?;
-        budget.charge_scanned_entry(dir_path)?;
-        entries.push(entry);
-    }
-    entries.sort_by_key(std::fs::DirEntry::file_name);
+    let entries = read_sorted_entries_non_unix(dir_path, budget)?;
     for entry in entries {
         let raw_name = entry.file_name();
         let Some(name) = raw_name.to_str() else {
