@@ -3315,25 +3315,7 @@ fn delete_before_create_blocks_stale_upsert_and_allows_newer_upsert() {
     );
     assert!(refers_targets(&cell, "demo/party/a").is_empty());
 
-    // 3. Even if v3 delete's inbox row is hidden, a stale v1 upsert still cannot create A.
-    rewrite_inbox_observed(
-        &path,
-        &obs_del3,
-        "\"source_id\":\"P-A\"",
-        "\"source_id\":\"P-HIDE\"",
-    );
-    let a_v1 = party_ref_row("P-A", "demo/party/a", "A stale v1", Some("demo/party/b"));
-    land_party(&mut cell, &a_v1, "eu1", "1", "p1");
-    assert!(
-        cell.store()
-            .read()
-            .object(MAIN_WORLD, "canon.Party", "demo/party/a")
-            .expect("read a after hidden-delete stale v1")
-            .is_none()
-    );
-    assert!(refers_targets(&cell, "demo/party/a").is_empty());
-
-    // 4. A strictly newer v4 upsert creates A cleanly with only its v4 link A -> C.
+    // 3. A strictly newer v4 upsert creates A cleanly with only its v4 link A -> C.
     let a_v4 = party_ref_row("P-A", "demo/party/a", "A fresh v4", Some("demo/party/c"));
     land_party(&mut cell, &a_v4, "eu4", "4", "p1");
     let party_a = cell
@@ -3353,6 +3335,27 @@ fn delete_before_create_blocks_stale_upsert_and_allows_newer_upsert() {
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/c".to_owned()])
     );
+
+    // 4. Tampering v3 delete's inbox row to hide it fails closed with LedgerCorrupt
+    //    on an open cell (and on reopen) rather than letting a stale v1 upsert land.
+    rewrite_inbox_observed(
+        &path,
+        &obs_del3,
+        "\"source_id\":\"P-A\"",
+        "\"source_id\":\"P-HIDE\"",
+    );
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A stale v1", Some("demo/party/b"));
+    let (v1_id, _) = inject_party(&mut cell, &a_v1, "eu1", "1", "upsert");
+    assert!(matches!(
+        cell.process_mapping_bundle(&v1_id),
+        Err(CellError::LedgerCorrupt { .. })
+    ));
+    let model = cell.store().model().clone();
+    drop(cell);
+    assert!(matches!(
+        CellStore::open(&path, model, StoreOptions::default()),
+        Err(CellError::LedgerCorrupt { .. })
+    ));
 }
 
 /// #1549 / #1028: Resolving a conflicting stale v2 delete (reusing v1's event ID)
@@ -3463,4 +3466,58 @@ fn stale_upsert_cannot_recreate_physically_removed_key_after_newer_delete() {
             .expect("read after stale v2")
             .is_none()
     );
+}
+
+/// #1549: Rejecting a disputed newer claim (`v2: A -> C`) must remove `A -> C`
+/// and restore its undisputed superseded predecessor (`v1: A -> B`).
+#[test]
+fn dispute_resolve_reject_restores_undisputed_predecessor_link() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("reject_restores_predecessor.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/c"));
+    let a_v2_conflict = party_ref_row("P-A", "demo/party/a", "A v2 BAD", Some("demo/party/c"));
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    land_party(&mut cell, &c, "ec", "1", "p1");
+    land_party(&mut cell, &a_v1, "e1", "1", "p1");
+    land_party(&mut cell, &a_v2, "e2", "2", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/c".to_owned()])
+    );
+
+    let conflict_v2 = inject_conflict(&mut cell, &a_v2_conflict, "e2", "2", "p1");
+    resolve_dispute(
+        &mut cell,
+        &conflict_v2,
+        DisputeDecision::Reject,
+        "ops:elena",
+        "reject bad v2 retarget",
+    );
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()]),
+        "rejecting v2 must remove A -> C and restore undisputed predecessor A -> B"
+    );
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3", Some("demo/party/c"));
+    land_party(&mut cell, &a_v3, "e3", "3", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/c".to_owned()]),
+        "subsequent v3 must cleanly supersede the reject-carry claim"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after predecessor restore");
+    let (records, head) = export_records_and_head(&cell);
+    let rebuilt = rebuild_in_memory(&records, &head);
+    rebuilt
+        .read()
+        .verify_frontier_equivalence()
+        .expect("rebuilt frontier equivalence after predecessor restore");
 }

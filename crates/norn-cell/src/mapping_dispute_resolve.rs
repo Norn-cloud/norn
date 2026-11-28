@@ -17,7 +17,7 @@
 //! redelivering the same conflicting event does not reopen the dispute while a
 //! new distinct conflicting payload opens a fresh dispute.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::mapping::ObservedLinkClaim;
 use norn_ir::{RuntimeObject, RuntimeValue};
@@ -558,9 +558,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 model,
                 &mut scope,
             )?,
-            DisputeDecision::Reject => {
-                self.reject_fresh_claims(dispute_id, &event_keys, &active_event_claims, &mut scope)?
-            }
+            DisputeDecision::Reject => self.reject_fresh_claims(
+                dispute_id,
+                &event_keys,
+                &active_event_claims,
+                model,
+                &mut scope,
+            )?,
         };
         self.plan_observed_links(&scope, fresh_claims, commit, model, Some(dispute_id))
     }
@@ -669,13 +673,12 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         dispute_id: &str,
         event_keys: &[String; 5],
         active_event_claims: &[crate::link_claim_frontier::FrontierRow],
+        model: CommitModel<'_, '_>,
         scope: &mut ClaimScope,
     ) -> Result<Vec<(ObservedLinkClaim, [String; 5])>, CellError> {
         let mut fresh_claims = Vec::new();
-        let mut by_contrib: std::collections::BTreeMap<
-            String,
-            Vec<&crate::link_claim_frontier::FrontierRow>,
-        > = std::collections::BTreeMap::new();
+        let mut by_contrib: BTreeMap<String, Vec<&crate::link_claim_frontier::FrontierRow>> =
+            BTreeMap::new();
         for row in active_event_claims {
             by_contrib
                 .entry(row.contribution_id.clone())
@@ -689,20 +692,27 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let mut supersedes: BTreeSet<String> =
                 disputed_rows.iter().map(|r| r.claim_id.clone()).collect();
             let all_active = self.active_claims_for_contribution(&contribution_id)?;
-            let mut real_surviving = Vec::new();
-            let mut reject_carry_ids = Vec::new();
-            for r in all_active {
-                if supersedes.contains(&r.claim_id) {
-                    continue;
-                }
-                if self.is_reject_carry_claim(&r)? {
-                    reject_carry_ids.push(r.claim_id);
-                } else {
-                    real_surviving.push(r);
+            for r in &all_active {
+                if !supersedes.contains(&r.claim_id) && self.is_reject_carry_claim(r)? {
+                    supersedes.insert(r.claim_id.clone());
                 }
             }
-            supersedes.extend(reject_carry_ids);
-            let surviving_targets: BTreeSet<_> = real_surviving
+            let surviving = self.surviving_predecessors_after_reject(
+                &contribution_id,
+                all_active,
+                &supersedes,
+            )?;
+            let mut any_disputed = false;
+            for r in &surviving {
+                if self
+                    .event_dispute_for_keys(&r.event_keys, Some(dispute_id))?
+                    .is_some()
+                {
+                    any_disputed = true;
+                    break;
+                }
+            }
+            let surviving_targets: BTreeSet<_> = surviving
                 .iter()
                 .map(|r| {
                     r.claim
@@ -711,23 +721,31 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         .map(|t| (t.object_type.clone(), t.key.clone()))
                 })
                 .collect();
-            let replacement_target = if surviving_targets.len() == 1 {
-                real_surviving.first().and_then(|r| r.claim.target.clone())
+            let replacement_target = if !any_disputed && surviving_targets.len() == 1 {
+                surviving.first().and_then(|r| r.claim.target.clone())
             } else {
                 None
             };
-            let withdrawal = ObservedLinkClaim {
-                observation_id: dispute_id.to_owned(),
-                source_scope: first.claim.source_scope.clone(),
-                source_type: first.claim.source_type.clone(),
-                source_key: first.claim.source_key.clone(),
-                role: first.claim.role.clone(),
-                target: replacement_target,
-                provenance: first.claim.provenance.clone(),
-                supersedes,
-            };
-            scope.sources.insert(withdrawal.source_key.clone());
-            fresh_claims.push((withdrawal, event_keys.clone()));
+            let exclusive = model
+                .link(&first.claim.source_type, first.claim.role.as_str())
+                .is_none_or(|link| link.cardinality.from == norn_ir::Multiplicity::One);
+            if let Some(target) = replacement_target.as_ref().filter(|_| exclusive) {
+                scope.targets.insert(target.key.clone());
+            }
+            scope.sources.insert(first.claim.source_key.clone());
+            fresh_claims.push((
+                ObservedLinkClaim {
+                    observation_id: dispute_id.to_owned(),
+                    source_scope: first.claim.source_scope.clone(),
+                    source_type: first.claim.source_type.clone(),
+                    source_key: first.claim.source_key.clone(),
+                    role: first.claim.role.clone(),
+                    target: replacement_target,
+                    provenance: first.claim.provenance.clone(),
+                    supersedes,
+                },
+                event_keys.clone(),
+            ));
         }
         Ok(fresh_claims)
     }

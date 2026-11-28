@@ -415,6 +415,147 @@ fn load_receipt(engine: &impl SqlEngine, commit_seq: u64) -> Result<Receipt, Cel
         .ok_or_else(|| corrupt(commit_seq, "the receipt row is missing"))
 }
 
+/// Verify every zero-write delete observation receipt in `_norn_receipt` still
+/// matches its consumed `_norn_inbox` row against `_norn_export_journal`.
+/// Failing closed here guarantees `_norn_inbox/source_delete` is complete for
+/// absent-subject deletes without scanning zero-write receipts on every upsert.
+pub(crate) fn verify_zero_write_delete_inbox<E: SqlEngine>(
+    reader: &crate::read::StoreReader<'_, E>,
+) -> Result<(), CellError> {
+    let conn = reader.conn;
+    let has_journal = conn
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+            params![],
+            |_| Ok(()),
+        )?
+        .is_some();
+    if !has_journal {
+        return Ok(());
+    }
+    let rows = conn.query(
+        &format!(
+            "SELECT \"commit_seq\" FROM \"{}\" \
+             WHERE \"world\" = ?1 \
+               AND json_extract(\"receipt\", '$.consumed.kind') = 'observation' \
+               AND json_array_length(json_extract(\"receipt\", '$.written')) = 0",
+            crate::system::RECEIPT,
+        ),
+        params![MAIN_WORLD],
+    )?;
+    for raw in rows {
+        let commit_seq_i64: i64 = SqlRow(raw).get(0)?;
+        let commit_seq = u64::try_from(commit_seq_i64).map_err(|err| CellError::LedgerCorrupt {
+            seq: 0,
+            reason: format!("negative zero-write commit_seq: {err}"),
+        })?;
+        let Some(export) = crate::export_journal::read_record(conn, commit_seq)? else {
+            return Err(CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: "missing export journal record for zero-write observation".to_owned(),
+            });
+        };
+        let Some(receipt) = reader.receipt_at(commit_seq)? else {
+            return Err(CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: "missing receipt for zero-write observation".to_owned(),
+            });
+        };
+        if export.receipt != receipt {
+            return Err(CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: "export journal receipt mismatch for zero-write observation".to_owned(),
+            });
+        }
+        let Some(consumed_val) = export.consumed_input.as_ref() else {
+            continue;
+        };
+        let crate::export_journal::ConsumedInput::Observation {
+            observation_id,
+            observed,
+            members,
+            ..
+        } = crate::export_journal::decode_observation_input(consumed_val).map_err(|err| {
+            CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: format!("invalid zero-write consumed_input: {err}"),
+            }
+        })?
+        else {
+            continue;
+        };
+        let candidates: Vec<(String, Value)> = if observation_id.starts_with("mapping-bundle:") {
+            vec![(observation_id, observed)]
+        } else if observation_id.starts_with("mapping-page:") {
+            members
+                .into_iter()
+                .filter(|m| m.observation_id.starts_with("mapping-bundle:"))
+                .map(|m| (m.observation_id, m.observed))
+                .collect()
+        } else {
+            continue;
+        };
+        for (obs_id, auth_observed) in candidates {
+            verify_zero_write_delete_candidate(
+                conn,
+                commit_seq,
+                commit_seq_i64,
+                &obs_id,
+                &auth_observed,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn verify_zero_write_delete_candidate<E: SqlEngine>(
+    conn: &E,
+    commit_seq: u64,
+    commit_seq_i64: i64,
+    obs_id: &str,
+    auth_observed: &Value,
+) -> Result<(), CellError> {
+    let is_delete = auth_observed
+        .pointer("/input/raw/kind")
+        .and_then(Value::as_str)
+        == Some("delete")
+        || matches!(
+            auth_observed.pointer("/input/deletes"),
+            Some(Value::Array(deletes)) if !deletes.is_empty()
+        );
+    if !is_delete {
+        return Ok(());
+    }
+    let Some((inbox_json, consumed_seq)) = conn.query_optional(
+        &format!(
+            "SELECT \"observed\", \"consumed_commit_seq\" FROM \"{}\" \
+             WHERE \"observation_id\" = ?1",
+            crate::system::INBOX,
+        ),
+        params![obs_id],
+        |row| Ok((row.get::<String>(0)?, row.get::<Option<i64>>(1)?)),
+    )?
+    else {
+        return Err(CellError::LedgerCorrupt {
+            seq: commit_seq,
+            reason: format!("missing inbox row for zero-write delete {obs_id}"),
+        });
+    };
+    let inbox_val = Value::from_json_text(&inbox_json).map_err(|err| CellError::LedgerCorrupt {
+        seq: commit_seq,
+        reason: format!("corrupt inbox JSON for zero-write delete {obs_id}: {err}"),
+    })?;
+    if consumed_seq != Some(commit_seq_i64)
+        || canonical_json(&inbox_val)? != canonical_json(auth_observed)?
+    {
+        return Err(CellError::LedgerCorrupt {
+            seq: commit_seq,
+            reason: format!("tampered inbox row for zero-write delete {obs_id}"),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

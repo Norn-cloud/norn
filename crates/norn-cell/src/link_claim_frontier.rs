@@ -538,6 +538,7 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
             return Ok(true);
         }
     }
+    crate::export_journal_residue::verify_zero_write_delete_inbox(reader)?;
     let expected_resolutions = expected_dispute_resolutions(reader.conn)?;
     let Ok(stored_resolutions) = reader.dispute_resolutions() else {
         return Ok(true);
@@ -813,7 +814,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(dv)
     }
 
-    fn read_frontier_consistent<T>(
+    pub(crate) fn read_frontier_consistent<T>(
         &self,
         mut query: impl FnMut() -> Result<T, CellError>,
     ) -> Result<T, CellError> {

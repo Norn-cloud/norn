@@ -310,7 +310,26 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut all_active_smaller = true;
         for row in &active {
             if self.is_reject_carry_claim(row)? {
-                supersedes.insert(row.claim_id.clone());
+                let mut carries_newer = false;
+                for pred in self.surviving_predecessors_after_reject(
+                    contribution,
+                    active.clone(),
+                    &BTreeSet::new(),
+                )? {
+                    let Some(earlier) = parse_verified_frontier_version(self, &pred)? else {
+                        continue;
+                    };
+                    match earlier.try_cmp(version) {
+                        Ok(std::cmp::Ordering::Less) => {}
+                        Ok(_) => carries_newer = true,
+                        Err(_) => return Err(CellError::MappingBundleMismatch),
+                    }
+                }
+                if carries_newer {
+                    all_active_smaller = false;
+                } else {
+                    supersedes.insert(row.claim_id.clone());
+                }
                 continue;
             }
             let Some(earlier) = parse_verified_frontier_version(self, row)? else {

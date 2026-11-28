@@ -227,4 +227,51 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Vec<DataQualityFinding>, CellError> {
         self.indexed_source_findings(object_type, key, true)
     }
+
+    /// Recompute the surviving non-rejected real link claims of `contribution_id`
+    /// after excluding `newly_rejected` and all claims superseded by prior
+    /// `DisputeDecision::Reject` carry-forward claims.
+    pub(crate) fn surviving_predecessors_after_reject(
+        &self,
+        contribution_id: &str,
+        mut all_claims: Vec<crate::link_claim_frontier::FrontierRow>,
+        newly_rejected: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<crate::link_claim_frontier::FrontierRow>, CellError> {
+        all_claims.extend(self.inactive_claims_for_contribution(contribution_id)?);
+        let mut rejected_ids = newly_rejected.clone();
+        let mut supersedes_by_id: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        let mut real_claims = Vec::new();
+        for r in all_claims {
+            supersedes_by_id.insert(
+                r.claim_id.clone(),
+                r.claim.supersedes.iter().cloned().collect(),
+            );
+            if self.is_reject_carry_claim(&r)? {
+                rejected_ids.extend(r.claim.supersedes.iter().cloned());
+            } else {
+                real_claims.push(r);
+            }
+        }
+        let remaining: Vec<_> = real_claims
+            .into_iter()
+            .filter(|r| !rejected_ids.contains(&r.claim_id))
+            .collect();
+        let mut superseded_by_survivor = std::collections::BTreeSet::new();
+        let mut stack: Vec<String> = remaining
+            .iter()
+            .flat_map(|r| r.claim.supersedes.iter().cloned())
+            .collect();
+        while let Some(id) = stack.pop() {
+            if superseded_by_survivor.insert(id.clone())
+                && let Some(parents) = supersedes_by_id.get(&id)
+            {
+                stack.extend(parents.iter().cloned());
+            }
+        }
+        Ok(remaining
+            .into_iter()
+            .filter(|r| !superseded_by_survivor.contains(&r.claim_id))
+            .collect())
+    }
 }

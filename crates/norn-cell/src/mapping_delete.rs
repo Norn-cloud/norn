@@ -204,36 +204,41 @@ fn has_newer_or_incomparable_landed<E: SqlEngine>(
     )? {
         return Ok(true);
     }
-    // Use `_norn_inbox/source_delete` when `deletes_only` (O(log D), zero rows
-    // on monotonic upsert histories) or `_norn_inbox/source_event` otherwise.
+    // Use `_norn_inbox/source_delete` when `deletes_only` (O(log D), backed by
+    // `read_frontier_consistent` + `verify_zero_write_delete_inbox` so zero-write
+    // absent-subject deletes never require scanning receipts on ordinary upserts)
+    // or `_norn_inbox/source_event` otherwise.
     let kind_filter = if deletes_only {
         " AND json_extract(i.\"observed\", '$.input.raw.kind') = 'delete'"
     } else {
         ""
     };
-    let rows = reader.conn.query(
-        &format!(
-            "SELECT i.\"observation_id\", i.\"observed\", i.\"consumed_commit_seq\" \
-             FROM \"{inbox}\" i \
-             WHERE i.\"observation_id\" LIKE 'mapping-bundle:%'{kind_filter} \
-               AND json_extract(i.\"observed\", '$.input.input.connectorInstance') = ?1 \
-               AND json_extract(i.\"observed\", '$.input.input.partition') = ?2 \
-               AND json_extract(i.\"observed\", '$.input.raw.source') = ?3 \
-               AND json_extract(i.\"observed\", '$.input.raw.source_id') = ?4 \
-               AND json_extract(i.\"observed\", '$.input.input.mapping') = ?5 \
-               AND json_extract(i.\"observed\", '$.input.input.dataset') = ?6 \
-               AND i.\"consumed_commit_seq\" IS NOT NULL",
-            inbox = crate::system::INBOX,
-        ),
-        crate::engine::params![
-            bundle.input.connector_instance.as_str(),
-            bundle.input.partition.as_str(),
-            source,
-            source_id,
-            bundle.input.mapping.as_str(),
-            bundle.input.dataset.as_str(),
-        ],
-    )?;
+    let inbox_sql = format!(
+        "SELECT i.\"observation_id\", i.\"observed\", i.\"consumed_commit_seq\" \
+         FROM \"{inbox}\" i \
+         WHERE i.\"observation_id\" LIKE 'mapping-bundle:%'{kind_filter} \
+           AND json_extract(i.\"observed\", '$.input.input.connectorInstance') = ?1 \
+           AND json_extract(i.\"observed\", '$.input.input.partition') = ?2 \
+           AND json_extract(i.\"observed\", '$.input.raw.source') = ?3 \
+           AND json_extract(i.\"observed\", '$.input.raw.source_id') = ?4 \
+           AND json_extract(i.\"observed\", '$.input.input.mapping') = ?5 \
+           AND json_extract(i.\"observed\", '$.input.input.dataset') = ?6 \
+           AND i.\"consumed_commit_seq\" IS NOT NULL",
+        inbox = crate::system::INBOX,
+    );
+    let inbox_params = crate::engine::params![
+        bundle.input.connector_instance.as_str(),
+        bundle.input.partition.as_str(),
+        source,
+        source_id,
+        bundle.input.mapping.as_str(),
+        bundle.input.dataset.as_str(),
+    ];
+    let rows = if deletes_only {
+        reader.read_frontier_consistent(|| reader.conn.query(&inbox_sql, &inbox_params))?
+    } else {
+        reader.conn.query(&inbox_sql, &inbox_params)?
+    };
     for raw in rows {
         let row = crate::engine::SqlRow(raw);
         let obs_id: String = row.get(0)?;
@@ -320,19 +325,6 @@ fn collect_delete_history_commits<E: SqlEngine>(
             commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
         }
         commits.extend(reader.delete_withdrawal_commits_for_subject(&scope, ty, key)?);
-    }
-    let zero_writes = reader.conn.query(
-        &format!(
-            "SELECT \"commit_seq\" FROM \"{}\" \
-             WHERE \"world\" = ?1 \
-               AND json_extract(\"receipt\", '$.consumed.kind') = 'observation' \
-               AND json_array_length(json_extract(\"receipt\", '$.written')) = 0",
-            crate::system::RECEIPT,
-        ),
-        crate::engine::params![crate::MAIN_WORLD],
-    )?;
-    for raw in zero_writes {
-        commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
     }
     Ok(commits)
 }
