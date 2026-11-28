@@ -219,20 +219,21 @@ mod tests {
     }
 
     #[test]
-    fn pack_json_refuses_duplicate_normalized_module_roots() {
-        let dir = std::env::temp_dir().join(format!(
-            "norn-pack-dup-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        ));
-        let _ = std::fs::create_dir_all(&dir);
+    fn pack_json_refuses_duplicate_normalized_module_roots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        static DUP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = DUP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("norn-pack-dup-{}-{seq}", std::process::id()));
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        std::fs::create_dir_all(&dir)?;
         let mod_a = dir.join("a.ts");
         let mod_b = dir.join("b.ts");
-        let _ = std::fs::write(&mod_a, "export const a = 1;\n");
-        let _ = std::fs::write(&mod_b, "export const b = 2;\n");
+        std::fs::write(&mod_a, "export const a = 1;\n")?;
+        std::fs::write(&mod_b, "export const b = 2;\n")?;
         let manifest = dir.join("modules.json");
-        let _ = std::fs::write(
+        std::fs::write(
             &manifest,
             serde_json::json!([
                 { "path": dir.join("a.ts") },
@@ -240,7 +241,7 @@ mod tests {
                 { "path": dir.join("b.ts") },
             ])
             .to_string(),
-        );
+        )?;
         let out = super::super::pack_json::execute_compile_pack_json(&super::super::CompileArgs {
             path: dir.clone(),
             org: None,
@@ -256,13 +257,14 @@ mod tests {
             allow_empty: true,
             max_expansion_work: None,
         });
-        let _ = std::fs::remove_dir_all(&dir);
+        if let Err(_cleanup) = std::fs::remove_dir_all(&dir) {}
         assert_eq!(out.exit_code, 2);
         assert!(
             out.stderr.contains("duplicate module root"),
             "expected duplicate module root refusal, got: {}",
             out.stderr
         );
+        Ok(())
     }
 
     #[test]
