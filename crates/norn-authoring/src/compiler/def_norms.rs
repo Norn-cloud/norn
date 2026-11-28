@@ -80,7 +80,7 @@ impl DefinitionCompiler<'_> {
         let mut out = Vec::with_capacity(found.len());
         for (index, &(call, ref name)) in found.iter().enumerate() {
             let rule =
-                self.compile_one_norm(checker, expansion, &ctx, index, call, name, &mut names)?;
+                self.compile_one_norm(checker, expansion, &ctx, (index, call, name), &mut names)?;
             out.push(rule);
         }
         Ok(out)
@@ -153,11 +153,10 @@ impl DefinitionCompiler<'_> {
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
         ctx: &NormContext<'_>,
-        index: usize,
-        call: P<Node>,
-        name: &str,
+        entry: (usize, P<Node>, &str),
         names: &mut HashSet<String>,
     ) -> Result<Value, CompileError> {
+        let (index, call, name) = entry;
         let args = call.as_call_expression().arguments().nodes();
         let name_node = args.first().copied().unwrap_or(call);
         let spec_node = args.get(1).copied().unwrap_or(call);
@@ -256,8 +255,7 @@ impl DefinitionCompiler<'_> {
         self.walk_exceptions(
             checker,
             expansion,
-            input,
-            spec.law_id,
+            (input, spec.law_id),
             spec,
             &mut out,
             &mut used,
@@ -269,12 +267,12 @@ impl DefinitionCompiler<'_> {
         &mut self,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        node: P<Node>,
-        overrides: &str,
+        target: (P<Node>, &str),
         spec: &ExceptionTreeSpec<'_>,
         out: &mut Vec<Value>,
         used: &mut HashSet<String>,
     ) -> Result<(), CompileError> {
+        let (node, overrides) = target;
         for (label, entry) in self.record(checker, node)?.iter() {
             if !is_snake_ident(label) {
                 return Err(CompileError::new(
@@ -321,7 +319,7 @@ impl DefinitionCompiler<'_> {
             ex.insert("source".to_owned(), Value::Object(src));
             out.push(Value::Object(ex));
             if let Some(nested) = m.get("unless") {
-                self.walk_exceptions(checker, expansion, nested, label, spec, out, used)?;
+                self.walk_exceptions(checker, expansion, (nested, label), spec, out, used)?;
             }
         }
         Ok(())
@@ -524,9 +522,10 @@ impl DefinitionCompiler<'_> {
                 input,
             ));
         };
+        let spec = self.record(checker, a1)?;
         let (type_call, _) = self.referenced(
             checker,
-            Self::member(&self.record(checker, a1)?, "on", a1)?,
+            Self::member(&spec, "on", a1)?,
             OBJECT_TYPES,
             "a Norn.type definition",
         )?;
@@ -537,10 +536,8 @@ impl DefinitionCompiler<'_> {
                 input,
             ));
         };
-        let subject = self.string(
-            checker,
-            Self::member(&self.record(checker, t_arg0)?, "name", type_call)?,
-        )?;
+        let type_rec = self.record(checker, t_arg0)?;
+        let subject = self.string(checker, Self::member(&type_rec, "name", type_call)?)?;
         let Some(sf) = get_source_file_of_node(type_call) else {
             return Err(CompileError::new(
                 "NORN-FLOW-VALUE",
@@ -575,9 +572,10 @@ impl DefinitionCompiler<'_> {
                 let Some(&n_arg1) = init.as_call_expression().arguments().nodes().get(1) else {
                     continue;
                 };
+                let norm_spec = self.record(checker, n_arg1)?;
                 let (tc, _) = self.referenced(
                     checker,
-                    Self::member(&self.record(checker, n_arg1)?, "on", n_arg1)?,
+                    Self::member(&norm_spec, "on", n_arg1)?,
                     OBJECT_TYPES,
                     "a Norn.type definition",
                 )?;

@@ -39,7 +39,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        mut hooks: Option<&mut dyn DecisionHooks>,
+        mut hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let ce = e.as_call_expression();
         let args = ce.arguments().nodes();
@@ -71,7 +71,7 @@ impl SyntaxCompiler<'_> {
         spec: &CallSpec<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        mut hooks: Option<&mut dyn DecisionHooks>,
+        mut hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Option<Expr>, CompileError> {
         if (spec.id == "@norn/authoring#Norn.evaluate"
             || spec.id == "@norn/authoring#Norn.orderedFold")
@@ -84,7 +84,7 @@ impl SyntaxCompiler<'_> {
                     spec.node,
                 ));
             };
-            let input_expr = self.data(a1, spec.env, checker, expansion, Some(h))?;
+            let input_expr = self.data(a1, spec.env, checker, expansion, Some(&mut *h))?;
             return h
                 .on_sub_decision(spec.node, input_expr, checker, expansion)
                 .map(Some);
@@ -163,7 +163,7 @@ impl SyntaxCompiler<'_> {
         spec: &CallSpec<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Option<Expr>, CompileError> {
         match spec.id {
             "@norn/authoring#Norn.parseDate" | "@norn/authoring#Norn.parseTimestamp" => {
@@ -243,7 +243,7 @@ impl SyntaxCompiler<'_> {
         spec: &CallSpec<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Option<Expr>, CompileError> {
         let lowered = self.lower_args(spec.args, spec.env, checker, expansion, hooks)?;
         let mut iter = lowered.into_iter();
@@ -274,7 +274,7 @@ impl SyntaxCompiler<'_> {
         spec: &CallSpec<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Option<Expr>, CompileError> {
         let lowered = self.lower_args(spec.args, spec.env, checker, expansion, hooks)?;
         let mut iter = lowered.into_iter();
@@ -315,7 +315,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let type_args = list_nodes(e.as_call_expression().type_arguments());
         let (Some(&a0), Some(&t0)) = (args.first(), type_args.first()) else {
@@ -372,7 +372,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        mut hooks: Option<&mut dyn DecisionHooks>,
+        mut hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let pa = e
             .as_call_expression()
@@ -450,7 +450,7 @@ impl SyntaxCompiler<'_> {
         spec: ClosureCallSpec<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let ty = checker.get_type_at_location(spec.recv_node);
         if !(checker.is_array_type_exported(ty) || is_tuple_type_exported(ty)) {

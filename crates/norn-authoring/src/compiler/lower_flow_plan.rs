@@ -127,12 +127,12 @@ impl FlowLowering<'_> {
                 ..
             } => self.step_retry(&path, *perform, policy, source_map, next),
             Step::Sleep {
-                step: step_id,
+                step,
                 millis,
                 at,
                 source_map,
                 ..
-            } => self.step_sleep(path, &step_id, millis, at.as_ref(), source_map, names, next),
+            } => self.step_sleep(path, (&step, millis), at.as_ref(), source_map, names, next),
             Step::Route {
                 branches,
                 otherwise,
@@ -140,8 +140,7 @@ impl FlowLowering<'_> {
                 source_map,
             } => self.step_route(
                 path,
-                branches,
-                otherwise,
+                (branches, otherwise),
                 at.as_ref(),
                 source_map.as_ref(),
                 names,
@@ -154,18 +153,16 @@ impl FlowLowering<'_> {
                 handler,
                 source_map,
                 ..
-            } => self.step_catch_tag(
-                path,
-                CatchTagStepData {
+            } => {
+                let data = CatchTagStepData {
                     body,
                     tag,
                     as_name,
                     handler,
                     source_map,
-                },
-                names,
-                next,
-            ),
+                };
+                self.step_catch_tag(path, data, names, next)
+            }
             Step::Fail {
                 error,
                 fields,
@@ -362,13 +359,13 @@ impl FlowLowering<'_> {
     fn step_sleep(
         &mut self,
         path: Path,
-        step_id: &str,
-        millis: f64,
+        sleep: (&str, f64),
         at: Option<&SourceLocation>,
         source_map: Option<FlowSourceMapAnnotation>,
         names: BTreeSet<String>,
         next: Vec<Frame>,
     ) -> Result<(), LowerBreak> {
+        let (step_id, millis) = sleep;
         let state = format!("sleeping_{step_id}");
         let timer_key = Self::step_key(&path.key, step_id);
         let millis_str = format_whole_f64(millis);
@@ -405,13 +402,13 @@ impl FlowLowering<'_> {
     fn step_route(
         &mut self,
         path: Path,
-        branches: Vec<RouteBranch>,
-        otherwise: Vec<Step>,
+        route: (Vec<RouteBranch>, Vec<Step>),
         at: Option<&SourceLocation>,
         source_map: Option<&FlowSourceMapAnnotation>,
         names: BTreeSet<String>,
         next: Vec<Frame>,
     ) -> Result<(), LowerBreak> {
+        let (branches, otherwise) = route;
         let context =
             Self::with_source_map(&path.source_map_context, source_map.map(|s| s.id.as_str()));
         let mut rendered = Vec::with_capacity(branches.len());
@@ -700,7 +697,7 @@ struct ComposeStepData {
 struct CatchTagStepData {
     body: Vec<Step>,
     tag: String,
-    as_name: String,
+    as_name: Option<String>,
     handler: Vec<Step>,
     source_map: Option<FlowSourceMapAnnotation>,
 }

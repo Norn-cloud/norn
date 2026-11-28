@@ -50,7 +50,7 @@ impl DefinitionCompiler<'_> {
         let title = self.string(checker, Self::member(&m, "title", call)?)?;
         let version = self.string(checker, Self::member(&m, "version", call)?)?;
         let payload =
-            self.build_model_payload(checker, expansion, &m, call, &id, &title, &version)?;
+            self.build_model_payload(checker, expansion, &m, call, (&id, &title, &version))?;
         let namespace = id.split('.').next().unwrap_or("").to_owned();
         let artifact = build_envelope_checked(
             EnvelopeMeta {
@@ -79,10 +79,9 @@ impl DefinitionCompiler<'_> {
         expansion: &mut ExpansionBudget,
         m: &Members,
         call: P<Node>,
-        id: &str,
-        title: &str,
-        version: &str,
+        header: (&str, &str, &str),
     ) -> Result<Map<String, Value>, CompileError> {
+        let (id, title, version) = header;
         let trust = self.read_model_trust(checker, Self::member(m, "trust", call)?)?;
         let method_obj = self.read_model_method(checker, Self::member(m, "method", call)?)?;
         let outputs_schema = self

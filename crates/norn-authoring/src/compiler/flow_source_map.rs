@@ -630,20 +630,19 @@ impl GraphBuilder {
         id: Option<String>,
         previous_tails: Vec<String>,
     ) -> Vec<String> {
-        let id_ref = id.as_deref();
         match step {
-            Step::All { steps: values, .. } => self.visit_container(id_ref, id, values, "steps"),
-            Step::Compose { body: values, .. } => self.visit_container(id_ref, id, values, "body"),
-            Step::Retry { perform, .. } => self.visit_retry(id_ref, id, perform),
+            Step::All { steps: values, .. } => self.visit_container(id, values, "steps"),
+            Step::Compose { body: values, .. } => self.visit_container(id, values, "body"),
+            Step::Retry { perform, .. } => self.visit_retry(id, perform),
             Step::Route {
                 branches,
                 otherwise,
                 source_map,
                 ..
-            } => self.visit_route(id_ref, id, branches, otherwise, source_map.as_ref()),
+            } => self.visit_route(id.as_deref(), branches, otherwise, source_map.as_ref()),
             Step::CatchTag {
                 body, tag, handler, ..
-            } => self.visit_catch_tag(id_ref, id, body, tag, handler),
+            } => self.visit_catch_tag(id, body, tag, handler),
             Step::Succeed { .. } | Step::Fail { .. } => Vec::new(),
             Step::Perform(_) | Step::Sleep { .. } | Step::Value { .. } => match id {
                 Some(own) => vec![own],
@@ -652,15 +651,9 @@ impl GraphBuilder {
         }
     }
 
-    fn visit_container(
-        &mut self,
-        id_ref: Option<&str>,
-        id: Option<String>,
-        values: &[Step],
-        label: &str,
-    ) -> Vec<String> {
+    fn visit_container(&mut self, id: Option<String>, values: &[Step], label: &str) -> Vec<String> {
         let shape = self.visit_sequence(values);
-        self.contain(id_ref, values, label);
+        self.contain(id.as_deref(), values, label);
         if shape.first.is_some() {
             shape.tails
         } else {
@@ -668,18 +661,13 @@ impl GraphBuilder {
         }
     }
 
-    fn visit_retry(
-        &mut self,
-        id_ref: Option<&str>,
-        id: Option<String>,
-        perform: &PerformStep,
-    ) -> Vec<String> {
+    fn visit_retry(&mut self, id: Option<String>, perform: &PerformStep) -> Vec<String> {
         let Some(perf_ann) = perform.source_map.as_ref() else {
             return id.into_iter().collect();
         };
         let perf_id = perf_ann.id.clone();
         let shape = self.visit_sequence(&[Step::Perform(Box::new(perform.clone()))]);
-        if let Some(from) = id_ref {
+        if let Some(from) = id.as_deref() {
             self.add_edge(FlowSourceMapEdge {
                 from: from.to_owned(),
                 to: perf_id.clone(),
@@ -698,8 +686,7 @@ impl GraphBuilder {
 
     fn visit_route(
         &mut self,
-        id_ref: Option<&str>,
-        id: Option<String>,
+        id: Option<&str>,
         branches: &[RouteBranch],
         otherwise: &[Step],
         source_map: Option<&FlowSourceMapAnnotation>,
@@ -711,18 +698,18 @@ impl GraphBuilder {
                 .and_then(|labels| labels.get(idx))
                 .cloned()
                 .unwrap_or_else(|| format!("branch-{}", idx.saturating_add(1)));
-            branch_shapes.push(self.route_branch(id_ref, &branch.then, &label));
+            branch_shapes.push(self.route_branch(id, &branch.then, &label));
         }
         let otherwise_label = source_map
             .and_then(|sm| sm.otherwise_label.as_deref())
             .unwrap_or("otherwise");
-        branch_shapes.push(self.route_branch(id_ref, otherwise, otherwise_label));
+        branch_shapes.push(self.route_branch(id, otherwise, otherwise_label));
         let mut tails = Vec::new();
         for shape in branch_shapes {
             if shape.first.is_some() {
                 tails.extend(shape.tails);
-            } else if let Some(ref own) = id {
-                tails.push(own.clone());
+            } else if let Some(own) = id {
+                tails.push(own.to_owned());
             }
         }
         tails
@@ -730,7 +717,6 @@ impl GraphBuilder {
 
     fn visit_catch_tag(
         &mut self,
-        id_ref: Option<&str>,
         id: Option<String>,
         body: &[Step],
         tag: &str,
@@ -738,9 +724,9 @@ impl GraphBuilder {
     ) -> Vec<String> {
         let body_shape = self.visit_sequence(body);
         let handler_shape = self.visit_sequence(handler);
-        self.contain(id_ref, body, "body");
-        self.contain(id_ref, handler, "handler");
-        if let (Some(from), Some(h_first)) = (id_ref, handler_shape.first.as_ref()) {
+        self.contain(id.as_deref(), body, "body");
+        self.contain(id.as_deref(), handler, "handler");
+        if let (Some(from), Some(h_first)) = (id.as_deref(), handler_shape.first.as_ref()) {
             self.add_edge(FlowSourceMapEdge {
                 from: from.to_owned(),
                 to: h_first.clone(),
@@ -759,5 +745,3 @@ impl GraphBuilder {
         tails
     }
 }
-
-pub(crate) use super::flow_limits::list_length;

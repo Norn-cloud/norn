@@ -14,7 +14,7 @@ use tsrs_compiler::Program;
 use tsrs_core::{LanguageVariant, P, ScriptTarget};
 use tsrs_scanner::Scanner;
 
-use crate::checker::resolve::{node_text, resolve_symbol};
+use crate::checker::resolve::{node_text_static, resolve_symbol};
 use crate::{BoundedVfs, ProfileDiagnostic};
 
 use super::canonical::{is_snake_ident, sha256_hex};
@@ -80,7 +80,7 @@ pub(crate) struct SyntaxConfig<'a> {
     pub(crate) forbid_unsafe_zen: bool,
 }
 
-struct DecisionWalk<'a> {
+struct DecisionWalk<'a, 'h> {
     fn_node: P<Node>,
     rows: &'a mut Vec<DecisionRow>,
     steps: usize,
@@ -88,7 +88,7 @@ struct DecisionWalk<'a> {
     conditions: Vec<Expr>,
     checker: &'a mut Checker,
     expansion: &'a mut ExpansionBudget,
-    hooks: Option<&'a mut dyn DecisionHooks>,
+    hooks: Option<&'a mut (dyn DecisionHooks + 'h)>,
 }
 
 /// Syntax-only lowering engine for `Norn.flow` and decision/expression callbacks.
@@ -258,8 +258,7 @@ impl<'a> SyntaxCompiler<'a> {
         scanner.set_skip_trivia(true);
         scanner.set_script_target(ScriptTarget::ES2022);
         scanner.set_language_variant(LanguageVariant::Standard);
-        let text = node_text(sf, node);
-        scanner.set_text(&text);
+        scanner.set_text(node_text_static(sf, node));
         let mut tokens = Vec::new();
         loop {
             let kind = scanner.scan();
@@ -415,7 +414,7 @@ impl<'a> SyntaxCompiler<'a> {
         fn_node: P<Node>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Vec<DecisionRow>, CompileError> {
         let mut env = Env::new();
         if let Some(&param) = fn_node.parameters().first() {
@@ -459,7 +458,7 @@ impl<'a> SyntaxCompiler<'a> {
         statements: &'s [P<Node>],
         tails: &[&'s [P<Node>]],
         branch_depth: usize,
-        walk: &mut DecisionWalk<'_>,
+        walk: &mut DecisionWalk<'_, '_>,
     ) -> Result<(), CompileError> {
         let cond_len = walk.conditions.len();
         let mut bound: Vec<(P<Symbol>, Option<Expr>)> = Vec::new();
@@ -481,7 +480,7 @@ impl<'a> SyntaxCompiler<'a> {
         tails: &[&'s [P<Node>]],
         branch_depth: usize,
         bound: &mut Vec<(P<Symbol>, Option<Expr>)>,
-        walk: &mut DecisionWalk<'_>,
+        walk: &mut DecisionWalk<'_, '_>,
     ) -> Result<(), CompileError> {
         let mut cur_stmts = statements;
         let mut tail_end = tails.len();
@@ -541,7 +540,7 @@ impl<'a> SyntaxCompiler<'a> {
         &mut self,
         statement: P<Node>,
         ret_expr: P<Node>,
-        walk: &mut DecisionWalk<'_>,
+        walk: &mut DecisionWalk<'_, '_>,
     ) -> Result<(), CompileError> {
         if walk.rows.len() >= FLOW_MAX_ROWS {
             return Err(CompileError::new(
@@ -573,7 +572,7 @@ impl<'a> SyntaxCompiler<'a> {
         rest: &'s [P<Node>],
         active_tails: &[&'s [P<Node>]],
         branch_depth: usize,
-        walk: &mut DecisionWalk<'_>,
+        walk: &mut DecisionWalk<'_, '_>,
     ) -> Result<bool, CompileError> {
         let next_depth = branch_depth.saturating_add(1);
         if next_depth > self.limits.max_depth {
@@ -638,7 +637,7 @@ impl<'a> SyntaxCompiler<'a> {
     fn check_decision_step(
         &self,
         statement: P<Node>,
-        walk: &mut DecisionWalk<'_>,
+        walk: &mut DecisionWalk<'_, '_>,
     ) -> Result<(), CompileError> {
         self.check_decision_work(statement, 1, walk)?;
         if walk.rows.len() >= FLOW_MAX_ROWS {
@@ -655,7 +654,7 @@ impl<'a> SyntaxCompiler<'a> {
         &self,
         statement: P<Node>,
         units: usize,
-        walk: &mut DecisionWalk<'_>,
+        walk: &mut DecisionWalk<'_, '_>,
     ) -> Result<(), CompileError> {
         self.check_budget(statement)?;
         walk.steps = walk.steps.saturating_add(units);
@@ -675,7 +674,7 @@ impl<'a> SyntaxCompiler<'a> {
         &mut self,
         statement: P<Node>,
         bound: &mut Vec<(P<Symbol>, Option<Expr>)>,
-        walk: &mut DecisionWalk<'_>,
+        walk: &mut DecisionWalk<'_, '_>,
     ) -> Result<(), CompileError> {
         let decls = statement
             .as_variable_statement()

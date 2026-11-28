@@ -274,7 +274,7 @@ impl DefinitionCompiler<'_> {
     }
 
     fn build_connector_payload(
-        &self,
+        &mut self,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
         auth: P<Node>,

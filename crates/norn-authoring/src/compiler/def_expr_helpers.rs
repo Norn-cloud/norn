@@ -23,8 +23,8 @@ struct SubjectAcc<'a> {
     temporal: &'a mut BTreeMap<String, TemporalKind>,
 }
 
-impl DefinitionCompiler<'_> {
-    pub(crate) fn syntax_compiler(&self, sf: P<SourceFile>) -> SyntaxCompiler<'_> {
+impl<'a> DefinitionCompiler<'a> {
+    pub(crate) fn syntax_compiler(&self, sf: P<SourceFile>) -> SyntaxCompiler<'a> {
         SyntaxCompiler::new(SyntaxConfig {
             intrinsics_module: self.intrinsics_module,
             effect_dist_prefix: self.effect_dist_prefix,
@@ -38,7 +38,9 @@ impl DefinitionCompiler<'_> {
             forbid_unsafe_zen: self.forbid_unsafe_zen,
         })
     }
+}
 
+impl DefinitionCompiler<'_> {
     pub(crate) fn zen_at(
         &mut self,
         checker: &mut Checker,
@@ -272,7 +274,7 @@ impl DefinitionCompiler<'_> {
         };
         let mut syntax = self.syntax_compiler(sf);
         let rows = syntax.decision_rows(fn_node, checker, expansion, None)?;
-        self.warnings.extend(syntax.warnings);
+        self.warnings.extend(syntax.warnings.drain(..));
         let Some(row) = rows.first() else {
             return Err(CompileError::new(
                 "NORN-FLOW-EXPRESSION",

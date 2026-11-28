@@ -472,7 +472,7 @@ impl DefinitionCompiler<'_> {
         let outputs: Vec<&str> = spec.output_schema.ordered_keys().collect();
         let table_idx = calls.len().saturating_add(1);
         let rules =
-            self.render_callback_rows(&syntax, &rows, &scope, &outputs, &spec, table_idx, exact)?;
+            self.render_callback_rows(&syntax, &rows, &scope, &outputs, &spec, (table_idx, exact))?;
         if spec.hit == "unique" {
             return Err(CompileError::new(
                 "NORN-FLOW-EXPRESSION",
@@ -496,9 +496,9 @@ impl DefinitionCompiler<'_> {
         scope: &Scope,
         outputs: &[&str],
         spec: &CallbackGraphSpec<'_>,
-        table_idx: usize,
-        exact: bool,
+        target: (usize, bool),
     ) -> Result<Vec<Map<String, Value>>, CompileError> {
+        let (table_idx, exact) = target;
         let mut rules: Vec<Map<String, Value>> = Vec::with_capacity(rows.len());
         for (i, row) in rows.iter().enumerate() {
             if let Some(cond) = &row.condition {

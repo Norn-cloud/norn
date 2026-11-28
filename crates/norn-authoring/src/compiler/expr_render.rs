@@ -435,25 +435,27 @@ fn expr_cost(
         ));
     }
     let next_depth = depth.saturating_add(1);
-    let mut work = 1_usize;
-    let mut bytes = 64_usize;
-    let mut add = |child: &Expr, where_scope: &Scope| -> Result<(), BudgetExceeded> {
+    let mut acc = (1_usize, 64_usize);
+    let add = |acc: &mut (usize, usize),
+               child: &Expr,
+               where_scope: &Scope|
+     -> Result<(), BudgetExceeded> {
         let (cw, cb) = expr_cost(budget, child, where_scope, next_depth)?;
-        work = work.saturating_add(cw);
-        bytes = bytes.saturating_add(cb);
+        acc.0 = acc.0.saturating_add(cw);
+        acc.1 = acc.1.saturating_add(cb);
         Ok(())
     };
     match expr {
         Expr::Literal(val) => {
-            bytes = bytes.saturating_add(val.to_string().len());
+            acc.1 = acc.1.saturating_add(val.to_string().len());
         }
         Expr::Input { name, path } => {
             if let Some(binding) = scope.get(name) {
                 match binding {
                     Binding::Zen { zen, .. } => {
-                        bytes = bytes.saturating_add(zen.len());
+                        acc.1 = acc.1.saturating_add(zen.len());
                         for seg in path {
-                            bytes = bytes.saturating_add(seg.len()).saturating_add(1);
+                            acc.1 = acc.1.saturating_add(seg.len()).saturating_add(1);
                         }
                     }
                     Binding::Inline {
@@ -462,57 +464,57 @@ fn expr_cost(
                         ..
                     } => {
                         let resolved = resolve_inline_cost_target(inline, path);
-                        add(&resolved, inner_scope)?;
+                        add(&mut acc, &resolved, inner_scope)?;
                     }
                 }
             }
         }
         Expr::Bound { path, .. } => {
             for seg in path {
-                bytes = bytes.saturating_add(seg.len()).saturating_add(1);
+                acc.1 = acc.1.saturating_add(seg.len()).saturating_add(1);
             }
         }
         Expr::Binary { left, right, .. }
         | Expr::Compare { left, right, .. }
         | Expr::Logical { left, right, .. } => {
-            add(left, scope)?;
-            add(right, scope)?;
+            add(&mut acc, left, scope)?;
+            add(&mut acc, right, scope)?;
         }
         Expr::Call { args, .. } => {
             for arg in args {
-                add(arg, scope)?;
+                add(&mut acc, arg, scope)?;
             }
         }
         Expr::Closure {
             func, list, body, ..
         } => {
-            bytes = bytes.saturating_add(func.wire_str().len());
-            add(list, scope)?;
-            add(body, scope)?;
+            acc.1 = acc.1.saturating_add(func.wire_str().len());
+            add(&mut acc, list, scope)?;
+            add(&mut acc, body, scope)?;
         }
         Expr::Conditional { condition, yes, no } => {
-            add(condition, scope)?;
-            add(yes, scope)?;
-            add(no, scope)?;
+            add(&mut acc, condition, scope)?;
+            add(&mut acc, yes, scope)?;
+            add(&mut acc, no, scope)?;
         }
         Expr::Coalesce { value, fallback } => {
-            add(value, scope)?;
-            add(fallback, scope)?;
+            add(&mut acc, value, scope)?;
+            add(&mut acc, fallback, scope)?;
         }
-        Expr::Not(operand) => add(operand, scope)?,
+        Expr::Not(operand) => add(&mut acc, operand, scope)?,
         Expr::List(items) => {
             for item in items {
-                add(item, scope)?;
+                add(&mut acc, item, scope)?;
             }
         }
         Expr::Record(fields) => {
             for (name, val) in fields {
-                bytes = bytes.saturating_add(name.len());
-                add(val, scope)?;
+                acc.1 = acc.1.saturating_add(name.len());
+                add(&mut acc, val, scope)?;
             }
         }
     }
-    Ok((work, bytes))
+    Ok(acc)
 }
 
 fn resolve_inline_cost_target(inline: &Expr, path: &[String]) -> Expr {

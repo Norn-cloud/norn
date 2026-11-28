@@ -12,8 +12,7 @@ use serde_json::{Map, Value};
 use super::value_schema::{ValueSchema, assignable};
 
 pub(crate) use super::expr_render::{
-    assert_expression_budget, narrow_subject_schema, parsed_temporal, render, zen_json, zen_key,
-    zen_number, zen_string,
+    assert_expression_budget, narrow_subject_schema, parsed_temporal, render, zen_key, zen_string,
 };
 pub(crate) use super::expr_type::type_of;
 

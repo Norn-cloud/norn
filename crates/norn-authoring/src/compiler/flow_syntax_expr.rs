@@ -81,7 +81,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let value = self.data_inner(input, env, checker, expansion, hooks)?;
         self.record_expression_source(&value, input);
@@ -97,7 +97,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         self.check_budget(input)?;
         self.depth = self.depth.saturating_add(1);
@@ -112,7 +112,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        mut hooks: Option<&mut dyn DecisionHooks>,
+        mut hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let e = Self::unwrap(input);
         let kind = e.kind();
@@ -175,7 +175,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let sym = self.symbol(checker, e)?;
         if let Some(bound) = env.get(&sym).or_else(|| self.constants.get(&sym)) {
@@ -223,7 +223,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        mut hooks: Option<&mut dyn DecisionHooks>,
+        mut hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         if e.kind() == Kind::PropertyAccessExpression
             && let Some(special) =
@@ -249,7 +249,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Option<Expr>, CompileError> {
         let pa = e.as_property_access_expression();
         let resolved = resolve_symbol(
@@ -350,7 +350,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        mut hooks: Option<&mut dyn DecisionHooks>,
+        mut hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let mut fields = Vec::new();
         for &prop in e.as_object_literal_expression().properties.nodes() {
@@ -395,7 +395,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        hooks: Option<&mut dyn DecisionHooks>,
+        hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let pu = e.as_prefix_unary_expression();
         if pu.operator == Kind::ExclamationToken {
@@ -425,7 +425,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        mut hooks: Option<&mut dyn DecisionHooks>,
+        mut hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Expr, CompileError> {
         let be = e.as_binary_expression();
         let op_kind = be.operator_token().kind();
@@ -487,7 +487,7 @@ impl SyntaxCompiler<'_> {
         env: &Env,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        mut hooks: Option<&mut dyn DecisionHooks>,
+        mut hooks: Option<&mut (dyn DecisionHooks + '_)>,
     ) -> Result<Vec<Expr>, CompileError> {
         let mut out = Vec::with_capacity(args.len());
         for &a in args {

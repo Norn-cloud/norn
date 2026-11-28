@@ -291,6 +291,7 @@ impl DefinitionCompiler<'_> {
                 on,
             ));
         };
+        let owner = owner.to_owned();
         let version = self.string(
             checker,
             Self::member(&subject_members, "version", subject_call)?,
@@ -342,7 +343,7 @@ impl DefinitionCompiler<'_> {
         }
         Ok(LawV2Subject {
             subject,
-            owner: owner.to_owned(),
+            owner,
             version,
             self_schema: SubjectSchema {
                 schema: ValueSchema::object(ObjectSchema::record(self_props, &[])),

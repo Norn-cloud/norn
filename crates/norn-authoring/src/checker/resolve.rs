@@ -116,10 +116,18 @@ pub(crate) fn node_end(node: P<Node>) -> u32 {
     node.end().source_offset().unwrap_or(0)
 }
 
-pub(crate) fn slice_text(sf: P<SourceFile>, start: u32, end: u32) -> String {
+pub(crate) fn slice_text_static(sf: P<SourceFile>, start: u32, end: u32) -> &'static str {
     let start_idx = usize::try_from(start).unwrap_or(usize::MAX);
     let end_idx = usize::try_from(end).unwrap_or(usize::MAX);
-    sf.text().get(start_idx..end_idx).unwrap_or("").to_owned()
+    sf.get().text().get(start_idx..end_idx).unwrap_or("")
+}
+
+pub(crate) fn slice_text(sf: P<SourceFile>, start: u32, end: u32) -> String {
+    slice_text_static(sf, start, end).to_owned()
+}
+
+pub(crate) fn node_text_static(sf: P<SourceFile>, node: P<Node>) -> &'static str {
+    slice_text_static(sf, node_start(sf, node), node_end(node))
 }
 
 pub(crate) fn node_text(sf: P<SourceFile>, node: P<Node>) -> String {

@@ -245,7 +245,7 @@ fn write_escaped_string(text: &str, out: &mut String) {
             '\t' => out.push_str("\\t"),
             c if u32::from(c) < 0x20 => {
                 let code = u32::from(c);
-                let _ = write!(out, "\\u{code:04x}");
+                let _written = write!(out, "\\u{code:04x}");
             }
             c => out.push(c),
         }
@@ -335,27 +335,27 @@ fn write_js_f64(value: f64, out: &mut String) {
         out.push('e');
         if exp >= 0 {
             out.push('+');
-            let _ = write!(out, "{exp}");
+            let _written = write!(out, "{exp}");
         } else {
             out.push('-');
-            let _ = write!(out, "{}", exp.unsigned_abs());
+            let _written = write!(out, "{}", exp.unsigned_abs());
         }
     }
 }
 
 fn write_number(num: &Number, out: &mut String) {
     if let Some(i) = num.as_i64() {
-        let _ = write!(out, "{i}");
+        let _written = write!(out, "{i}");
         return;
     }
     if let Some(u) = num.as_u64() {
-        let _ = write!(out, "{u}");
+        let _written = write!(out, "{u}");
         return;
     }
     if let Some(f) = num.as_f64() {
         write_js_f64(f, out);
     } else {
-        let _ = write!(out, "{num}");
+        let _written = write!(out, "{num}");
     }
 }
 
@@ -451,7 +451,7 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut out = String::with_capacity(64);
     for byte in digest {
-        let _ = write!(out, "{byte:02x}");
+        let _written = write!(out, "{byte:02x}");
     }
     out
 }
@@ -471,7 +471,7 @@ pub fn norn1_sha256(value: &Value) -> Option<String> {
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(64);
     for byte in digest {
-        let _ = write!(hex, "{byte:02x}");
+        let _written = write!(hex, "{byte:02x}");
     }
     Some(hex)
 }
@@ -491,7 +491,7 @@ fn write_norn1_subset(value: &Value, out: &mut String) -> Option<()> {
             if !(MIN_SAFE_INTEGER_I64..=MAX_SAFE_INTEGER_I64).contains(&i) {
                 return None;
             }
-            let _ = write!(out, "{i}");
+            let _written = write!(out, "{i}");
             Some(())
         }
         Value::String(text) => {

@@ -294,19 +294,18 @@ impl SyntaxCompiler<'_> {
         }
         let args = e.as_call_expression().arguments().nodes();
         let id = self.call_id(checker, e);
-        self.effect_call(e, args, id.as_deref(), env, hint, checker, expansion)
+        self.effect_call((e, args, id.as_deref()), env, hint, checker, expansion)
     }
 
     fn effect_call(
         &mut self,
-        e: P<Node>,
-        args: &[P<Node>],
-        id: Option<&str>,
+        call: (P<Node>, &[P<Node>], Option<&str>),
         env: &Env,
         hint: Option<Option<&str>>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<Plan, CompileError> {
+        let (e, args, id) = call;
         match id {
             Some("@norn/authoring#Norn.perform") => {
                 self.effect_perform(e, args, env, hint, checker, expansion)

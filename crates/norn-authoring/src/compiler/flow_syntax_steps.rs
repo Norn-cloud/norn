@@ -165,8 +165,7 @@ impl SyntaxCompiler<'_> {
                     stmt,
                     &env,
                     &mut steps,
-                    root,
-                    effect_return,
+                    (root, effect_return),
                     checker,
                     expansion,
                 )?;
@@ -290,11 +289,11 @@ impl SyntaxCompiler<'_> {
         stmt: P<Node>,
         env: &Env,
         steps: &mut Vec<Step>,
-        root: bool,
-        effect_return: bool,
+        flags: (bool, bool),
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<(), CompileError> {
+        let (root, effect_return) = flags;
         let Some(ret_expr) = stmt.as_return_statement().expression() else {
             return Err(CompileError::new(
                 "NORN-FLOW-RESULT",
