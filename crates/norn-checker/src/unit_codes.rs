@@ -22,7 +22,7 @@ mod tests {
                 for is_ucum in [false, true] {
                     assert_eq!(
                         admitted(is_ucum, code, ["mg", "kg"].iter().copied()),
-                        is_ucum && matches!(bytes, [b'm', b'g'] | [b'k', b'g'])
+                        is_ucum && matches!(bytes, [b'm' | b'k', b'g'])
                     );
                     assert!(!admitted(is_ucum, code, std::iter::empty()));
                 }
