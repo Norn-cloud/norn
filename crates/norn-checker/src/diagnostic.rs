@@ -265,7 +265,9 @@ pub enum WitnessSide {
 }
 
 impl DiagnosticWitness {
-    fn to_json(&self) -> serde_json::Value {
+    /// Wire JSON representation of this counterexample witness.
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "steps": self.steps.iter().map(|step| serde_json::json!({
                 "edge": step.edge,

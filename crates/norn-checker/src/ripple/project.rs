@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Dependency graph projection for [`super::compute_ripple_effects_with_budget`].
+//! Metered O(N) dependency graph projection for [`super::compute_ripple_effects_with_budget`].
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -9,7 +9,6 @@ use norn_ir::action::ActionRoot;
 use norn_ir::business_pack::BusinessPackRoot;
 use norn_ir::customization::CustomizationRoot;
 use norn_ir::defined_concept::DefinedConceptRoot;
-use norn_ir::definition_catalog::{DefinitionCatalog, LawBinding, Member, MemberRef};
 use norn_ir::entity::{EntityRoot, RelationRoot};
 use norn_ir::labels::{LabelCatalogRoot, LabelTarget};
 use norn_ir::mapping::MappingDocument;
@@ -19,9 +18,61 @@ use norn_ir::verification::{LawIR, LawResponse};
 use norn_ir::view::ViewIrPayload;
 use norn_ir::widget::WidgetRoot;
 use norn_ir::{ActionEffectProgram, ArtifactEnvelope, ArtifactKind, ArtifactPayload};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::BudgetRefusal;
+use crate::lifecycle_writes::FactSchema;
+
+use super::{BudgetRefusal, kind_name};
+
+pub(super) enum ProjectionError {
+    Budget(BudgetRefusal),
+    Invalid(String),
+}
+
+fn tick_step(steps: &mut usize, budget: Budget) -> Result<(), ProjectionError> {
+    *steps = steps.saturating_add(1);
+    if *steps > budget.max_steps {
+        return Err(ProjectionError::Budget(BudgetRefusal::from_limit(
+            Limit::Steps,
+            budget.max_steps,
+        )));
+    }
+    Ok(())
+}
+
+fn check_nodes(count: usize, budget: Budget) -> Result<(), ProjectionError> {
+    if count > budget.max_nodes {
+        return Err(ProjectionError::Budget(BudgetRefusal::from_limit(
+            Limit::Nodes,
+            budget.max_nodes,
+        )));
+    }
+    Ok(())
+}
+
+fn payload_json(artifact: &ArtifactEnvelope) -> Result<Value, ProjectionError> {
+    serde_json::to_value(artifact.payload.to_json_value()).map_err(|error| {
+        ProjectionError::Invalid(format!(
+            "failed to serialize {} artifact `{}` payload: {error}",
+            kind_name(&artifact.kind()),
+            artifact.artifact_id
+        ))
+    })
+}
+
+fn decode_payload<T: DeserializeOwned>(
+    artifact_id: &str,
+    kind: ArtifactKind,
+    payload: Value,
+) -> Result<T, ProjectionError> {
+    serde_json::from_value(payload).map_err(|error| {
+        ProjectionError::Invalid(format!(
+            "failed to decode {} artifact `{artifact_id}`: {error}",
+            kind_name(&kind)
+        ))
+    })
+}
 
 pub(super) struct Universe {
     pub(super) all_ids: BTreeSet<String>,
@@ -29,6 +80,8 @@ pub(super) struct Universe {
     pub(super) roots: BTreeSet<String>,
     pub(super) artifact_kinds: BTreeMap<String, ArtifactKind>,
     pub(super) type_owners: BTreeMap<String, String>,
+    pub(super) owner_types: BTreeMap<String, BTreeSet<String>>,
+    pub(super) owned_children: BTreeMap<String, BTreeSet<String>>,
     pub(super) action_owners: BTreeMap<String, String>,
     pub(super) rule_owners: BTreeMap<String, String>,
     pub(super) law_owners: BTreeMap<String, String>,
@@ -41,13 +94,17 @@ impl Universe {
         before_artifacts: &[ArtifactEnvelope],
         after_artifacts: &[ArtifactEnvelope],
         changed_artifact_ids: &[String],
-    ) -> Self {
+        budget: Budget,
+        steps: &mut usize,
+    ) -> Result<Self, ProjectionError> {
         let mut universe = Self {
             all_ids: BTreeSet::new(),
             removed_ids: BTreeSet::new(),
             roots: BTreeSet::new(),
             artifact_kinds: BTreeMap::new(),
             type_owners: BTreeMap::new(),
+            owner_types: BTreeMap::new(),
+            owned_children: BTreeMap::new(),
             action_owners: BTreeMap::new(),
             rule_owners: BTreeMap::new(),
             law_owners: BTreeMap::new(),
@@ -57,92 +114,107 @@ impl Universe {
         let mut after_ids = BTreeSet::new();
 
         for artifact in before_artifacts {
+            tick_step(steps, budget)?;
             universe.all_ids.insert(artifact.artifact_id.clone());
+            check_nodes(universe.all_ids.len(), budget)?;
             universe
                 .artifact_kinds
                 .insert(artifact.artifact_id.clone(), artifact.kind());
-            universe.index_symbols(artifact);
+            universe.index_symbols(artifact, budget, steps)?;
         }
         for artifact in after_artifacts {
+            tick_step(steps, budget)?;
             universe.all_ids.insert(artifact.artifact_id.clone());
+            check_nodes(universe.all_ids.len(), budget)?;
             after_ids.insert(artifact.artifact_id.clone());
             universe
                 .artifact_kinds
                 .insert(artifact.artifact_id.clone(), artifact.kind());
-            universe.index_symbols(artifact);
+            universe.index_symbols(artifact, budget, steps)?;
         }
 
-        universe.removed_ids = before_artifacts
-            .iter()
-            .filter(|artifact| !after_ids.contains(&artifact.artifact_id))
-            .map(|artifact| artifact.artifact_id.clone())
-            .collect();
+        for artifact in before_artifacts {
+            tick_step(steps, budget)?;
+            if !after_ids.contains(&artifact.artifact_id) {
+                universe.removed_ids.insert(artifact.artifact_id.clone());
+            }
+        }
 
         universe.roots.clone_from(&universe.removed_ids);
         for changed in changed_artifact_ids {
+            tick_step(steps, budget)?;
             if universe.all_ids.contains(changed) {
                 universe.roots.insert(changed.clone());
             }
         }
-        universe
+        Ok(universe)
     }
 
-    fn index_symbols(&mut self, artifact: &ArtifactEnvelope) {
-        let payload = payload_json(artifact);
-        match artifact.kind() {
+    fn record_type_owner(&mut self, type_name: String, artifact_id: &str) {
+        self.owner_types
+            .entry(artifact_id.to_owned())
+            .or_default()
+            .insert(type_name.clone());
+        self.type_owners.insert(type_name, artifact_id.to_owned());
+    }
+
+    fn index_symbols(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        budget: Budget,
+        steps: &mut usize,
+    ) -> Result<(), ProjectionError> {
+        let kind = artifact.kind();
+        let id = artifact.artifact_id.as_str();
+        let payload = payload_json(artifact)?;
+        match kind {
             ArtifactKind::Entity => {
-                if let Ok(root) = serde_json::from_value::<EntityRoot>(payload) {
-                    match root {
-                        EntityRoot::V2(v2) => {
-                            self.type_owners.insert(
-                                v2.object_type.name.as_str().to_owned(),
-                                artifact.artifact_id.clone(),
-                            );
-                            if !v2.object_type.lifecycles.is_empty() {
-                                self.has_lifecycle.insert(artifact.artifact_id.clone());
-                            }
+                let root: EntityRoot = decode_payload(id, kind, payload)?;
+                match root {
+                    EntityRoot::V2(v2) => {
+                        let type_name = v2.object_type.name.as_str().to_owned();
+                        self.record_type_owner(type_name.clone(), id);
+                        if !v2.object_type.lifecycles.is_empty() {
+                            self.has_lifecycle.insert(id.to_owned());
                         }
-                        EntityRoot::V2Interface(iface) => {
-                            self.type_owners.insert(
-                                iface.interface.name.as_str().to_owned(),
-                                artifact.artifact_id.clone(),
-                            );
-                            if !iface.interface.lifecycles.is_empty() {
-                                self.has_lifecycle.insert(artifact.artifact_id.clone());
-                            }
+                        for collection in &v2.object_type.owned_collections {
+                            tick_step(steps, budget)?;
+                            self.owned_children
+                                .entry(type_name.clone())
+                                .or_default()
+                                .insert(collection.child_type.as_str().to_owned());
                         }
-                        EntityRoot::V1(v1) => {
-                            self.type_owners
-                                .insert(v1.object_kind, artifact.artifact_id.clone());
-                        }
-                        EntityRoot::V2Extension(_)
-                        | EntityRoot::V2PropertyTypes(_)
-                        | EntityRoot::V2Markings(_) => {}
                     }
+                    EntityRoot::V2Interface(iface) => {
+                        let type_name = iface.interface.name.as_str().to_owned();
+                        self.record_type_owner(type_name, id);
+                        if !iface.interface.lifecycles.is_empty() {
+                            self.has_lifecycle.insert(id.to_owned());
+                        }
+                    }
+                    EntityRoot::V1(v1) => {
+                        self.record_type_owner(v1.object_kind, id);
+                    }
+                    EntityRoot::V2Extension(_)
+                    | EntityRoot::V2PropertyTypes(_)
+                    | EntityRoot::V2Markings(_) => {}
                 }
             }
             ArtifactKind::Action => {
-                if let Ok(action) = serde_json::from_value::<ActionRoot>(payload) {
-                    self.action_owners
-                        .insert(action.action_id, artifact.artifact_id.clone());
-                }
+                let action: ActionRoot = decode_payload(id, kind, payload)?;
+                self.action_owners.insert(action.action_id, id.to_owned());
             }
             ArtifactKind::Rule => {
-                if let Ok(rule) = serde_json::from_value::<RuleRoot>(payload) {
-                    self.rule_owners
-                        .insert(rule.rule_id, artifact.artifact_id.clone());
-                }
+                let rule: RuleRoot = decode_payload(id, kind, payload)?;
+                self.rule_owners.insert(rule.rule_id, id.to_owned());
             }
             ArtifactKind::Law => {
-                if let Ok(law) = serde_json::from_value::<LawIR>(payload) {
-                    self.law_owners.insert(law.id, artifact.artifact_id.clone());
-                }
+                let law: LawIR = decode_payload(id, kind, payload)?;
+                self.law_owners.insert(law.id, id.to_owned());
             }
             ArtifactKind::Widget => {
-                if let Ok(widget) = serde_json::from_value::<WidgetRoot>(payload) {
-                    self.widget_owners
-                        .insert(widget.widget_id, artifact.artifact_id.clone());
-                }
+                let widget: WidgetRoot = decode_payload(id, kind, payload)?;
+                self.widget_owners.insert(widget.widget_id, id.to_owned());
             }
             ArtifactKind::Relation
             | ArtifactKind::Connector
@@ -157,46 +229,42 @@ impl Universe {
             | ArtifactKind::Labels
             | ArtifactKind::Model => {}
         }
+        Ok(())
     }
 }
 
 pub(super) struct Projection<'a> {
     universe: &'a Universe,
     budget: Budget,
+    steps: &'a mut usize,
     pub(super) edges: BTreeSet<(String, String)>,
     pub(super) specialization_edges: BTreeSet<(String, String)>,
+    pub(super) broken_dependents: BTreeSet<String>,
     type_parents: BTreeMap<String, BTreeSet<String>>,
     type_writers: BTreeMap<String, BTreeSet<String>>,
     law_subjects: Vec<(String, String)>,
-    steps: usize,
 }
 
 impl<'a> Projection<'a> {
-    pub(super) fn new(universe: &'a Universe, budget: Budget) -> Self {
+    pub(super) fn new(universe: &'a Universe, budget: Budget, steps: &'a mut usize) -> Self {
         Self {
             universe,
             budget,
+            steps,
             edges: BTreeSet::new(),
             specialization_edges: BTreeSet::new(),
+            broken_dependents: BTreeSet::new(),
             type_parents: BTreeMap::new(),
             type_writers: BTreeMap::new(),
             law_subjects: Vec::new(),
-            steps: 0,
         }
     }
 
-    fn tick(&mut self) -> Result<(), BudgetRefusal> {
-        self.steps = self.steps.saturating_add(1);
-        if self.steps > self.budget.max_steps {
-            return Err(BudgetRefusal::from_limit(
-                Limit::Steps,
-                self.budget.max_steps,
-            ));
-        }
-        Ok(())
+    fn tick(&mut self) -> Result<(), ProjectionError> {
+        tick_step(self.steps, self.budget)
     }
 
-    fn add_edge(&mut self, dependent: &str, dependency: &str) -> Result<(), BudgetRefusal> {
+    fn add_edge(&mut self, dependent: &str, dependency: &str) -> Result<(), ProjectionError> {
         self.tick()?;
         if dependent == dependency
             || !self.universe.all_ids.contains(dependent)
@@ -206,11 +274,14 @@ impl<'a> Projection<'a> {
         }
         self.edges
             .insert((dependent.to_owned(), dependency.to_owned()));
+        if self.universe.removed_ids.contains(dependency) {
+            self.broken_dependents.insert(dependent.to_owned());
+        }
         if self.edges.len() > self.budget.max_edges {
-            return Err(BudgetRefusal::from_limit(
+            return Err(ProjectionError::Budget(BudgetRefusal::from_limit(
                 Limit::Edges,
                 self.budget.max_edges,
-            ));
+            )));
         }
         Ok(())
     }
@@ -219,7 +290,7 @@ impl<'a> Projection<'a> {
         &mut self,
         dependent: &str,
         dependency: &str,
-    ) -> Result<(), BudgetRefusal> {
+    ) -> Result<(), ProjectionError> {
         if dependent != dependency
             && self.universe.all_ids.contains(dependent)
             && self.universe.all_ids.contains(dependency)
@@ -230,14 +301,16 @@ impl<'a> Projection<'a> {
         self.add_edge(dependent, dependency)
     }
 
-    fn add_type_edge(&mut self, dependent: &str, type_name: &str) -> Result<(), BudgetRefusal> {
+    fn add_type_edge(&mut self, dependent: &str, type_name: &str) -> Result<(), ProjectionError> {
+        self.tick()?;
         if let Some(owner) = self.universe.type_owners.get(type_name) {
             self.add_edge(dependent, owner)?;
         }
         Ok(())
     }
 
-    fn add_action_edge(&mut self, dependent: &str, action_id: &str) -> Result<(), BudgetRefusal> {
+    fn add_action_edge(&mut self, dependent: &str, action_id: &str) -> Result<(), ProjectionError> {
+        self.tick()?;
         if let Some(owner) = self.universe.action_owners.get(action_id) {
             self.add_edge(dependent, owner)?;
         } else {
@@ -250,17 +323,13 @@ impl<'a> Projection<'a> {
         &mut self,
         before_artifacts: &[ArtifactEnvelope],
         after_artifacts: &[ArtifactEnvelope],
-    ) -> Result<(), BudgetRefusal> {
-        let empty_registry = BTreeSet::new();
-        if let Ok(catalog) =
-            crate::definition_catalog::project(after_artifacts, &[], &empty_registry)
-        {
-            self.ingest_catalog(&catalog)?;
-        }
+    ) -> Result<(), ProjectionError> {
         for artifact in after_artifacts {
+            self.tick()?;
             self.ingest_artifact(artifact)?;
         }
         for artifact in before_artifacts {
+            self.tick()?;
             if self.universe.removed_ids.contains(&artifact.artifact_id) {
                 self.ingest_removed_type_hierarchy(artifact)?;
             }
@@ -268,78 +337,18 @@ impl<'a> Projection<'a> {
         self.add_law_writer_edges()
     }
 
-    fn ingest_catalog(&mut self, catalog: &DefinitionCatalog) -> Result<(), BudgetRefusal> {
-        for edge in &catalog.depends_on {
-            self.add_edge(&edge.from.artifact_id, &edge.to.artifact_id)?;
-        }
-        for row in &catalog.types {
-            let child_name = member_type_name(&row.at);
-            for parent in row.extends.iter().chain(&row.implements) {
-                if let Some(child) = child_name {
-                    self.type_parents
-                        .entry(child.to_owned())
-                        .or_default()
-                        .insert(parent.clone());
-                }
-                if let Some(owner) = self.universe.type_owners.get(parent) {
-                    self.add_specialization(&row.at.artifact_id, owner)?;
-                }
-            }
-        }
-        for link in &catalog.links {
-            self.add_type_edge(&link.at.artifact_id, &link.target)?;
-        }
-        for write in &catalog.writes {
-            self.add_edge(&write.writer.artifact_id, &write.target.artifact_id)?;
-            if let Some(type_name) = member_type_name(&write.target) {
-                self.type_writers
-                    .entry(type_name.to_owned())
-                    .or_default()
-                    .insert(write.writer.artifact_id.clone());
-            }
-        }
-        for mapping in &catalog.mappings {
-            self.add_edge(&mapping.map.artifact_id, &mapping.target.artifact_id)?;
-            if let Some(type_name) = member_type_name(&mapping.target) {
-                self.type_writers
-                    .entry(type_name.to_owned())
-                    .or_default()
-                    .insert(mapping.map.artifact_id.clone());
-            }
-        }
-        for law in &catalog.laws {
-            self.add_edge(&law.at.artifact_id, &law.subject.artifact_id)?;
-            if let Some(subject_name) = member_type_name(&law.subject) {
-                self.law_subjects
-                    .push((law.at.artifact_id.clone(), subject_name.to_owned()));
-            }
-            if let Some(binding) = &law.binds {
-                match binding {
-                    LawBinding::Transition { target } | LawBinding::Action { target } => {
-                        self.add_edge(&law.at.artifact_id, &target.artifact_id)?;
-                    }
-                    LawBinding::Invariant { owner, .. } => {
-                        self.add_edge(&law.at.artifact_id, &owner.artifact_id)?;
-                    }
-                }
-            }
-        }
-        for facet in &catalog.facets {
-            self.add_edge(&facet.member.artifact_id, &facet.concept.artifact_id)?;
-        }
-        Ok(())
-    }
-
     fn ingest_removed_type_hierarchy(
         &mut self,
         artifact: &ArtifactEnvelope,
-    ) -> Result<(), BudgetRefusal> {
+    ) -> Result<(), ProjectionError> {
         if artifact.kind() != ArtifactKind::Entity {
             return Ok(());
         }
-        let Ok(root) = serde_json::from_value::<EntityRoot>(payload_json(artifact)) else {
-            return Ok(());
-        };
+        let root: EntityRoot = decode_payload(
+            &artifact.artifact_id,
+            artifact.kind(),
+            payload_json(artifact)?,
+        )?;
         match root {
             EntityRoot::V2(v2) => {
                 for parent in v2
@@ -378,57 +387,54 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn ingest_artifact(&mut self, artifact: &ArtifactEnvelope) -> Result<(), BudgetRefusal> {
+    fn ingest_artifact(&mut self, artifact: &ArtifactEnvelope) -> Result<(), ProjectionError> {
         let id = artifact.artifact_id.as_str();
+        let kind = artifact.kind();
         for dep in &artifact.dependencies {
             self.add_edge(id, &dep.artifact_id)?;
         }
-        let payload = payload_json(artifact);
+        let payload = payload_json(artifact)?;
         match &artifact.payload {
             ArtifactPayload::Entity(_) => self.ingest_entity(id, payload)?,
             ArtifactPayload::Relation(_) => {
-                if let Ok(rel) = serde_json::from_value::<RelationRoot>(payload) {
-                    self.add_type_edge(id, &rel.from)?;
-                    self.add_type_edge(id, &rel.to)?;
-                }
+                let rel: RelationRoot = decode_payload(id, kind, payload)?;
+                self.add_type_edge(id, &rel.from)?;
+                self.add_type_edge(id, &rel.to)?;
             }
             ArtifactPayload::Action(_) => self.ingest_action(id, payload)?,
-            ArtifactPayload::Rule(_) => self.ingest_rule(id, payload)?,
+            ArtifactPayload::Rule(_) => self.ingest_rule(id, artifact, payload)?,
             ArtifactPayload::Policy(_) => self.ingest_policy(id, payload)?,
             ArtifactPayload::Law(_) => self.ingest_law(id, payload)?,
             ArtifactPayload::Derived(_) => {
-                if let Ok(view) = serde_json::from_value::<ViewIrPayload>(payload) {
-                    for input in &view.inputs {
-                        self.add_edge(id, &input.artifact_id)?;
-                    }
+                let view: ViewIrPayload = decode_payload(id, kind, payload)?;
+                for input in &view.inputs {
+                    self.add_edge(id, &input.artifact_id)?;
                 }
             }
             ArtifactPayload::Mapping(_) => self.ingest_mapping(id, payload)?,
             ArtifactPayload::DefinedConcept(_) => {
-                if let Ok(concept) = serde_json::from_value::<DefinedConceptRoot>(payload) {
-                    self.add_specialization(id, &concept.base.artifact_id)?;
-                    for dep in &concept.dependencies {
-                        self.add_edge(id, &dep.artifact_id)?;
-                    }
+                let concept: DefinedConceptRoot = decode_payload(id, kind, payload)?;
+                self.add_specialization(id, &concept.base.artifact_id)?;
+                for dep in &concept.dependencies {
+                    self.add_edge(id, &dep.artifact_id)?;
                 }
             }
             ArtifactPayload::Widget(_) => self.ingest_widget(id, payload)?,
             ArtifactPayload::Model(_) => {
-                if let Ok(model) = serde_json::from_value::<ModelRoot>(payload) {
-                    self.add_type_edge(id, model.input.object_type().as_str())?;
-                    if let Some(predictions) = &model.predictions {
-                        self.add_type_edge(id, predictions.object_type.as_str())?;
-                    }
+                let model: ModelRoot = decode_payload(id, kind, payload)?;
+                self.add_type_edge(id, model.input.object_type().as_str())?;
+                if let Some(predictions) = &model.predictions {
+                    self.add_type_edge(id, predictions.object_type.as_str())?;
                 }
             }
             ArtifactPayload::Customization(_) => {
-                if let Ok(custom) = serde_json::from_value::<CustomizationRoot>(payload) {
-                    self.add_edge(id, &custom.target_artifact.artifact_id)?;
-                }
+                let custom: CustomizationRoot = decode_payload(id, kind, payload)?;
+                self.add_edge(id, &custom.target_artifact.artifact_id)?;
             }
             ArtifactPayload::Labels(_) => self.ingest_labels(id, payload)?,
             ArtifactPayload::BusinessPack(_) => {
-                if let Ok(BusinessPackRoot::Composition(pack)) = serde_json::from_value(payload) {
+                let pack_root: BusinessPackRoot = decode_payload(id, kind, payload)?;
+                if let BusinessPackRoot::Composition(pack) = pack_root {
                     for member in &pack.artifacts {
                         self.add_edge(id, &member.artifact_id)?;
                     }
@@ -441,10 +447,8 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn ingest_entity(&mut self, id: &str, payload: Value) -> Result<(), BudgetRefusal> {
-        let Ok(root) = serde_json::from_value::<EntityRoot>(payload) else {
-            return Ok(());
-        };
+    fn ingest_entity(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
+        let root: EntityRoot = decode_payload(id, ArtifactKind::Entity, payload)?;
         match root {
             EntityRoot::V2(v2) => {
                 let name = v2.object_type.name.as_str();
@@ -460,6 +464,7 @@ impl<'a> Projection<'a> {
                             .map(norn_ir::InterfaceName::as_str),
                     )
                 {
+                    self.tick()?;
                     self.type_parents
                         .entry(name.to_owned())
                         .or_default()
@@ -475,6 +480,7 @@ impl<'a> Projection<'a> {
             EntityRoot::V2Interface(iface) => {
                 let name = iface.interface.name.as_str();
                 for parent in &iface.interface.extends {
+                    self.tick()?;
                     self.type_parents
                         .entry(name.to_owned())
                         .or_default()
@@ -504,19 +510,19 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn ingest_action(&mut self, id: &str, payload: Value) -> Result<(), BudgetRefusal> {
-        let Ok(action) = serde_json::from_value::<ActionRoot>(payload) else {
-            return Ok(());
-        };
+    fn ingest_action(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
+        let action: ActionRoot = decode_payload(id, ArtifactKind::Action, payload)?;
+        let mut target_types = BTreeSet::new();
         for write in &action.writes {
             self.add_type_edge(id, &write.entity_kind)?;
             self.type_writers
                 .entry(write.entity_kind.clone())
                 .or_default()
                 .insert(id.to_owned());
+            target_types.insert(write.entity_kind.clone());
         }
         if let Some(program) = &action.effect_program {
-            let (entity_artifact_id, object_kind) = match program {
+            let (entity_artifact_id, object_kind, is_mutate_rows) = match program {
                 ActionEffectProgram::UpsertInputObject {
                     entity_artifact_id,
                     object_kind,
@@ -526,12 +532,12 @@ impl<'a> Projection<'a> {
                     entity_artifact_id,
                     object_kind,
                     ..
-                }
-                | ActionEffectProgram::MutateParentWithRows {
+                } => (entity_artifact_id.as_str(), object_kind.as_str(), false),
+                ActionEffectProgram::MutateParentWithRows {
                     entity_artifact_id,
                     object_kind,
                     ..
-                } => (entity_artifact_id.as_str(), object_kind.as_str()),
+                } => (entity_artifact_id.as_str(), object_kind.as_str(), true),
             };
             self.add_edge(id, entity_artifact_id)?;
             self.add_type_edge(id, object_kind)?;
@@ -539,6 +545,17 @@ impl<'a> Projection<'a> {
                 .entry(object_kind.to_owned())
                 .or_default()
                 .insert(id.to_owned());
+            target_types.insert(object_kind.to_owned());
+            if is_mutate_rows && let Some(children) = self.universe.owned_children.get(object_kind)
+            {
+                for child_type in children {
+                    self.add_type_edge(id, child_type)?;
+                    self.type_writers
+                        .entry(child_type.clone())
+                        .or_default()
+                        .insert(id.to_owned());
+                }
+            }
         }
         for slice in &action.slice {
             self.add_type_edge(id, slice.object_type.as_str())?;
@@ -551,6 +568,9 @@ impl<'a> Projection<'a> {
         }
         if let Some(access) = &action.access {
             self.add_edge(id, &access.artifact_id)?;
+            for target_type in &target_types {
+                self.add_type_edge(&access.artifact_id, target_type)?;
+            }
         }
         if let Some(comp) = &action.compensation {
             self.add_action_edge(id, &comp.action_id)?;
@@ -558,10 +578,13 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn ingest_rule(&mut self, id: &str, payload: Value) -> Result<(), BudgetRefusal> {
-        let Ok(rule) = serde_json::from_value::<RuleRoot>(payload) else {
-            return Ok(());
-        };
+    fn ingest_rule(
+        &mut self,
+        id: &str,
+        artifact: &ArtifactEnvelope,
+        payload: Value,
+    ) -> Result<(), ProjectionError> {
+        let rule: RuleRoot = decode_payload(id, ArtifactKind::Rule, payload)?;
         for slice in &rule.slice {
             self.add_type_edge(id, slice.object_type.as_str())?;
         }
@@ -569,13 +592,30 @@ impl<'a> Projection<'a> {
             self.add_edge(id, &cmd.connector)?;
             self.add_edge(id, &cmd.mapping)?;
         }
+        // Project decide-graph fact-write targets in O(1) per rule (matching definition_catalog::fact_writes).
+        let raw_payload = artifact.payload.to_json_value();
+        if let Some(object) = raw_payload.as_object()
+            && object
+                .get("contract")
+                .and_then(norn_ir::JsonValue::as_string)
+                == Some("decide")
+            && object.contains_key("graph")
+            && let Some(output) = object.get("outputSchema")
+            && let Some(schema) = FactSchema::of(output)
+        {
+            for type_name in schema.values("objectType").unwrap_or_default() {
+                self.add_type_edge(id, type_name)?;
+                self.type_writers
+                    .entry(type_name.to_owned())
+                    .or_default()
+                    .insert(id.to_owned());
+            }
+        }
         Ok(())
     }
 
-    fn ingest_policy(&mut self, id: &str, payload: Value) -> Result<(), BudgetRefusal> {
-        let Ok(policy) = serde_json::from_value::<PolicyRoot>(payload) else {
-            return Ok(());
-        };
+    fn ingest_policy(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
+        let policy: PolicyRoot = decode_payload(id, ArtifactKind::Policy, payload)?;
         match policy {
             PolicyRoot::Access(access) => {
                 for rule in &access.rules {
@@ -603,10 +643,8 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn ingest_law(&mut self, id: &str, payload: Value) -> Result<(), BudgetRefusal> {
-        let Ok(law) = serde_json::from_value::<LawIR>(payload) else {
-            return Ok(());
-        };
+    fn ingest_law(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
+        let law: LawIR = decode_payload(id, ArtifactKind::Law, payload)?;
         self.add_type_edge(id, &law.subject)?;
         self.law_subjects.push((id.to_owned(), law.subject.clone()));
         for ty in law.scope.object_types.iter().chain(&law.scope.commitments) {
@@ -626,10 +664,8 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn ingest_mapping(&mut self, id: &str, payload: Value) -> Result<(), BudgetRefusal> {
-        let Ok(doc) = serde_json::from_value::<MappingDocument>(payload) else {
-            return Ok(());
-        };
+    fn ingest_mapping(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
+        let doc: MappingDocument = decode_payload(id, ArtifactKind::Mapping, payload)?;
         match doc {
             MappingDocument::SourceRecord(mapping) => {
                 self.add_edge(id, &mapping.source.schema_id)?;
@@ -638,6 +674,15 @@ impl<'a> Projection<'a> {
                 }
                 for map in &mapping.maps {
                     self.add_edge(id, &map.target.entity)?;
+                    if let Some(types) = self.universe.owner_types.get(&map.target.entity) {
+                        for type_name in types {
+                            self.tick()?;
+                            self.type_writers
+                                .entry(type_name.clone())
+                                .or_default()
+                                .insert(id.to_owned());
+                        }
+                    }
                 }
                 for path_map in &mapping.path_mappings {
                     for entity_id in path_map
@@ -660,10 +705,8 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn ingest_widget(&mut self, id: &str, payload: Value) -> Result<(), BudgetRefusal> {
-        let Ok(widget) = serde_json::from_value::<WidgetRoot>(payload) else {
-            return Ok(());
-        };
+    fn ingest_widget(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
+        let widget: WidgetRoot = decode_payload(id, ArtifactKind::Widget, payload)?;
         for data in &widget.data_dependencies {
             self.add_type_edge(id, &data.object_kind)?;
         }
@@ -681,10 +724,8 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn ingest_labels(&mut self, id: &str, payload: Value) -> Result<(), BudgetRefusal> {
-        let Ok(labels) = serde_json::from_value::<LabelCatalogRoot>(payload) else {
-            return Ok(());
-        };
+    fn ingest_labels(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
+        let labels: LabelCatalogRoot = decode_payload(id, ArtifactKind::Labels, payload)?;
         for entry in &labels.entries {
             match &entry.target {
                 LabelTarget::ObjectType { object_type }
@@ -694,16 +735,19 @@ impl<'a> Projection<'a> {
                 }
                 LabelTarget::Action { action_id } => self.add_action_edge(id, action_id)?,
                 LabelTarget::Rule { rule_id } => {
+                    self.tick()?;
                     if let Some(owner) = self.universe.rule_owners.get(rule_id) {
                         self.add_edge(id, owner)?;
                     }
                 }
                 LabelTarget::Law { law_id } => {
+                    self.tick()?;
                     if let Some(owner) = self.universe.law_owners.get(law_id) {
                         self.add_edge(id, owner)?;
                     }
                 }
                 LabelTarget::Page { widget_id, .. } => {
+                    self.tick()?;
                     if let Some(owner) = self.universe.widget_owners.get(widget_id) {
                         self.add_edge(id, owner)?;
                     }
@@ -713,10 +757,11 @@ impl<'a> Projection<'a> {
         Ok(())
     }
 
-    fn add_law_writer_edges(&mut self) -> Result<(), BudgetRefusal> {
+    fn add_law_writer_edges(&mut self) -> Result<(), ProjectionError> {
         let mut children_by_parent: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (child, parents) in &self.type_parents {
             for parent in parents {
+                self.tick()?;
                 children_by_parent
                     .entry(parent.clone())
                     .or_default()
@@ -731,6 +776,7 @@ impl<'a> Projection<'a> {
                 self.tick()?;
                 if let Some(children) = children_by_parent.get(&current) {
                     for child in children {
+                        self.tick()?;
                         if covered_types.insert(child.clone()) {
                             queue.push_back(child.clone());
                         }
@@ -747,19 +793,4 @@ impl<'a> Projection<'a> {
         }
         Ok(())
     }
-}
-
-fn member_type_name(member_ref: &MemberRef) -> Option<&str> {
-    match &member_ref.member {
-        Member::Type { type_name }
-        | Member::Property { type_name, .. }
-        | Member::Link { type_name, .. }
-        | Member::State { type_name, .. }
-        | Member::Transition { type_name, .. } => Some(type_name.as_str()),
-        Member::Artifact {} | Member::ObjectMap { .. } | Member::Law { .. } => None,
-    }
-}
-
-fn payload_json(artifact: &ArtifactEnvelope) -> Value {
-    serde_json::to_value(artifact.payload.to_json_value()).unwrap_or_default()
 }

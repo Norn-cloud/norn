@@ -198,13 +198,7 @@ fn multi_hop_transitive_ripple_across_core_subtype_action_law_widget() {
         "jewelry.melt",
     );
 
-    let before = vec![
-        holding.clone(),
-        metal.clone(),
-        melt.clone(),
-        purity.clone(),
-        widget.clone(),
-    ];
+    let before = vec![holding, metal, melt, purity, widget];
     let after = before.clone();
 
     let report = compute_ripple_effects(&before, &after, &["core.Holding".to_owned()]);
@@ -421,5 +415,70 @@ fn budget_exhaustion_fails_closed_with_unknown_and_no_silent_truncation() {
             .as_ref()
             .map(|r| r.resource.as_str()),
         Some("steps")
+    );
+}
+
+#[test]
+fn tight_budget_during_projection_returns_unknown_with_budget_exceeded_and_empty_ripples() {
+    let a = entity_v2("proj.A", "proj.A", None, &[], vec![]);
+    let b = entity_v2(
+        "proj.B",
+        "proj.B",
+        Some("proj.A"),
+        &[],
+        vec![dep("proj.A", "entity")],
+    );
+    let c = action_upsert("proj.write_b", "proj.write_b", "proj.B", "proj.B");
+    let d = law_on_action("proj.law_b", "proj.law_b", "proj.B", "proj.write_b");
+    let e = widget_for_action("proj.ui_b", "proj.ui_b", "proj.write_b", "proj.write_b");
+    let set = vec![a, b, c, d, e];
+
+    // 5 artifacts in before + 5 in after requires at least 10 projection steps before reachability.
+    let report = compute_ripple_effects_with_budget(
+        &set,
+        &set,
+        &["proj.A".to_owned()],
+        Budget {
+            max_nodes: 100,
+            max_edges: 100,
+            max_steps: 4,
+        },
+    );
+    assert_eq!(report.status, RippleStatus::Unknown);
+    assert!(report.ripples.is_empty());
+    let refusal = report
+        .budget_exceeded
+        .as_ref()
+        .expect("projection budget exhaustion must populate budget_exceeded");
+    assert_eq!(refusal.resource, "steps");
+    assert_eq!(refusal.limit, 4);
+    assert!(report.reason.is_some());
+}
+
+#[test]
+fn malformed_artifact_projection_error_fails_closed_with_unknown() {
+    let valid = entity_v2("err.Base", "err.Base", None, &[], vec![]);
+    let malformed = envelope(
+        "err.Broken",
+        "entity",
+        vec![dep("err.Base", "entity")],
+        json!({
+            "entityVersion": "2.0",
+            "objectType": "not-an-object"
+        }),
+    );
+    let set = vec![valid, malformed];
+
+    let report = compute_ripple_effects(&set, &set, &["err.Base".to_owned()]);
+    assert_eq!(report.status, RippleStatus::Unknown);
+    assert!(report.ripples.is_empty());
+    assert!(report.budget_exceeded.is_none());
+    let reason = report
+        .reason
+        .as_deref()
+        .expect("projection error must record an explicit reason");
+    assert!(
+        reason.contains("err.Broken"),
+        "expected malformed artifact id in reason, got: {reason}"
     );
 }

@@ -1357,6 +1357,7 @@ fn append<E: SqlEngine>(
                 message: "the id is used by a definition of another kind".to_owned(),
                 law: None,
                 span: None,
+                witness: None,
             }]));
         }
         let installed_at = now_ms.max(cell.now().as_millis());
@@ -1877,6 +1878,7 @@ pub fn retire_definition<E: SqlEngine>(
             message: "the definition is already retired".to_owned(),
             law: None,
             span: None,
+            witness: None,
         }]));
     }
     let mut definition = current.definition;

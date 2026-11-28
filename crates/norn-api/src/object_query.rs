@@ -25,7 +25,7 @@ use norn_ir::{Decimal, PropertyType, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::refusal::{Refusal, RefusalDiagnostic, RefusalSpan};
+use crate::refusal::{Refusal, RefusalDiagnostic};
 
 /// Default and largest page.
 pub const DEFAULT_LIMIT: usize = 50;
@@ -241,15 +241,8 @@ struct Findings(Vec<RefusalDiagnostic>);
 impl Findings {
     /// Record one violation at `pointer`.
     fn push(&mut self, code: &str, message: impl Into<String>, pointer: impl Into<String>) {
-        self.0.push(RefusalDiagnostic {
-            code: code.to_owned(),
-            severity: "error".to_owned(),
-            message: message.into(),
-            span: Some(RefusalSpan {
-                pointer: pointer.into(),
-            }),
-            law: None,
-        });
+        self.0
+            .push(RefusalDiagnostic::error(code, message, pointer));
     }
 }
 
@@ -276,15 +269,11 @@ pub(crate) fn refused(violations: Vec<(&str, String, String)>) -> Refusal {
 
 /// A 400 for a cursor this query cannot continue from.
 pub(crate) fn cursor_invalid() -> Refusal {
-    invalid(vec![RefusalDiagnostic {
-        code: "query.cursor_invalid".to_owned(),
-        severity: "error".to_owned(),
-        message: "the cursor does not continue this query for this caller".to_owned(),
-        span: Some(RefusalSpan {
-            pointer: "/after".to_owned(),
-        }),
-        law: None,
-    }])
+    invalid(vec![RefusalDiagnostic::error(
+        "query.cursor_invalid",
+        "the cursor does not continue this query for this caller",
+        "/after",
+    )])
 }
 
 /// Whether `text` is a property name, `[a-z][a-z0-9_]*`.

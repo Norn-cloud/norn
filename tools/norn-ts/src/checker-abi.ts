@@ -62,6 +62,7 @@ export interface RippleReport {
   readonly roots: ReadonlyArray<string>
   readonly ripples: ReadonlyArray<RippleEntry>
   readonly budgetExceeded?: RippleBudgetExceeded
+  readonly reason?: string
 }
 
 export interface CheckerDiagnostic {

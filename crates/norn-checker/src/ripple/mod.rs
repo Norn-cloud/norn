@@ -1,16 +1,19 @@
 #![forbid(unsafe_code)]
 //! Exact deterministic transitive ripple-effect computation over admitted or candidate artifact sets.
 //!
-//! Projects the cross-artifact dependency graph from [`crate::definition_catalog::project`] and
-//! typed artifact envelopes (`entity` types/interfaces/extensions/links, `relation`, `action`,
-//! `rule`, `law`, `policy`, `derived`, `mapping`, `defined_concept`, `model`, `widget`,
-//! `customization`, `labels`, `business_pack`, `connector`, `setting`, `source_schema`), then
-//! runs metered reverse [`norn_graph::reachability`] (`Direction::Upstream`) under a caller-supplied
-//! [`Budget`] to compute the exact transitive ripple set with shortest concrete explanation chains
-//! (`via`) and impact classifications.
+//! Projects the cross-artifact dependency graph directly from typed artifact envelopes
+//! (`entity` types/interfaces/extensions/links, `relation`, `action`, `rule` including decide-graph
+//! fact-write schemas, `law`, `policy`, `derived`, `mapping` including `pathMappings` and
+//! `LawInterpretation`, `defined_concept`, `model`, `widget`, `customization`, `labels`,
+//! `business_pack`, `connector`, `setting`, `source_schema`) with explicit O(N) indexing and
+//! step-level budget metering, then runs metered reverse [`norn_graph::reachability`]
+//! (`Direction::Upstream`) under the remaining caller-supplied [`Budget`] to compute the exact
+//! transitive ripple set with shortest concrete explanation chains (`via`) and impact
+//! classifications.
 //!
-//! Fail-closed completeness: exhausting `nodes`, `edges`, or `steps` returns
-//! [`RippleStatus::Unknown`] with explicit [`BudgetRefusal`] metadata and never silently truncates.
+//! Fail-closed completeness: exhausting `nodes`, `edges`, or `steps` or encountering any
+//! projection/decode error returns [`RippleStatus::Unknown`] with empty `ripples` and explicit
+//! [`BudgetRefusal`] / `reason` metadata, never silently truncating or claiming `Exact`.
 
 mod project;
 
@@ -20,7 +23,7 @@ use norn_graph::{Budget, Direction, Error as GraphError, Graph, Limit, reachabil
 use norn_ir::{ArtifactEnvelope, ArtifactKind};
 use serde_json::{Map, Value, json};
 
-use self::project::{Projection, Universe};
+use self::project::{Projection, ProjectionError, Universe};
 
 /// Format tag of [`RippleReport::to_json_value`].
 pub const RIPPLE_FORMAT: &str = "norn-checker/ripple@1";
@@ -37,7 +40,7 @@ pub const DEFAULT_RIPPLE_BUDGET: Budget = Budget {
 pub enum RippleStatus {
     /// Exact transitive closure completed within the graph budget.
     Exact,
-    /// Graph budget was exhausted; no partial ripple set is claimed complete.
+    /// Graph budget was exhausted or projection failed; no partial ripple set is claimed complete.
     Unknown,
 }
 
@@ -164,17 +167,38 @@ pub struct RippleReport {
     pub roots: Vec<String>,
     /// Impacted artifacts in deterministic wave order (empty when [`RippleStatus::Unknown`]).
     pub ripples: Vec<RippleEntry>,
-    /// Explicit budget exhaustion metadata when [`RippleStatus::Unknown`].
+    /// Explicit budget exhaustion metadata when [`RippleStatus::Unknown`] due to a budget limit.
     pub budget_exceeded: Option<BudgetRefusal>,
+    /// Explicit explanation when [`RippleStatus::Unknown`] (projection error or budget exhaustion).
+    pub reason: Option<String>,
 }
 
 impl RippleReport {
-    fn unknown(roots: Vec<String>, refusal: BudgetRefusal) -> Self {
+    fn unknown_budget(roots: Vec<String>, refusal: BudgetRefusal) -> Self {
+        let reason = refusal.detail.clone();
         Self {
             status: RippleStatus::Unknown,
             roots,
             ripples: Vec::new(),
             budget_exceeded: Some(refusal),
+            reason: Some(reason),
+        }
+    }
+
+    fn unknown_reason(roots: Vec<String>, reason: String) -> Self {
+        Self {
+            status: RippleStatus::Unknown,
+            roots,
+            ripples: Vec::new(),
+            budget_exceeded: None,
+            reason: Some(reason),
+        }
+    }
+
+    fn from_projection_error(roots: Vec<String>, error: ProjectionError) -> Self {
+        match error {
+            ProjectionError::Budget(refusal) => Self::unknown_budget(roots, refusal),
+            ProjectionError::Invalid(reason) => Self::unknown_reason(roots, reason),
         }
     }
 
@@ -197,6 +221,9 @@ impl RippleReport {
         if let Some(refusal) = &self.budget_exceeded {
             map.insert("budgetExceeded".to_owned(), refusal.to_json_value());
         }
+        if let Some(reason) = &self.reason {
+            map.insert("reason".to_owned(), json!(reason));
+        }
         Value::Object(map)
     }
 }
@@ -218,8 +245,9 @@ pub fn compute_ripple_effects(
 
 /// Compute exact transitive ripple effects under an explicit metered [`Budget`].
 ///
-/// Exhausting `budget` fails closed with [`RippleStatus::Unknown`] and an empty `ripples`
-/// vector so callers never mistake a truncated traversal for a complete impact set.
+/// Exhausting `budget` or encountering any projection/decode error fails closed with
+/// [`RippleStatus::Unknown`] and an empty `ripples` vector so callers never mistake a truncated
+/// or incomplete traversal for an exact impact set.
 #[must_use]
 pub fn compute_ripple_effects_with_budget(
     before_artifacts: &[ArtifactEnvelope],
@@ -227,38 +255,52 @@ pub fn compute_ripple_effects_with_budget(
     changed_artifact_ids: &[String],
     budget: Budget,
 ) -> RippleReport {
-    let universe = Universe::build(before_artifacts, after_artifacts, changed_artifact_ids);
+    let mut steps = 0usize;
+    let universe = match Universe::build(
+        before_artifacts,
+        after_artifacts,
+        changed_artifact_ids,
+        budget,
+        &mut steps,
+    ) {
+        Ok(universe) => universe,
+        Err(error) => return RippleReport::from_projection_error(Vec::new(), error),
+    };
     let root_list: Vec<String> = universe.roots.iter().cloned().collect();
-    if universe.all_ids.len() > budget.max_nodes {
-        return RippleReport::unknown(
-            root_list,
-            BudgetRefusal::from_limit(Limit::Nodes, budget.max_nodes),
-        );
-    }
     if universe.roots.is_empty() {
         return RippleReport {
             status: RippleStatus::Exact,
             roots: Vec::new(),
             ripples: Vec::new(),
             budget_exceeded: None,
+            reason: None,
         };
     }
 
-    let mut projection = Projection::new(&universe, budget);
-    if let Err(refusal) = projection.collect(before_artifacts, after_artifacts) {
-        return RippleReport::unknown(root_list, refusal);
+    let mut projection = Projection::new(&universe, budget, &mut steps);
+    if let Err(error) = projection.collect(before_artifacts, after_artifacts) {
+        return RippleReport::from_projection_error(root_list, error);
     }
 
     let graph = Graph {
         nodes: universe.all_ids.iter().cloned().collect(),
         edges: projection.edges.iter().cloned().collect(),
     };
-    let reached = match reachability(&graph, &root_list, Direction::Upstream, budget) {
+    let remaining_budget = Budget {
+        max_nodes: budget.max_nodes,
+        max_edges: budget.max_edges,
+        max_steps: budget.max_steps.saturating_sub(steps),
+    };
+    let reached = match reachability(&graph, &root_list, Direction::Upstream, remaining_budget) {
         Ok(reached) => reached,
         Err(GraphError::BudgetExceeded(exceeded)) => {
-            return RippleReport::unknown(
+            let reported_limit = match exceeded.resource {
+                Limit::Steps => budget.max_steps,
+                Limit::Nodes | Limit::Edges => exceeded.limit,
+            };
+            return RippleReport::unknown_budget(
                 root_list,
-                BudgetRefusal::from_limit(exceeded.resource, exceeded.limit),
+                BudgetRefusal::from_limit(exceeded.resource, reported_limit),
             );
         }
         Err(
@@ -271,21 +313,18 @@ pub fn compute_ripple_effects_with_budget(
             | GraphError::Arithmetic(_)
             | GraphError::Invariant,
         ) => {
-            return RippleReport::unknown(
+            return RippleReport::unknown_reason(
                 root_list,
-                BudgetRefusal {
-                    resource: "steps".to_owned(),
-                    limit: budget.max_steps,
-                    detail: "ripple graph reachability could not complete".to_owned(),
-                },
+                "ripple graph reachability could not complete".to_owned(),
             );
         }
     };
 
-    let (triggered_by, best_via) = match trace_paths(&universe.roots, &projection.edges, budget) {
-        Ok(paths) => paths,
-        Err(refusal) => return RippleReport::unknown(root_list, refusal),
-    };
+    let (triggered_by, best_via) =
+        match trace_paths(&universe.roots, &projection.edges, budget, &mut steps) {
+            Ok(paths) => paths,
+            Err(refusal) => return RippleReport::unknown_budget(root_list, refusal),
+        };
 
     let mut ripples = Vec::with_capacity(reached.len());
     for artifact_id in reached {
@@ -321,6 +360,7 @@ pub fn compute_ripple_effects_with_budget(
         roots: root_list,
         ripples,
         budget_exceeded: None,
+        reason: None,
     }
 }
 
@@ -333,9 +373,14 @@ fn trace_paths(
     roots: &BTreeSet<String>,
     edges: &BTreeSet<(String, String)>,
     budget: Budget,
+    steps: &mut usize,
 ) -> Result<PathTraceResult, BudgetRefusal> {
     let mut dependents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (dependent, dependency) in edges {
+        *steps = steps.saturating_add(1);
+        if *steps > budget.max_steps {
+            return Err(BudgetRefusal::from_limit(Limit::Steps, budget.max_steps));
+        }
         dependents
             .entry(dependency.as_str())
             .or_default()
@@ -343,14 +388,13 @@ fn trace_paths(
     }
     let mut triggered_by: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut best_via: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut steps = 0usize;
 
     for root in roots {
         let mut parent: BTreeMap<&str, Option<&str>> = BTreeMap::from([(root.as_str(), None)]);
         let mut queue = VecDeque::from([root.as_str()]);
         while let Some(current) = queue.pop_front() {
-            steps = steps.saturating_add(1);
-            if steps > budget.max_steps {
+            *steps = steps.saturating_add(1);
+            if *steps > budget.max_steps {
                 return Err(BudgetRefusal::from_limit(Limit::Steps, budget.max_steps));
             }
             triggered_by
@@ -361,8 +405,8 @@ fn trace_paths(
             update_best_path(&mut best_via, current, path);
             if let Some(next_nodes) = dependents.get(current) {
                 for &next in next_nodes {
-                    steps = steps.saturating_add(1);
-                    if steps > budget.max_steps {
+                    *steps = steps.saturating_add(1);
+                    if *steps > budget.max_steps {
                         return Err(BudgetRefusal::from_limit(Limit::Steps, budget.max_steps));
                     }
                     if !parent.contains_key(next) {
@@ -415,11 +459,7 @@ fn classify_impact(
     if universe.roots.contains(artifact_id) {
         return ImpactKind::DirectChange;
     }
-    if universe.removed_ids.iter().any(|removed| {
-        projection
-            .edges
-            .contains(&(artifact_id.to_owned(), removed.clone()))
-    }) {
+    if projection.broken_dependents.contains(artifact_id) {
         return ImpactKind::RemovedDependencyBroken;
     }
     match universe.artifact_kinds.get(artifact_id) {
@@ -461,7 +501,7 @@ fn classify_impact(
     }
 }
 
-const fn kind_name(kind: &ArtifactKind) -> &'static str {
+pub(super) const fn kind_name(kind: &ArtifactKind) -> &'static str {
     match kind {
         ArtifactKind::Entity => "entity",
         ArtifactKind::Relation => "relation",

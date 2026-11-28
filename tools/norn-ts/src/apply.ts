@@ -368,19 +368,29 @@ function diagnostics(document: Doc): string[] {
 }
 
 function rippleLines(plan: Doc): string[] {
+  const renderList = (ripples: ReadonlyArray<Doc>): string[] => {
+    if (ripples.length === 0) return []
+    return [
+      `  transitive ripples (${ripples.length}):`,
+      ...ripples.map((r: Doc) => {
+        const via = Array.isArray(r.via) && r.via.length > 0 ? ` via ${r.via.join(" -> ")}` : ""
+        return `    [${r.impactKind}] ${r.artifactId} [${r.kind}]${via}`
+      }),
+    ]
+  }
+  if (plan.ripples && typeof plan.ripples === "object" && !Array.isArray(plan.ripples)) {
+    const report = plan.ripples as Doc
+    if (report.status === "unknown") {
+      const detail = report.reason ?? report.budgetExceeded?.detail ?? "graph budget exceeded"
+      return [`  ripples: UNKNOWN (${detail})`]
+    }
+    return renderList(Array.isArray(report.ripples) ? report.ripples : [])
+  }
   if (plan.rippleStatus === "unknown") {
-    const detail = plan.rippleBudgetExceeded?.detail ?? "graph budget exceeded"
+    const detail = plan.rippleReason ?? plan.rippleBudgetExceeded?.detail ?? "graph budget exceeded"
     return [`  ripples: UNKNOWN (${detail})`]
   }
-  const ripples = Array.isArray(plan.ripples) ? plan.ripples : []
-  if (ripples.length === 0) return []
-  return [
-    `  transitive ripples (${ripples.length}):`,
-    ...ripples.map((r: Doc) => {
-      const via = Array.isArray(r.via) && r.via.length > 0 ? ` via ${r.via.join(" -> ")}` : ""
-      return `    [${r.impactKind}] ${r.artifactId} [${r.kind}]${via}`
-    }),
-  ]
+  return renderList(Array.isArray(plan.ripples) ? plan.ripples : [])
 }
 
 function planSummary(plan: Doc): string {
