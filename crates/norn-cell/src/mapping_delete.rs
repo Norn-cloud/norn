@@ -95,6 +95,44 @@ pub(crate) fn prepare_mapping_deletes<E: SqlEngine>(
     Ok(())
 }
 
+/// Verify `row`'s frontier metadata and receipt claim-write binding against
+/// `_norn_export_journal` + `_norn_receipt`.
+pub(crate) fn verify_frontier_row_meta<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    row: &crate::link_claim_frontier::FrontierRow,
+) -> Result<(), CellError> {
+    let meta = crate::link_claim_frontier::claim_source_meta(
+        reader.conn,
+        Some(reader),
+        row.commit_seq,
+        Some(&row.claim_id),
+        &row.claim.observation_id,
+        true,
+    )?;
+    if meta.source_version != row.source_version
+        || meta.version_kind != row.version_kind
+        || meta.event_keys != row.event_keys
+    {
+        return Err(CellError::LedgerCorrupt {
+            seq: row.commit_seq,
+            reason: format!("frontier metadata mismatch for {}", row.claim_id),
+        });
+    }
+    Ok(())
+}
+
+/// Verify `row` against `_norn_export_journal` + `_norn_receipt` and parse its
+/// source version.
+pub(crate) fn parse_verified_frontier_version<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    row: &crate::link_claim_frontier::FrontierRow,
+) -> Result<Option<norn_ir::SourceVersion>, CellError> {
+    verify_frontier_row_meta(reader, row)?;
+    Ok((!row.source_version.trim().is_empty())
+        .then(|| norn_ir::SourceVersion::parse(row.version_kind, &row.source_version).ok())
+        .flatten())
+}
+
 /// True when any already-landed bundle or accepted correction for `bundle`'s
 /// source record (same mapping, dataset, connector instance, partition, source,
 /// and `source_id`) or active non-reject frontier claim on its deleted subjects
@@ -116,9 +154,7 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
             if reader.is_reject_carry_claim(&row)? {
                 continue;
             }
-            if let Some(frontier_ver) =
-                crate::mapping_links::parse_verified_frontier_version(reader, &row)?
-            {
+            if let Some(frontier_ver) = parse_verified_frontier_version(reader, &row)? {
                 match frontier_ver.try_cmp(&incoming_version) {
                     Ok(std::cmp::Ordering::Greater) | Err(_) => return Ok(true),
                     Ok(std::cmp::Ordering::Less | std::cmp::Ordering::Equal) => {}
@@ -230,6 +266,20 @@ fn has_newer_subject_history_bundle<E: SqlEngine>(
             crate::engine::params![crate::MAIN_WORLD, key, object_type],
         )?;
         for raw in commit_rows {
+            candidate_commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
+        }
+        let deleted_rows = reader.conn.query(
+            &format!(
+                "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
+                 WHERE \"world\" = ?1 \
+                   AND json_extract(\"event\", '$.op') = 'observed_deleted' \
+                   AND json_extract(\"event\", '$.key.objectType') = ?2 \
+                   AND json_extract(\"event\", '$.key.key') = ?3",
+                crate::system::LEDGER,
+            ),
+            crate::engine::params![crate::MAIN_WORLD, object_type, key],
+        )?;
+        for raw in deleted_rows {
             candidate_commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
         }
     }

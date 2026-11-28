@@ -636,6 +636,7 @@ pub(crate) fn authenticated_claim_observed<E: SqlEngine>(
     conn: &E,
     reader: Option<&StoreReader<'_, E>>,
     commit_seq: u64,
+    claim_id: Option<&str>,
     observation_id: &str,
     committed: bool,
 ) -> Result<Option<Value>, CellError> {
@@ -662,6 +663,13 @@ pub(crate) fn authenticated_claim_observed<E: SqlEngine>(
                 if export.receipt != receipt {
                     return Err(corrupt("export journal receipt mismatch"));
                 }
+            }
+            if let Some(cid) = claim_id
+                && !export.receipt.body.written.iter().any(|w| {
+                    w.object_type == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE && w.key == cid
+                })
+            {
+                return Err(corrupt("receipt did not write this link claim"));
             }
             if let Some(consumed_val) = export.consumed_input.as_ref() {
                 let ConsumedInput::Observation {
@@ -726,6 +734,11 @@ fn authenticated_legacy_claim_observed<E: SqlEngine>(
     observation_id: &str,
     corrupt: &dyn Fn(&str) -> CellError,
 ) -> Result<Option<Value>, CellError> {
+    if observation_id.starts_with("mapping-bundle:") {
+        return Err(corrupt("mapping-bundle claim missing consumed_input"));
+    }
+    let is_dispute = observation_id.starts_with("mapping-conflict:")
+        || observation_id.starts_with("mapping-identity:");
     let Some(prev_i64) = conn
         .query_optional(
             &format!(
@@ -737,6 +750,11 @@ fn authenticated_legacy_claim_observed<E: SqlEngine>(
         )?
         .flatten()
     else {
+        if is_dispute {
+            return Err(corrupt(
+                "missing prior consumed_commit_seq for legacy dispute claim",
+            ));
+        }
         return Ok(None);
     };
     let prev_seq = u64::try_from(prev_i64)

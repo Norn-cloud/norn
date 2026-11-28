@@ -7,6 +7,7 @@ use crate::{
     link_claim_frontier::FrontierRow,
     mapping_bundle::MappingBundle,
     mapping_conflict::{EventDispute, SourceDisputeIndex},
+    mapping_delete::{parse_verified_frontier_version, verify_frontier_row_meta},
 };
 use norn_ir::{RuntimeObject, RuntimeValue, mapping::ObservedLinkClaim};
 use norn_kernel::{
@@ -96,32 +97,6 @@ pub(crate) fn parse_source_version(
         .ok_or(CellError::MappingBundleMismatch)?;
     norn_ir::SourceVersion::parse(kind, raw_version)
         .map_err(|_err| CellError::MappingBundleMismatch)
-}
-
-/// Verify `row`'s frontier metadata against `_norn_export_journal` + `_norn_receipt`.
-pub(crate) fn parse_verified_frontier_version<E: SqlEngine>(
-    reader: &StoreReader<'_, E>,
-    row: &FrontierRow,
-) -> Result<Option<norn_ir::SourceVersion>, CellError> {
-    let meta = crate::link_claim_frontier::claim_source_meta(
-        reader.conn,
-        Some(reader),
-        row.commit_seq,
-        &row.claim.observation_id,
-        true,
-    )?;
-    if meta.source_version != row.source_version
-        || meta.version_kind != row.version_kind
-        || meta.event_keys != row.event_keys
-    {
-        return Err(CellError::LedgerCorrupt {
-            seq: row.commit_seq,
-            reason: format!("frontier metadata mismatch for {}", row.claim_id),
-        });
-    }
-    Ok((!row.source_version.trim().is_empty())
-        .then(|| norn_ir::SourceVersion::parse(row.version_kind, &row.source_version).ok())
-        .flatten())
 }
 
 /// OBS-LINK-CONTRIBUTION-1, mirroring the kernel's final-set rule: only a
@@ -672,6 +647,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     ) -> Result<Vec<Entry>, CellError> {
         let mut entries = Vec::with_capacity(rows.len());
         for row in rows {
+            verify_frontier_row_meta(self, &row)?;
             let disputed = self.event_keys_disputed(&row.event_keys, excluding_dispute)?;
             entries.push(Entry {
                 claim: row.claim,

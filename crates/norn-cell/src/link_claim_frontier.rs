@@ -61,6 +61,7 @@ pub(crate) const DDL: &[&str] = &[
   "receipt_hash" TEXT NOT NULL
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/dispute_resolved" ON "_norn_ledger" ("world", json_extract("event", '$.disputeId'), "commit_seq") WHERE json_extract("event", '$.op') = 'dispute_resolved'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/observed_deleted" ON "_norn_ledger" ("world", json_extract("event", '$.key.objectType'), json_extract("event", '$.key.key'), "commit_seq") WHERE json_extract("event", '$.op') = 'observed_deleted'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/noop_observation" ON "_norn_receipt" ("world", "commit_seq") WHERE json_extract("receipt", '$.consumed.kind') = 'observation' AND (json_array_length(json_extract("receipt", '$.written')) = 0 OR json_extract("receipt", '$.consumed.observationId') LIKE 'mapping-page:%')"#,
 ];
 
@@ -188,6 +189,7 @@ pub(crate) fn claim_source_meta<E: SqlEngine>(
     conn: &E,
     reader: Option<&StoreReader<'_, E>>,
     commit_seq: u64,
+    claim_id: Option<&str>,
     observation_id: &str,
     committed: bool,
 ) -> Result<ClaimSourceMeta, CellError> {
@@ -195,6 +197,7 @@ pub(crate) fn claim_source_meta<E: SqlEngine>(
         conn,
         reader,
         commit_seq,
+        claim_id,
         observation_id,
         committed,
     )?
@@ -233,6 +236,7 @@ pub(crate) fn record_claim_in_tx<E: SqlEngine>(
         reader.conn,
         Some(reader),
         commit_seq,
+        None,
         &claim.observation_id,
         false,
     )?;
@@ -511,6 +515,7 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
                 reader.conn,
                 Some(reader),
                 *exp_seq,
+                Some(&id),
                 &exp_claim.observation_id,
                 true,
             )?;
@@ -733,7 +738,14 @@ fn rebuild_inner<E: SqlEngine>(
     for (id, commit_seq, ord, claim) in &decoded {
         let meta_key = (*commit_seq, claim.observation_id.clone());
         if !meta_cache.contains_key(&meta_key) {
-            let meta = claim_source_meta(conn, reader, *commit_seq, &claim.observation_id, true)?;
+            let meta = claim_source_meta(
+                conn,
+                reader,
+                *commit_seq,
+                Some(id),
+                &claim.observation_id,
+                true,
+            )?;
             meta_cache.insert(meta_key.clone(), meta);
         }
         let meta = meta_cache
@@ -886,9 +898,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// Inactive (`active = 0`) frontier claims for one `contribution_id`.
-    /// Queried only on out-of-order late arrivals (`new_version <= some active
-    /// claim`) so the late claim records its maximal earlier predecessor in
-    /// `supersedes` without touching history on monotonic feeds.
     pub(crate) fn inactive_claims_for_contribution(
         &self,
         contribution_id: &str,
@@ -904,9 +913,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         rows.into_iter().map(decode_frontier_row).collect()
     }
 
-    /// Active (`active = 1`) frontier claims owned by `source_scope` for
-    /// `source_key` with a live target (`target_key IS NOT NULL`), used when a
-    /// source `kind == "delete"` withdraws that source's link contributions.
+    /// Active (`active = 1`) frontier claims owned by `source_scope` for source deletes.
     pub(crate) fn active_claims_for_source_delete(
         &self,
         source_scope: &str,
@@ -926,9 +933,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         rows.into_iter().map(decode_frontier_row).collect()
     }
 
-    /// Active (`active = 1`) frontier claims whose NFC `event_keys` match
-    /// `event_keys`, used when `mapping.dispute.resolve` (`reject`) withdraws
-    /// the disputed event's link contributions.
+    /// Active (`active = 1`) frontier claims matching NFC `event_keys`.
     pub(crate) fn active_claims_for_event_keys(
         &self,
         event_keys: &[String; 5],
@@ -945,8 +950,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         rows.into_iter().map(decode_frontier_row).collect()
     }
 
-    /// Every recorded `mapping.dispute.resolve` decision, ordered by commit
-    /// sequence then dispute id.
+    /// Every recorded `mapping.dispute.resolve` decision.
     ///
     /// # Errors
     /// Store query failures or unverified resolution index rows.
