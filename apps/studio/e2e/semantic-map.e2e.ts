@@ -75,7 +75,10 @@ async function cell(page: Page, inbox: unknown, definitionsServed: Promise<void>
   })
 }
 
+const shots = process.env.SHOTS
+
 async function shoot(page: Page, info: TestInfo, name: string) {
+  if (!shots) return
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme })
     await page.waitForTimeout(300)
@@ -203,7 +206,7 @@ test("map on a phone: the skeleton reserves the four stacked key-number tiles, s
   await page.goto("/map")
   const overlay = page.locator('[data-slot="bone-skeleton"][data-bone="semantic-map"] [data-boneyard-overlay="true"]')
   await expect(overlay).toBeVisible()
-  await page.screenshot({ path: info.outputPath("map-phone-skeleton.png") })
+  if (shots) await page.screenshot({ path: info.outputPath("map-phone-skeleton.png") })
   const skeleton = await overlay.evaluate((el) => {
     const top = el.getBoundingClientRect().top
     const bones = [...el.querySelectorAll<HTMLElement>('[data-boneyard-bone="true"]')].map((bone) => bone.getBoundingClientRect())
@@ -219,7 +222,7 @@ test("map on a phone: the skeleton reserves the four stacked key-number tiles, s
     const card = document.querySelector<HTMLElement>('[data-slot="semantic-island"]')!.getBoundingClientRect()
     return { tiles, islandTop: Math.round(card.top - top), islandBottom: Math.round(card.bottom - top) }
   })
-  await page.screenshot({ path: info.outputPath("map-phone-loaded.png") })
+  if (shots) await page.screenshot({ path: info.outputPath("map-phone-loaded.png") })
   // Four stacked tiles on a phone, and a bone starting where each tile and the first island card start.
   expect(loaded.tiles).toHaveLength(4)
   for (const y of [...loaded.tiles, loaded.islandTop]) {
