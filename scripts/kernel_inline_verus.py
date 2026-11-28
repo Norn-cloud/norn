@@ -187,31 +187,42 @@ def compare_production_ir(repo, work, symbols):
     thir = work / "kernel.thir"
     # A run-specific diagnostic directory forces Cargo to run the printer even
     # on warm caches, without changing cfgs, codegen options or source paths.
-    with thir.open("w") as dump:
-        subprocess.run(["cargo", "+1.100.0", "rustc", "--locked", "--release", "-p", "norn-kernel",
-                        "--lib", "--", "-Zunpretty=thir-flat", f"-Zdump-mir-dir={work / 'mir'}"],
-                       cwd=repo, env={**os.environ, "RUSTC_BOOTSTRAP": "norn_kernel"},
-                       stdout=dump, check=True)
-    with thir.open() as lines:
-        return _sibling("kernel_verus_ir").compare((work / "vir/crate.vir").read_text(), lines, symbols)
+    try:
+        with thir.open("w") as dump:
+            subprocess.run(["cargo", "+1.100.0", "rustc", "--locked", "--release", "-p", "norn-kernel",
+                            "--lib", "--", "-Zunpretty=thir-flat", f"-Zdump-mir-dir={work / 'mir'}"],
+                           cwd=repo, env={**os.environ, "RUSTC_BOOTSTRAP": "norn_kernel"},
+                           stdout=dump, check=True)
+        with thir.open() as lines:
+            return _sibling("kernel_verus_ir").compare((work / "vir/crate.vir").read_text(), lines, symbols)
+    finally:
+        thir.unlink(missing_ok=True)
 
 
 def compare_artifact_production_ir(repo, work, symbols):
-    thir_tree = work / "norn_ir.thir-tree"
-    thir_flat = work / "norn_ir.thir-flat"
     env = {**os.environ, "RUSTC_BOOTSTRAP": "norn_ir"}
-    for path, fmt, mir_dir in (
-        (thir_tree, "thir-tree", "artifact_mir_tree"),
-        (thir_flat, "thir-flat", "artifact_mir_flat"),
+    ir = _sibling("kernel_verus_ir")
+    sections = {}
+    for fmt, mir_dir in (
+        ("thir-tree", "artifact_mir_tree"),
+        ("thir-flat", "artifact_mir_flat"),
     ):
-        with path.open("w") as dump:
-            subprocess.run(["cargo", "+1.100.0", "rustc", "--locked", "--release", "-p", "norn-ir",
-                            "--lib", "--", f"-Zunpretty={fmt}", f"-Zdump-mir-dir={work / mir_dir}"],
-                           cwd=repo, env=env, stdout=dump, check=True)
-    return _sibling("kernel_verus_ir").compare_artifact_governance(
+        cmd = ["cargo", "+1.100.0", "rustc", "--locked", "--release", "-p", "norn-ir",
+               "--lib", "--", f"-Zunpretty={fmt}", f"-Zdump-mir-dir={work / mir_dir}"]
+        # Stream THIR stdout line-by-line so multi-GB crate dumps never live on tmpfs or in RAM.
+        with subprocess.Popen(cmd, cwd=repo, env=env, stdout=subprocess.PIPE, text=True) as proc:
+            try:
+                sections[fmt] = ir.artifact_thir_sections(proc.stdout, symbols)
+            finally:
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            returncode = proc.wait()
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, cmd)
+    return ir.compare_artifact_governance_sections(
         (work / "artifact_vir/crate.vir").read_text(),
-        thir_tree.read_text(),
-        thir_flat.read_text(),
+        sections["thir-tree"],
+        sections["thir-flat"],
         symbols,
     )
 

@@ -1529,12 +1529,12 @@
           "const": "defined_concept"
         },
         {
-          "description": "Localized labels for definitions; never part of a definition's\nidentity ([`labels`]).",
+          "description": "Localized labels for definitions; never part of a definition's\nidentity ([`crate::labels`]).",
           "type": "string",
           "const": "labels"
         },
         {
-          "description": "`ModelIR`: a typed predictive model with opaque internals\n([`model`]).",
+          "description": "`ModelIR`: a typed predictive model with opaque internals\n([`crate::model`]).",
           "type": "string",
           "const": "model"
         }

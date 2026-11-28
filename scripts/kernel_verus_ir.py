@@ -487,30 +487,37 @@ def _artifact_thir_function(tree_body, flat_body):
     return out
 
 
-def _artifact_thir_sections(text, names):
+def artifact_thir_sections(lines, names):
+    """Stream THIR output line-by-line and retain only the requested artifact_governance bodies."""
+    if isinstance(lines, str):
+        lines = lines.splitlines(True)
     result = {}
-    sections = re.split(r"^DefId\(0:\d+ ~ ([^\n]+?)\):\n", text, flags=re.M)
-    for header, body in zip(sections[1::2], sections[2::2], strict=True):
-        match = re.fullmatch(r"norn_ir\[[0-9a-f]+\]::artifact_governance::(\w+)", header)
-        if not match or match[1] not in names:
-            continue
-        name = match[1]
-        require(name not in result, f"duplicate THIR function {header}")
-        result[name] = body
+    name = None
+    body = []
+    for line in lines:
+        if line.startswith("DefId("):
+            if name is not None:
+                result[name] = "".join(body)
+            header = re.fullmatch(
+                r"DefId\(0:\d+ ~ norn_ir\[[0-9a-f]+\]::artifact_governance::(\w+)\):\r?\n?",
+                line,
+            )
+            name = header[1] if header and header[1] in names else None
+            if name is not None:
+                require(name not in result, f"duplicate THIR function {line.strip()}")
+            body = []
+        elif name is not None:
+            body.append(line)
+    if name is not None:
+        result[name] = "".join(body)
     return result
 
 
-def _artifact_thir_functions(tree_text, flat_text, names):
-    tree_bodies = _artifact_thir_sections(tree_text, names)
-    flat_bodies = _artifact_thir_sections(flat_text, names)
+def compare_artifact_governance_sections(vir_text, tree_bodies, flat_bodies, names):
+    verified = _artifact_vir_functions(vir_text, names)
     require(tree_bodies.keys() == flat_bodies.keys(),
             f"THIR tree/flat function mismatch: tree {sorted(tree_bodies)}, flat {sorted(flat_bodies)}")
-    return {name: _artifact_thir_function(tree_bodies[name], flat_bodies[name]) for name in tree_bodies}
-
-
-def compare_artifact_governance(vir_text, thir_tree_text, thir_flat_text, names):
-    verified = _artifact_vir_functions(vir_text, names)
-    shipped = _artifact_thir_functions(thir_tree_text, thir_flat_text, names)
+    shipped = {name: _artifact_thir_function(tree_bodies[name], flat_bodies[name]) for name in tree_bodies}
     require(set(names) == verified.keys() == shipped.keys(),
             f"incomplete compiler inventory: VIR {sorted(verified)}, THIR {sorted(shipped)}")
     counts = {}
@@ -520,3 +527,12 @@ def compare_artifact_governance(vir_text, thir_tree_text, thir_flat_text, names)
             require(left == right, f"{name} {category}: VIR only {left - right}, THIR only {right - left}")
         counts[name] = {k: len(v) if isinstance(v, set) else v.total() for k, v in verified[name].items()}
     return counts
+
+
+def compare_artifact_governance(vir_text, thir_tree, thir_flat, names):
+    return compare_artifact_governance_sections(
+        vir_text,
+        artifact_thir_sections(thir_tree, names),
+        artifact_thir_sections(thir_flat, names),
+        names,
+    )

@@ -547,6 +547,18 @@ Thir {
             compare_artifact_ir(self.vir, self.thir, single_line, ["direct_artifact_write_allowed"]),
             counts,
         )
+        # Line-streaming iterators (as used when reading rustc stdout) must match string input
+        # and discard unrelated DefId sections.
+        noise = "DefId(0:1 ~ norn_ir[abcd]::other::big_fn):\n    ignored\n"
+        tree_stream = (line for line in (noise + self.thir + noise).splitlines(True))
+        flat_stream = (line for line in (noise + self.thir_flat + noise).splitlines(True))
+        self.assertEqual(
+            compare_artifact_ir(self.vir, tree_stream, flat_stream, ["direct_artifact_write_allowed"]),
+            counts,
+        )
+        # Duplicate target sections must fail closed when streaming.
+        with self.assertRaisesRegex(ValueError, "duplicate THIR function"):
+            verus_ir["artifact_thir_sections"]((self.thir + self.thir).splitlines(True), ["direct_artifact_write_allowed"])
 
     def test_rejects_flipped_executable_bool_literals(self):
         # Flip the final executable Boolean literal in VIR while leaving THIR unchanged.

@@ -12389,14 +12389,14 @@
           },
           {
             "type": "string",
-            "description": "Localized labels for definitions; never part of a definition's\nidentity ([`labels`]).",
+            "description": "Localized labels for definitions; never part of a definition's\nidentity ([`crate::labels`]).",
             "enum": [
               "labels"
             ]
           },
           {
             "type": "string",
-            "description": "`ModelIR`: a typed predictive model with opaque internals\n([`model`]).",
+            "description": "`ModelIR`: a typed predictive model with opaque internals\n([`crate::model`]).",
             "enum": [
               "model"
             ]
