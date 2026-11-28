@@ -144,15 +144,21 @@ if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCAC
   # without this configuration, on the local cache only.
   echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
 fi
-# A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+# A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`, and
+# cc-rs wraps C/C++ builds (libduckdb-sys, ring, zstd-sys, libsqlite3-sys) only when
+# RUSTC_WRAPPER's file stem is `sccache` (cc::rustc_wrapper_fallback). Keep the wrapper
+# off PATH and invoke the real sccache by absolute path so it can never recurse; when
 # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
 # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
 # status and diagnostics, also after a `sccache: warning:` (a local compile).
-wrapper="$RUNNER_TEMP/sccache-rustc"
-cat > "$wrapper" <<'WRAPPER'
-#!/usr/bin/env bash
+real_sccache=$(command -v sccache || true)
+wrapper_dir="$RUNNER_TEMP/sccache-fallback"
+mkdir -p "$wrapper_dir"
+wrapper="$wrapper_dir/sccache"
+printf '#!/usr/bin/env bash\nreal_sccache=%q\n' "$real_sccache" > "$wrapper"
+cat >> "$wrapper" <<'WRAPPER'
 log=$(mktemp) || exec "$@"
-sccache "$@" 2> "$log"
+"$real_sccache" "$@" 2> "$log"
 status=$?
 if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
   echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
@@ -164,7 +170,7 @@ rm -f "$log"
 exit "$status"
 WRAPPER
 chmod +x "$wrapper"
-if sccache --start-server; then
+if [ -n "$real_sccache" ] && "$real_sccache" --start-server; then
   echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
 else
   echo "::warning::sccache server unavailable; compiling with plain rustc"
@@ -637,7 +643,7 @@ echo "$plan"'''
     setup = [
         {"uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
          "with": {"toolchain": "1.100.0", "components": "rustfmt, clippy", "targets": "wasm32-unknown-unknown"}},
-        {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.3.14"}},
+        {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.4.5"}},
         # No post-job stats: their failure would fail a build that succeeded without sccache.
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
          "with": {"version": "v0.19.0", "disable_annotations": True}},
@@ -650,7 +656,7 @@ echo "$plan"'''
                   "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
         {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
          "with": {"path": "~/.bun/install/cache",
-                  "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock') }}"}},
+                  "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock', 'apps/sidekick-bridge/bun.lock') }}"}},
         # Digest-pinned interop schemas: erpnext_runtime.py re-verifies every cached file.
         {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
          "with": {"path": "~/.cache/norn-interop",
@@ -704,7 +710,7 @@ df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
 """}
     nextest = {"uses": "taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
-               "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129"}}
+               "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129,uv@0.13.10"}}
     for name, command in required_runs.items():
         job = jobs.get(name, {})
         # A draft head runs core only; its bundles wait until it is ready for review.
@@ -873,10 +879,14 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     authoring = re.findall(r"^run_authoring_tests\(\) \(\n(.*?)^\)$", runner, re.MULTILINE | re.DOTALL)
     require(len(authoring) == 1 and all(
         authoring[0].splitlines().count(command) == 1 for command in (
-            '  bun test --timeout 60000 --shard=1/2 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &',
-            '  bun test --timeout 60000 --shard=2/2 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &',
-            '  wait "$first" || status=1',
-            '  wait "$second" || status=1',
+            '  bun test --timeout 60000 --shard=1/4 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &',
+            '  bun test --timeout 60000 --shard=2/4 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &',
+            '  bun test --timeout 60000 --shard=3/4 --reporter=junit --reporter-outfile="$upstream/authoring-3.xml" &',
+            '  bun test --timeout 60000 --shard=4/4 --reporter=junit --reporter-outfile="$upstream/authoring-4.xml" &',
+            '  wait "$s1" || status=1',
+            '  wait "$s2" || status=1',
+            '  wait "$s3" || status=1',
+            '  wait "$s4" || status=1',
             '  (( status == 0 )) || exit "$status"',
             'if not expected or actual != expected:',
             'idle = sorted(set(expected) - executed - skip_allowed)',

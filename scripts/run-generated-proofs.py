@@ -32,12 +32,12 @@ def main():
     quint = tools / "bin/quint"
     located_bun = shutil.which("bun")
     bun = str(Path(located_bun).resolve()) if located_bun else None
-    if not bun or subprocess.check_output([quint, "--version"], timeout=60).strip() != b"0.32.0" or subprocess.check_output([bun, "--version"], timeout=60).strip() != b"1.3.14":
+    if not bun or subprocess.check_output([quint, "--version"], timeout=60).strip() != b"0.32.0" or subprocess.check_output([bun, "--version"], timeout=60).strip() != b"1.4.5":
         raise ValueError("backend version mismatch")
     package = ROOT / "tools/norn-proofs"
     check_script = ROOT / "scripts/check-generated-quint.py"
     python_version = ".".join(map(str, sys.version_info[:3]))
-    assets = [(f"python/{python_version}/interpreter", Path(sys.executable)), ("bun/1.3.14/bun", Path(bun)),
+    assets = [(f"python/{python_version}/interpreter", Path(sys.executable)), ("bun/1.4.5/bun", Path(bun)),
               ("quint/0.32.0/quint", quint), ("temurin/21.0.12.1_1/java", tools / "bin/java")]
     apalache = tools / "quint-home/apalache-dist-0.56.1/apalache"
     assets += [(f"apalache/0.56.1/{name}", apalache / name) for name in ["bin/apalache-mc", "lib/apalache.jar"]]
