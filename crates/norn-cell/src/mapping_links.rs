@@ -216,7 +216,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         fn group_by_sr<'a>(
             list: &'a [Entry],
             model: CommitModel<'_, '_>,
-        ) -> BTreeMap<(FactKey, String), Vec<&'a Entry>> {
+        ) -> BTreeMap<(FactKey, norn_ir::LinkId), Vec<&'a Entry>> {
             let mut groups = BTreeMap::<_, Vec<&'a Entry>>::new();
             for entry in list {
                 let source = model.canonical(&FactKey::new(
