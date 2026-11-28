@@ -443,6 +443,10 @@ impl Refusal {
             "core.world.fork_invalid_world"
         } else if matches!(error, norn_cell::CellError::WorldSimulationForbidden) {
             "core.world.simulation_forbidden"
+        } else if matches!(error, norn_cell::CellError::ForkClosed { .. }) {
+            "core.world.fork_closed"
+        } else if matches!(error, norn_cell::CellError::ForkMergeRefused { .. }) {
+            "core.world.merge_refused"
         } else {
             return Self::host(error);
         };

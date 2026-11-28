@@ -1,5 +1,5 @@
 {
-  "bundleDigest": "c508120f61e46f530a5377ff19094112947c33c328ae8ecccadabe6f88d2b0c2",
+  "bundleDigest": "f372c208590ca044b7c5d215a66775c6209f214cf9f2239c591b54ee4cb382be",
   "sourceRecordRef": {
     "system": "synthetic-erpnext",
     "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
@@ -12,7 +12,7 @@
   "mappingPin": {
     "artifactId": "erpnext.three.mapping",
     "version": "0.2.0",
-    "sha256": "1a08febe3975be4fe9a6408e7d0479cec083d90046dd703c6f10dad6c6a6381d"
+    "sha256": "6ae0d39bf45d61e07e746283573727cd1e760c0ee8a708fdf29ab767444b8ecb"
   },
   "fieldProvenance": {
     "currency": {

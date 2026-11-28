@@ -1249,6 +1249,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-deque"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "622f3fc73690be383c7214310406f28a90e6edeadc3cea882f9d71e495b9711a"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc74980687109a3b14c72fd458107bf0baa1da1a1a805e178d15501ba9b86d9d"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-queue"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2174,6 +2193,12 @@ name = "downcast-rs"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
+
+[[package]]
+name = "dragonbox_ecma"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd8e701084c37e7ef62d3f9e453b618130cbc0ef3573847785952a3ac3f746bf"
 
 [[package]]
 name = "drop_bomb"
@@ -3675,6 +3700,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-authoring"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tsrs_ast",
+ "tsrs_checker",
+ "tsrs_compiler",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_ls",
+ "tsrs_lsproto",
+ "tsrs_parser",
+ "tsrs_scanner",
+ "tsrs_tsoptions",
+ "tsrs_vfs",
+]
+
+[[package]]
 name = "norn-authoring-py"
 version = "0.1.0"
 dependencies = [
@@ -4769,6 +4814,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rayon"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "recursive"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5654,6 +5719,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "smallbitvec"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b0e903ee191d8f7a8fbf0d712c3a1699d19e04ceba5ad1eb673053c7d938a09"
+
+[[package]]
 name = "smallvec"
 version = "1.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6174,6 +6245,373 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsrs_ast"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a968a9a4d48347e82079d1029d192d1596e1d38b105b7a4236a787f358b70a3"
+dependencies = [
+ "bitflags 2.13.1",
+ "hashbrown 0.17.1",
+ "memchr",
+ "rustc-hash",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_spanmap",
+]
+
+[[package]]
+name = "tsrs_astnav"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edfd98da9e0699d90988ae830a2e9a1d3862a530dd88655ae660e59551aa3dcc"
+dependencies = [
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_scanner",
+]
+
+[[package]]
+name = "tsrs_binder"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98eaf021116cb09e380eb9ef77ab6ecdbf0e19ef0ae95afb251ac361c0d956c0"
+dependencies = [
+ "bitflags 2.13.1",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_scanner",
+]
+
+[[package]]
+name = "tsrs_checker"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36b6da9fb484be719f4c10791ef78d8570697c7ac96a275160bec35998626bbc"
+dependencies = [
+ "bitflags 2.13.1",
+ "hashbrown 0.17.1",
+ "rustc-hash",
+ "smallbitvec",
+ "smallvec",
+ "tsrs_ast",
+ "tsrs_astnav",
+ "tsrs_binder",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_module",
+ "tsrs_modulespecifiers",
+ "tsrs_parser",
+ "tsrs_printer",
+ "tsrs_pseudochecker",
+ "tsrs_scanner",
+ "tsrs_tsoptions",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "tsrs_compiler"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81b1e202ae619943bf61a7d562856c96d041fe1f8bfdbf6320bb2882db341100"
+dependencies = [
+ "rayon",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_binder",
+ "tsrs_checker",
+ "tsrs_contentmapper",
+ "tsrs_core",
+ "tsrs_declarations",
+ "tsrs_diagnostics",
+ "tsrs_module",
+ "tsrs_modulespecifiers",
+ "tsrs_parser",
+ "tsrs_printer",
+ "tsrs_scanner",
+ "tsrs_sourcemap",
+ "tsrs_spanmap",
+ "tsrs_transformers",
+ "tsrs_tsoptions",
+ "tsrs_vfs",
+]
+
+[[package]]
+name = "tsrs_contentmapper"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d663385620fe97d3807a4d9c102f1fa4c85c983617f8fbcd24893b386b9b4908"
+dependencies = [
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_ipc",
+ "tsrs_parser",
+ "tsrs_spanmap",
+ "tsrs_tsoptions",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "tsrs_core"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40feb4e0923d97528dbc5c73ec722cb3027c4223894382a0e7d0db19c89665ee"
+dependencies = [
+ "dragonbox_ecma",
+ "hashbrown 0.17.1",
+ "icu_normalizer",
+ "indexmap 2.14.0",
+ "libc",
+ "memchr",
+ "num-bigint 0.5.1",
+ "num-traits",
+ "rustc-hash",
+ "simdutf8",
+ "unicode-id-start",
+]
+
+[[package]]
+name = "tsrs_declarations"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bbb8ac107c3ebffdd4ea7ec70b35c2509af02da441142339c19524ff62b3530"
+dependencies = [
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_checker",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_modulespecifiers",
+ "tsrs_printer",
+ "tsrs_scanner",
+ "tsrs_transformers",
+ "tsrs_tsoptions",
+]
+
+[[package]]
+name = "tsrs_diagnostics"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f066873b05720fc673f9e1e9e7cf157f3be67980bbedcb890f4f86d349f18f95"
+dependencies = [
+ "rustc-hash",
+]
+
+[[package]]
+name = "tsrs_ipc"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0770fbecf6eaba155e3701a00f8e35f19d4c230fb0d3fca4bd40b76df68ddb5"
+dependencies = [
+ "rustc-hash",
+ "tsrs_core",
+]
+
+[[package]]
+name = "tsrs_ls"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9aed7739639b7fb1d33e0e047c0ae85a7b6813391014b45e3747e9c475dd19e9"
+dependencies = [
+ "bitflags 2.13.1",
+ "indexmap 2.14.0",
+ "rayon",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_astnav",
+ "tsrs_binder",
+ "tsrs_checker",
+ "tsrs_compiler",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_lsproto",
+ "tsrs_module",
+ "tsrs_modulespecifiers",
+ "tsrs_parser",
+ "tsrs_printer",
+ "tsrs_projectutil",
+ "tsrs_scanner",
+ "tsrs_sourcemap",
+ "tsrs_spanmap",
+ "tsrs_tsoptions",
+ "tsrs_vfs",
+]
+
+[[package]]
+name = "tsrs_lsproto"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c110e5e0884977d4b2b170baddf972640388ac08cbfd20401032951135c11c8"
+dependencies = [
+ "rustc-hash",
+ "tsrs_core",
+ "tsrs_vfs",
+]
+
+[[package]]
+name = "tsrs_module"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e11f3b81523ecc98d0555b51e3817f877373b19cfb797e2f00cb765bc70f79b3"
+dependencies = [
+ "bitflags 2.13.1",
+ "hashbrown 0.17.1",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_vfs",
+]
+
+[[package]]
+name = "tsrs_modulespecifiers"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "130d1e916b12c831e96c90fb97dd2635e9c0d566bee8715c9e8f83b8e28384df"
+dependencies = [
+ "regex",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_module",
+ "tsrs_tsoptions",
+]
+
+[[package]]
+name = "tsrs_parser"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bf6ee6ed0de5f118cdb154c2cdc4de8a420f9e699c606e5a43842668009b50d"
+dependencies = [
+ "bitflags 2.13.1",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_scanner",
+]
+
+[[package]]
+name = "tsrs_printer"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "891c78891bca957a2fc2053fd5294aba5992befba43cf572596817416f28a08e"
+dependencies = [
+ "bitflags 2.13.1",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_scanner",
+ "tsrs_sourcemap",
+]
+
+[[package]]
+name = "tsrs_projectutil"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3557a2f28048c3d3744a4f0a828b585ff8249b5a10587e6a2e0bd4b8e3368d4d"
+dependencies = [
+ "rustc-hash",
+ "tsrs_core",
+]
+
+[[package]]
+name = "tsrs_pseudochecker"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "171aebe140f97e439445c5ccfb92b7f86617361a88b026371dbe436dd9b373ab"
+dependencies = [
+ "tsrs_ast",
+ "tsrs_core",
+]
+
+[[package]]
+name = "tsrs_scanner"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6601f776456bd56c89cd1780228e666e7cad5a658dae6161a1b775aa022090d"
+dependencies = [
+ "bitflags 2.13.1",
+ "memchr",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_diagnostics",
+]
+
+[[package]]
+name = "tsrs_sourcemap"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2dd651d0ce7fbe85e3e758f85e7bf6d3900208884bd08a4265a6192564606b3"
+dependencies = [
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_scanner",
+]
+
+[[package]]
+name = "tsrs_spanmap"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34bda379317e3d2c1a3dfba90d3f4cde8167ad8eba56e3ff1d308089847fae98"
+dependencies = [
+ "bitflags 2.13.1",
+ "tsrs_core",
+]
+
+[[package]]
+name = "tsrs_transformers"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1974523d1c93d8ce7160bd713fbed6ce41115b1cc7722b8870560a8c712c6e17"
+dependencies = [
+ "bitflags 2.13.1",
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_binder",
+ "tsrs_checker",
+ "tsrs_core",
+ "tsrs_printer",
+ "tsrs_scanner",
+ "tsrs_tsoptions",
+]
+
+[[package]]
+name = "tsrs_tsoptions"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed5cd8a2c82b5bcb4ae5d0658ef6bd985e0d0817bba4230ef97569830ea432b4"
+dependencies = [
+ "rustc-hash",
+ "tsrs_ast",
+ "tsrs_core",
+ "tsrs_diagnostics",
+ "tsrs_module",
+ "tsrs_parser",
+ "tsrs_scanner",
+ "tsrs_vfs",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "tsrs_vfs"
+version = "7.1.0-beta.tsrs5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d43f6a446a58ccc54f6442e854a9d62d419d34aa02387e388a37ea1adeb4c2ce"
+dependencies = [
+ "bitflags 2.13.1",
+ "rayon",
+ "rustc-hash",
+ "rustix",
+ "tsrs_core",
+]
+
+[[package]]
 name = "twox-hash"
 version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6223,6 +6661,12 @@ name = "unicode-general-category"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
+
+[[package]]
+name = "unicode-id-start"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8f73150333cb58412db36f2aca8f2875b013049705cc77b94ded70a1ab1f5da"
 
 [[package]]
 name = "unicode-ident"
@@ -6757,6 +7201,12 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40de123dbb523ebcc00d61ec01840ad192578afc378d859f3429caa38308fad5"
 
 [[package]]
 name = "yoke"

@@ -1,11 +1,12 @@
 //! Read-bound findings an observation authorizes: an unchanged object's
 //! data-quality findings, bound to the compare-and-swap read that guards it.
 
+use norn_ir::mapping::ObservedLifecycleSnapshot;
 use norn_ir::provenance::InstanceProvenance;
 use norn_ir::{DataQualityFinding, DataQualityRuleRef};
 
 use super::{ObservationAuthorization, ObservationRefusal, findings_for};
-use crate::cell_host::{FactExpectation, FactKey, FactVersion, JsonObject};
+use crate::cell_host::{FactExpectation, FactKey, FactState, FactVersion, JsonObject, JsonValue};
 use crate::commit_check::InvariantFailure;
 use crate::decision_commit::TypeCatalog;
 
@@ -63,4 +64,43 @@ impl ObservationAuthorization {
         }
         Ok(())
     }
+}
+
+/// When creating a new object whose lifecycle property declares no default value,
+/// seed that property from the observed lifecycle snapshot if the observed state
+/// is itself a declared initial state of the effective lifecycle.
+pub(super) fn seed_initial_lifecycle_states(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    original: &FactState,
+    values: &JsonObject,
+    lifecycles: &[ObservedLifecycleSnapshot],
+) -> Option<JsonObject> {
+    if original.values.is_some() || lifecycles.is_empty() {
+        return None;
+    }
+    let effective = catalog.effective_type(&key.object_type)?;
+    let mut seeded: Option<JsonObject> = None;
+    for snapshot in lifecycles {
+        let has_default = effective
+            .property(snapshot.property.as_str())
+            .is_some_and(|prop| prop.default_value().ok().flatten().is_some());
+        if has_default {
+            continue;
+        }
+        let Some(lifecycle) = catalog.lifecycle(&key.object_type, &snapshot.property) else {
+            continue;
+        };
+        if lifecycle
+            .initial
+            .iter()
+            .any(|state| state == &snapshot.state)
+        {
+            seeded.get_or_insert_with(|| values.clone()).insert(
+                snapshot.property.as_str().to_owned(),
+                JsonValue::String(snapshot.state.clone()),
+            );
+        }
+    }
+    seeded
 }

@@ -120,17 +120,34 @@ pub(crate) fn linked_subjects<V: CommitView + ?Sized>(
     Ok(())
 }
 
+fn record_audit(
+    audit: &mut Vec<crate::commit_check::CommitLawAudit>,
+    subject: &FactKey,
+    applied_exceptions: Vec<crate::governing_laws::AppliedLawException>,
+) {
+    if !applied_exceptions.is_empty() {
+        audit.push(crate::commit_check::CommitLawAudit {
+            subject: subject.clone(),
+            applied_exceptions,
+        });
+    }
+}
+
+fn violated<E>(key: &FactKey, failure: crate::governing_laws::LawFailure) -> CommitError<E> {
+    CommitError::Law {
+        key: key.clone(),
+        reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
+    }
+}
+
 pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     post: &PostState<'_, '_, V>,
     authorization: Option<&ObservationAuthorization>,
+    audit: &mut Vec<crate::commit_check::CommitLawAudit>,
 ) -> Result<(), CommitError<V::Error>> {
     let model = post.model();
     let mut remaining = TurnFuel::default();
-    let violated = |key: &FactKey, failure: crate::governing_laws::LawFailure| CommitError::Law {
-        key: key.clone(),
-        reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
-    };
     let mut subjects = LawSubjects::default();
     let authorized = authorization.map(ObservationAuthorization::indexed);
     for write in &commit.writes {
@@ -141,16 +158,22 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
         let PostRow::Live { values, .. } = post.row(&write.key)? else {
             unreachable!("sealed Put is live")
         };
-        let failures = evaluate(post, &write.key, &values, &mut remaining)?;
+        let report = evaluate(post, &write.key, &values, &mut remaining)?;
         if authorized
             .as_ref()
             .is_some_and(|index| index.authorizes(write))
         {
+            record_audit(audit, &write.key, report.applied_exceptions);
             continue;
         }
-        if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
+        if let Some(failure) = report
+            .failures
+            .into_iter()
+            .find(|failure| failure.refuses_native)
+        {
             return Err(violated(&write.key, failure));
         }
+        record_audit(audit, &write.key, report.applied_exceptions);
     }
     // LAW-LINK-1: only a native commit refuses for its subjects; an observed
     // commit's linked subjects are re-checked by the observation path.
@@ -170,6 +193,15 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
         return Ok(());
     }
     law_subjects(commit, post, &index, &mut subjects)?;
+    check_linked_governing_laws(post, &subjects, &mut remaining, audit)
+}
+
+fn check_linked_governing_laws<V: CommitView + ?Sized>(
+    post: &PostState<'_, '_, V>,
+    subjects: &LawSubjects,
+    remaining: &mut TurnFuel,
+    audit: &mut Vec<crate::commit_check::CommitLawAudit>,
+) -> Result<(), CommitError<V::Error>> {
     let unreadable = |subject: &FactKey| CommitError::Law {
         key: subject.clone(),
         reason: crate::governing_laws::LawEvaluationError::Unsupported(
@@ -180,12 +212,15 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
         let PostRow::Live { values, .. } = post.row(subject)? else {
             return Err(unreadable(subject));
         };
-        if let Some(failure) = evaluate(post, subject, &values, &mut remaining)?
+        let report = evaluate(post, subject, &values, remaining)?;
+        if let Some(failure) = report
+            .failures
             .into_iter()
             .find(|failure| failure.refuses_native)
         {
             return Err(violated(subject, failure));
         }
+        record_audit(audit, subject, report.applied_exceptions);
     }
     // A target write refuses when it breaks a law a linked subject satisfied;
     // a subject already in violation (a quarantined observation) does not
@@ -195,16 +230,22 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
         let PostRow::Live { values, .. } = post.row(subject)? else {
             return Err(unreadable(subject));
         };
-        let after = evaluate(post, subject, &values, &mut remaining)?;
-        if !after.iter().any(|failure| failure.refuses_native) {
+        let after = evaluate(post, subject, &values, remaining)?;
+        if !after.failures.iter().any(|failure| failure.refuses_native) {
+            record_audit(audit, subject, after.applied_exceptions);
             continue;
         }
-        let held = evaluate(&before, subject, &values, &mut remaining)?;
-        if let Some(failure) = after.into_iter().find(|failure| {
-            failure.refuses_native && !held.iter().any(|prior| prior.rule_ref == failure.rule_ref)
+        let held = evaluate(&before, subject, &values, remaining)?;
+        if let Some(failure) = after.failures.into_iter().find(|failure| {
+            failure.refuses_native
+                && !held
+                    .failures
+                    .iter()
+                    .any(|prior| prior.rule_ref == failure.rule_ref)
         }) {
             return Err(violated(subject, failure));
         }
+        record_audit(audit, subject, after.applied_exceptions);
     }
     Ok(())
 }
@@ -290,9 +331,9 @@ fn evaluate<V: CommitView + ?Sized>(
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
     remaining: &mut TurnFuel,
-) -> Result<Vec<crate::governing_laws::LawFailure>, CommitError<V::Error>> {
+) -> Result<crate::governing_laws::LawEvaluationReport, CommitError<V::Error>> {
     let mut links = CommitLinks::new(on, key);
-    let evaluated = crate::governing_laws::evaluate_linked(
+    let evaluated = crate::governing_laws::evaluate_linked_with_audit(
         on.model().catalog,
         key,
         values,

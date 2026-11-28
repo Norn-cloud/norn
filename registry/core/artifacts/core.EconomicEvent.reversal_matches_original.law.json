@@ -1,0 +1,51 @@
+{
+  "artifactId": "core.EconomicEvent.reversal_matches_original.law",
+  "dependencies": [
+    {
+      "artifactId": "core.EconomicEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A reversing economic event matches its original's quantity, measure, and action",
+  "namespace": "core",
+  "payload": {
+    "condition": "self.reverses != null",
+    "id": "core.EconomicEvent.reversal_matches_original",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/rea.ts"
+    },
+    "rationale": "1-hop LAW-LINK-1 reversal parity: a linked reversal matches the quantity, unit, currency, and action of the posted event it reverses (same-resource / per-account cancellation remains enforced by the kernel reversal primitive).",
+    "response": {
+      "expression": "self.quantity == self.reverses.quantity and ((self.unit == null) == (self.reverses.unit == null)) and ((self.unit ?? '') == (self.reverses.unit ?? '')) and ((self.currency == null) == (self.reverses.currency == null)) and ((self.currency ?? '') == (self.reverses.currency ?? '')) and self.action == self.reverses.action",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.EconomicEvent"
+      ],
+      "root": {
+        "id": "core.EconomicEvent",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.EconomicEvent"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.EconomicEvent.reversal_matches_original.law.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

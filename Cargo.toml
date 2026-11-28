@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/norn-api",
+  "crates/norn-authoring",
   "crates/norn-authoring-py",
   "crates/norn-authz",
   "crates/norn-builtins",
@@ -28,6 +29,7 @@ members = [
 ]
 default-members = [
   "crates/norn-api",
+  "crates/norn-authoring",
   "crates/norn-authoring-py",
   "crates/norn-authz",
   "crates/norn-builtins",

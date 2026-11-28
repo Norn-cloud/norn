@@ -1,0 +1,26 @@
+[package]
+name = "norn-authoring"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Native Rust TypeScript authoring compiler and formatter embedding tsrs (ring 1; see README.md)"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.20"
+tsrs_ast = "=7.1.0-beta.tsrs5"
+tsrs_checker = "=7.1.0-beta.tsrs5"
+tsrs_compiler = "=7.1.0-beta.tsrs5"
+tsrs_core = "=7.1.0-beta.tsrs5"
+tsrs_diagnostics = "=7.1.0-beta.tsrs5"
+tsrs_ls = "=7.1.0-beta.tsrs5"
+tsrs_lsproto = "=7.1.0-beta.tsrs5"
+tsrs_parser = "=7.1.0-beta.tsrs5"
+tsrs_scanner = "=7.1.0-beta.tsrs5"
+tsrs_tsoptions = "=7.1.0-beta.tsrs5"
+tsrs_vfs = "=7.1.0-beta.tsrs5"
+
+[lints]
+workspace = true

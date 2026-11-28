@@ -819,6 +819,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         property: &str,
     ) -> Result<bool, CellError> {
+        self.check_live()?;
         if self.model.tables(object_type)?.is_empty() {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
         }
