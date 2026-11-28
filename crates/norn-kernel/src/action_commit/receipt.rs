@@ -307,6 +307,7 @@ pub struct ActionReferenceReads {
     pub(super) writes: Vec<FactWrite>,
     pub(super) links: Vec<LinkWrite>,
     pub(super) link_reads: Vec<LinkReadExpectation>,
+    pub(super) predicate_reads: Vec<crate::cell_host::PredicateReadExpectation>,
     pub(super) event_count: usize,
     pub(super) laws_digest: String,
 }
@@ -355,7 +356,7 @@ impl ActionReferenceReads {
             && self.writes == commit.writes
             && self.links == commit.links
             && self.link_reads == commit.link_reads
-            && commit.predicate_reads.is_empty()
+            && self.predicate_reads == commit.predicate_reads
             && self.event_count == commit.events.len()
             && commit.effects.is_empty()
             && commit.consumes.is_none()
@@ -510,22 +511,46 @@ fn collect_create_law_property_reads<'a>(
     Some(())
 }
 
-/// Exact non-computed slice property operands read ONLY by `action.preconditions`,
-/// keyed by slice alias.
+/// Exact non-computed point-slice property operands read ONLY by `action.preconditions`,
+/// keyed by slice alias. Predicate slice entries remain under full whole-object lineage.
 fn create_precondition_alias_reads<'a>(
     catalog: &crate::decision_commit::TypeCatalog<'_>,
     action: &'a ActionRoot,
 ) -> Option<BTreeMap<&'a str, BTreeSet<String>>> {
     let mut entries: BTreeMap<&str, &SliceDeclaration> = BTreeMap::new();
-    let mut alias_properties: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+    let mut predicate_aliases: BTreeSet<&str> = BTreeSet::new();
+    let mut alias_properties: BTreeMap<&'a str, BTreeSet<String>> = BTreeMap::new();
     for entry in &action.slice {
-        if entry.optional
-            || !matches!(&entry.key, SliceKey::Property { from, .. } if from == "input")
-            || entries.insert(entry.name.as_str(), entry).is_some()
-        {
+        if entry.optional {
             return None;
         }
-        alias_properties.insert(entry.name.as_str(), BTreeSet::new());
+        match &entry.key {
+            SliceKey::Property { from, .. } if from == "input" => {
+                if entries.insert(entry.name.as_str(), entry).is_some()
+                    || predicate_aliases.contains(entry.name.as_str())
+                {
+                    return None;
+                }
+                alias_properties.insert(entry.name.as_str(), BTreeSet::new());
+            }
+            SliceKey::Predicate { .. } => {
+                if entries.contains_key(entry.name.as_str())
+                    || !predicate_aliases.insert(entry.name.as_str())
+                {
+                    return None;
+                }
+            }
+            SliceKey::Property { .. }
+            | SliceKey::Link { .. }
+            | SliceKey::Parameter { .. }
+            | SliceKey::TriggerObject
+            | SliceKey::TriggerBefore
+            | SliceKey::TriggerAfter
+            | SliceKey::TriggerChanges => return None,
+        }
+    }
+    if entries.is_empty() {
+        return None;
     }
     for expression in &action.preconditions {
         if norn_expr::expression_reads(&expression.0, "slice")
@@ -534,13 +559,19 @@ fn create_precondition_alias_reads<'a>(
         {
             return None;
         }
-        if !norn_expr::expression_element_paths(&expression.0, "slice")
-            .ok()?
-            .is_empty()
-        {
+        let elements = norn_expr::expression_element_paths(&expression.0, "slice").ok()?;
+        if elements.keys().any(|collection| {
+            collection
+                .first()
+                .is_none_or(|head| !predicate_aliases.contains(head.as_str()))
+        }) {
             return None;
         }
-        for path in norn_expr::expression_read_paths(&expression.0, "slice").ok()? {
+        for path in norn_expr::expression_read_paths_with_closures(&expression.0, "slice").ok()? {
+            let head = path.first()?;
+            if predicate_aliases.contains(head.as_str()) {
+                continue;
+            }
             let [alias, property] = path.as_slice() else {
                 return None;
             };
@@ -605,7 +636,8 @@ impl SliceReadMode<'_> {
 }
 
 /// Precomputed per-entry slice read plan for a closed `CreateOnly` action.
-pub(super) struct CreateSlicePlan(Option<Vec<Vec<String>>>);
+/// `None` entries (such as predicate slices) stay on full bounded reads.
+pub(super) struct CreateSlicePlan(Option<Vec<Option<Vec<String>>>>);
 
 impl CreateSlicePlan {
     pub(super) fn mode_for(&self, index: usize) -> SliceReadMode<'_> {
@@ -613,9 +645,9 @@ impl CreateSlicePlan {
             return SliceReadMode::Full;
         };
         match plan.get(index) {
-            Some(props) if props.is_empty() => SliceReadMode::Reference,
-            Some(props) => SliceReadMode::Projected(props.as_slice()),
-            None => SliceReadMode::Full,
+            Some(Some(props)) if props.is_empty() => SliceReadMode::Reference,
+            Some(Some(props)) => SliceReadMode::Projected(props.as_slice()),
+            Some(None) | None => SliceReadMode::Full,
         }
     }
 }
@@ -647,6 +679,27 @@ pub(super) fn prepare_create_slice_plan<H: CellHost + ?Sized>(
     CreateSlicePlan(planned)
 }
 
+/// Whether `ty` shares an inheritance family with any predicate-slice or
+/// aggregate type declared by `action` (so point reads of that type stay on
+/// full bounded reads and full lineage, preventing projected-vs-full cache
+/// mismatch regardless of slice declaration order).
+pub(super) fn overlaps_predicate_or_aggregate_type(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    action: &ActionRoot,
+    ty: &ObjectTypeName,
+) -> bool {
+    action
+        .slice
+        .iter()
+        .filter(|entry| matches!(&entry.key, SliceKey::Predicate { .. }))
+        .map(|entry| &entry.object_type)
+        .chain(action.aggregates.iter().map(|agg| &agg.object_type))
+        .any(|pred_ty| {
+            crate::governing_laws::reaches(catalog, ty, pred_ty)
+                || crate::governing_laws::reaches(catalog, pred_ty, ty)
+        })
+}
+
 /// Plan the projected precondition properties per slice entry (merged by
 /// canonical key across duplicate aliases) and confirm `host` can project every
 /// non-empty property set without metering unread classified columns.
@@ -655,33 +708,49 @@ fn plan_create_projected_slice<H: CellHost + ?Sized>(
     catalog: &crate::decision_commit::TypeCatalog<'_>,
     action: &ActionRoot,
     effective_input: &JsonObject,
-) -> Option<Vec<Vec<String>>> {
+) -> Option<Vec<Option<Vec<String>>>> {
     let by_alias = create_precondition_alias_reads(catalog, action)?;
     let model = crate::CommitModel::new(catalog);
     let mut by_canonical: BTreeMap<FactKey, BTreeSet<String>> = BTreeMap::new();
-    let mut entry_canonicals: Vec<(&SliceDeclaration, FactKey)> =
+    let mut entry_canonicals: Vec<Option<(&SliceDeclaration, FactKey)>> =
         Vec::with_capacity(action.slice.len());
     for entry in &action.slice {
-        let SliceKey::Property { from, property } = &entry.key else {
-            return None;
-        };
-        if from != "input" {
-            return None;
+        match &entry.key {
+            SliceKey::Predicate { .. } => {
+                entry_canonicals.push(None);
+            }
+            SliceKey::Property { from, property } if from == "input" => {
+                if overlaps_predicate_or_aggregate_type(catalog, action, &entry.object_type) {
+                    entry_canonicals.push(None);
+                    continue;
+                }
+                let key = effective_input
+                    .get(property.as_str())
+                    .and_then(RuntimeValue::as_str)
+                    .filter(|value| !value.trim().is_empty())?;
+                let canonical = model.canonical(&FactKey::new(entry.object_type.as_str(), key));
+                let props = by_alias.get(entry.name.as_str())?;
+                by_canonical
+                    .entry(canonical.clone())
+                    .or_default()
+                    .extend(props.iter().cloned());
+                entry_canonicals.push(Some((entry, canonical)));
+            }
+            SliceKey::Property { .. }
+            | SliceKey::Link { .. }
+            | SliceKey::Parameter { .. }
+            | SliceKey::TriggerObject
+            | SliceKey::TriggerBefore
+            | SliceKey::TriggerAfter
+            | SliceKey::TriggerChanges => return None,
         }
-        let key = effective_input
-            .get(property.as_str())
-            .and_then(RuntimeValue::as_str)
-            .filter(|value| !value.trim().is_empty())?;
-        let canonical = model.canonical(&FactKey::new(entry.object_type.as_str(), key));
-        let props = by_alias.get(entry.name.as_str())?;
-        by_canonical
-            .entry(canonical.clone())
-            .or_default()
-            .extend(props.iter().cloned());
-        entry_canonicals.push((entry, canonical));
     }
     let mut per_entry = Vec::with_capacity(entry_canonicals.len());
-    for (entry, canonical) in entry_canonicals {
+    for slot in entry_canonicals {
+        let Some((entry, canonical)) = slot else {
+            per_entry.push(None);
+            continue;
+        };
         let props = by_canonical.get(&canonical)?;
         if !props
             .iter()
@@ -696,20 +765,22 @@ fn plan_create_projected_slice<H: CellHost + ?Sized>(
                 return None;
             }
         }
-        per_entry.push(prop_list);
+        per_entry.push(Some(prop_list));
     }
     Some(per_entry)
 }
 
-/// Bind each proved `CreateOnly` slice alias's read properties onto its exact
-/// canonical `FactExpectation` in `references`, merging duplicate aliases and
-/// refusing if any reference is unaccounted for.
+/// Bind each proved `CreateOnly` point-slice alias's read properties onto its exact
+/// canonical `FactExpectation` in `references`, merging duplicate aliases, skipping
+/// facts already covered by full predicate-read lineage, and refusing if any
+/// reference is unaccounted for.
 pub(super) fn create_reference_property_reads(
     catalog: &crate::decision_commit::TypeCatalog<'_>,
     action: &ActionRoot,
     target: &FactKey,
     effective_input: &JsonObject,
     references: &[FactExpectation],
+    predicate_members: &BTreeSet<FactKey>,
 ) -> Option<Vec<(FactExpectation, Vec<String>)>> {
     let by_alias = create_slice_property_reads(catalog, action, target)?;
     let model = crate::CommitModel::new(catalog);
@@ -717,16 +788,25 @@ pub(super) fn create_reference_property_reads(
     let mut merged: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
     for entry in &action.slice {
         let SliceKey::Property { from, property } = &entry.key else {
+            if matches!(&entry.key, SliceKey::Predicate { .. }) {
+                continue;
+            }
             return None;
         };
         if from != "input" {
             return None;
+        }
+        if overlaps_predicate_or_aggregate_type(catalog, action, &entry.object_type) {
+            continue;
         }
         let key = effective_input
             .get(property.as_str())
             .and_then(RuntimeValue::as_str)
             .filter(|value| !value.trim().is_empty())?;
         let canonical = model.canonical(&FactKey::new(entry.object_type.as_str(), key));
+        if predicate_members.contains(&canonical) {
+            continue;
+        }
         let mut candidates = references
             .iter()
             .enumerate()

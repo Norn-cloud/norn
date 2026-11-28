@@ -1343,6 +1343,7 @@ pub trait CellHost {
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
         _proof: crate::CreatorStampProof,
+        _references: Option<crate::action_commit::ActionReferenceReads>,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         match quantity {
