@@ -402,6 +402,12 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
     fn handle_key(&self) -> &[u8] {
         &self.metrics.handle_key
     }
+    fn as_ad_hoc(&self) -> Option<&dyn AdHocQuestions<E>> {
+        Some(self)
+    }
+    fn configured_connections(&self) -> BTreeMap<String, String> {
+        self.effective_configured()
+    }
 }
 
 impl<E: SqlEngine> AdHocQuestions<E> for DerivedRuntime<'_> {

@@ -42,6 +42,7 @@ use norn_ir::MetricDefinition;
 
 use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
+use crate::connect::Connect;
 use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy, RevealSlot};
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::questions::DerivedQuestions;
@@ -599,9 +600,7 @@ impl<E: SqlEngine> Tenant<E> {
     }
 
     /// TIMER-ALARM-1: the cell's earliest deadline (logical milliseconds),
-    /// possibly already passed; `None` for a vacant cell or one with nothing
-    /// pending. The host arms its alarm with it after every request.
-    ///
+    /// or `None` when vacant or idle.
     /// # Errors
     /// A host failure reading the cell.
     pub fn next_due(&self) -> Result<Option<u64>, Refusal> {
@@ -609,16 +608,51 @@ impl<E: SqlEngine> Tenant<E> {
             .map_or(Ok(None), norn_api::timers::next_due)
     }
 
-    /// TIMER-ALARM-1: run the cell's work due at `now_ms` (the host's clock)
-    /// through its ordinary commit paths; what it did and when to wake next.
-    /// A vacant cell has nothing due.
-    ///
+    /// TIMER-ALARM-1 / QUESTION-STEP-1: run due work at `now_ms`, including
+    /// parked `norn.question@1` steps under each run's starter and configured sources.
     /// # Errors
     /// A host failure reading the cell; an item that fails stays due.
-    pub fn run_due(&self, now_ms: u64) -> Result<norn_api::timers::DueWork, Refusal> {
-        self.serving_host().map_or_else(
-            || Ok(norn_api::timers::DueWork::default()),
-            |host| norn_api::timers::run_due(host, norn_kernel::LogicalTime::from_millis(now_ms)),
+    pub fn run_due(
+        &self,
+        connect: Option<&Connect>,
+        now_ms: u64,
+    ) -> Result<norn_api::timers::DueWork, Refusal> {
+        let State::Serving(serving) = &self.state else {
+            return Ok(norn_api::timers::DueWork::default());
+        };
+        let configured = connect.map(Connect::configured_mappings);
+        self.with_questions(serving, now_ms, configured, |questions| {
+            crate::runs::run_due_with_runtime(
+                &serving.host,
+                &self.caller,
+                self.table.version,
+                questions,
+                now_ms,
+            )
+        })
+    }
+
+    fn with_questions<R>(
+        &self,
+        serving: &Serving<E>,
+        clock_ms: u64,
+        configured: Option<std::collections::BTreeMap<String, String>>,
+        body: impl FnOnce(Option<&dyn AdHocQuestions<E>>) -> R,
+    ) -> R {
+        let handles = self
+            .handles
+            .as_ref()
+            .map(|h| -> &dyn AdHocQuestions<E> { h });
+        crate::runs::with_question_runtime(
+            &serving.host,
+            &self.scope,
+            serving.questions.as_ref(),
+            self.derived.as_ref(),
+            handles,
+            self.engine.as_ref(),
+            clock_ms,
+            configured,
+            body,
         )
     }
 
@@ -752,7 +786,7 @@ impl<E: SqlEngine> Tenant<E> {
     /// the deployed dispatch.
     pub fn serve(
         &mut self,
-        mut connect: Option<&mut crate::connect::Connect>,
+        mut connect: Option<&mut Connect>,
         principals: &dyn PrincipalResolver,
         request: &Request<'_>,
         now_ms: u64,
@@ -782,9 +816,7 @@ impl<E: SqlEngine> Tenant<E> {
             return Served::Cell(response);
         }
         let clock_ms = now_ms.max(request.now.saturating_mul(1_000));
-        let configured = connect
-            .as_deref()
-            .map(crate::connect::Connect::configured_mappings);
+        let configured = connect.as_deref().map(Connect::configured_mappings);
         Served::Cell(self.handle_admitted(principals, request, member, clock_ms, configured))
     }
 
@@ -854,42 +886,9 @@ impl<E: SqlEngine> Tenant<E> {
                 {
                     return response;
                 }
-                let derived = self
-                    .derived
-                    .as_ref()
-                    .filter(|_| serving.questions.is_none())
-                    .and_then(|d| d.questions_at(&serving.host, clock_ms).ok())
-                    .map(|rt| rt.with_configured(configured))
-                    .filter(|r| !AdHocQuestions::<E>::definitions(r).is_empty());
-                let questions = serving
-                    .questions
-                    .as_ref()
-                    .map(|questions| -> &dyn AdHocQuestions<E> { questions })
-                    .or_else(|| {
-                        derived
-                            .as_ref()
-                            .map(|runtime| -> &dyn AdHocQuestions<E> { runtime })
-                    })
-                    .or_else(|| {
-                        self.handles
-                            .as_ref()
-                            .map(|handles| -> &dyn AdHocQuestions<E> { handles })
-                    });
-                let on_engine = match (questions, &self.engine) {
-                    (Some(inner), Some(engine)) => {
-                        Some(norn_api::analytics_routes::EngineQuestions::new(
-                            inner,
-                            engine,
-                            &self.scope,
-                        ))
-                    }
-                    (Some(_) | None, _) => None,
-                };
-                let questions = on_engine
-                    .as_ref()
-                    .map(|wrapped| -> &dyn AdHocQuestions<E> { wrapped })
-                    .or(questions);
-                server::handle_all(&serving.host, principals, questions, &self.kinds, request)
+                self.with_questions(serving, clock_ms, configured, |questions| {
+                    server::handle_all(&serving.host, principals, questions, &self.kinds, request)
+                })
             }
             State::Vacant => self.vacant(principals, request, &caller, None),
             State::Unopenable(reason) => self.vacant(principals, request, &caller, Some(reason)),

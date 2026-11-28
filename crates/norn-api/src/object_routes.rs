@@ -110,6 +110,110 @@ pub(crate) fn row_readable<E: SqlEngine>(
         .all(|capability| permitted(host, access, actor, row, capability))
 }
 
+/// Whether the caller holds Population and Values on `row` and on every
+/// inherited `RunQuestionRead` source recorded on it.
+pub(crate) fn row_and_sources_readable<E: SqlEngine>(
+    host: &DevHost<E>,
+    access: &dyn ObjectAccess,
+    actor: &str,
+    row: &ObjectRecord,
+    sources: &[norn_cell::flow_run::RunQuestionSource],
+) -> bool {
+    row_readable(host, access, actor, row)
+        && question_sources_permitted(host, access, actor, sources, Population)
+        && question_sources_permitted(host, access, actor, sources, Values)
+}
+
+/// QUESTION-STEP-1 / PRIVACY-3: a Run object that persisted settled
+/// `norn.question@1` outputs or `StaleSource` source identifiers inherits the
+/// read gate of every source object type those questions read, so an ordinary
+/// Run reader without source clearance cannot read restricted question data via
+/// Run bindings.
+pub(crate) fn question_sources_permitted<E: SqlEngine>(
+    host: &DevHost<E>,
+    access: &dyn ObjectAccess,
+    actor: &str,
+    sources: &[norn_cell::flow_run::RunQuestionSource],
+    capability: ReadCapability,
+) -> bool {
+    let check_cap = |source_type: &str, cap: ReadCapability| -> bool {
+        let collection_ok =
+            mapped(host.scope(), access, actor, cap, source_type, None).is_ok_and(|request| {
+                host.read_permitted(&ReadRequest {
+                    capability: cap,
+                    access: &request,
+                })
+            });
+        if !collection_ok {
+            return false;
+        }
+        let every = ObjectRecord {
+            object_type: source_type.to_owned(),
+            id: norn_cell::compute::ALL_MEMBERS.to_owned(),
+            scope: host.scope().key(),
+            version: 0,
+            values: std::collections::BTreeMap::new(),
+        };
+        permitted(host, access, actor, &every, cap)
+    };
+    sources.iter().all(|req| {
+        check_cap(&req.source_type, capability)
+            && (!req.requires_sources || check_cap(&req.source_type, ReadCapability::Sources))
+    })
+}
+
+/// QUESTION-STEP-1 / PRIVACY-3: check inherited `RunQuestionRead` grants for
+/// whole-type reads (export, transform, analytical profile/page, dataset
+/// lineage) inside the caller's held snapshot/version bracket so inherited
+/// clearance and read rows share one sealed snapshot version.
+pub(crate) fn inherited_type_permitted<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    access: &dyn ObjectAccess,
+    actor: Option<&str>,
+    object_type: &str,
+) -> Result<bool, Refusal> {
+    let inherited = reader
+        .object_type_question_source_types(MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?;
+    if inherited.is_empty() {
+        return Ok(true);
+    }
+    let Some(actor_id) = actor else {
+        return Ok(false);
+    };
+    Ok(
+        question_sources_permitted(host, access, actor_id, &inherited, Population)
+            && question_sources_permitted(host, access, actor_id, &inherited, Values),
+    )
+}
+
+/// QUESTION-STEP-1 / PRIVACY-3: check inherited `RunQuestionRead` grants for a
+/// single point read `(object_type, id)` using only that run's persisted
+/// settlement evidence (never the current type-wide union).
+pub(crate) fn inherited_run_permitted<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    access: &dyn ObjectAccess,
+    actor: Option<&str>,
+    object_type: &str,
+    id: &str,
+) -> Result<bool, Refusal> {
+    let inherited = reader
+        .run_question_source_types(MAIN_WORLD, object_type, id)
+        .map_err(Refusal::host)?;
+    if inherited.is_empty() {
+        return Ok(true);
+    }
+    let Some(actor_id) = actor else {
+        return Ok(false);
+    };
+    Ok(
+        question_sources_permitted(host, access, actor_id, &inherited, Population)
+            && question_sources_permitted(host, access, actor_id, &inherited, Values),
+    )
+}
+
 /// Declared property names and resolved base types of an object type.
 pub(crate) type EffectiveProperties = Vec<(String, Option<norn_ir::PropertyType>)>;
 
@@ -292,14 +396,27 @@ pub fn get_object_page<E: SqlEngine>(
             if !reader.model().has_type(object_type) {
                 return Err(not_found());
             }
-            reader
+            let rows = reader
                 .list_after(MAIN_WORLD, object_type, cursor.as_deref(), SCAN_BATCH)
-                .map_err(Refusal::host)
+                .map_err(Refusal::host)?;
+            rows.into_iter()
+                .map(|row| {
+                    let sources = reader
+                        .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+                        .map_err(Refusal::host)?;
+                    Ok((row, sources))
+                })
+                .collect::<Result<Vec<_>, Refusal>>()
         })?;
         let exhausted = batch.len() < SCAN_BATCH;
         let visible: Vec<(bool, ObjectRecord)> = batch
             .into_iter()
-            .map(|row| (row_readable(host, access, &actor, &row), row))
+            .map(|(row, sources)| {
+                let allowed = row_readable(host, access, &actor, &row)
+                    && question_sources_permitted(host, access, &actor, &sources, Population)
+                    && question_sources_permitted(host, access, &actor, &sources, Values);
+                (allowed, row)
+            })
             .collect();
         let (quarantined, catalog, marked) = locked(host, access, &mut snapshot, |reader| {
             held_and_marked(host, reader, visible.iter().map(|(seen, row)| (*seen, row)))
@@ -387,7 +504,12 @@ pub fn get_object<E: SqlEngine>(
         .object(MAIN_WORLD, object_type, id)
         .map_err(Refusal::host)?
         .ok_or_else(not_found)?;
+    let sources = reader
+        .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+        .map_err(Refusal::host)?;
     if !row_readable(host, access, &actor, &row)
+        || !question_sources_permitted(host, access, &actor, &sources, Population)
+        || !question_sources_permitted(host, access, &actor, &sources, Values)
         || reader
             .observation_is_quarantined(MAIN_WORLD, &row)
             .map_err(Refusal::host)?
@@ -508,18 +630,33 @@ pub(crate) fn scan_listed<E: SqlEngine>(
             if !reader.model().has_type(object_type) {
                 return Err(not_found());
             }
-            reader
+            let rows = reader
                 .list_after(MAIN_WORLD, object_type, cursor.as_deref(), take)
-                .map_err(Refusal::host)
+                .map_err(Refusal::host)?;
+            rows.into_iter()
+                .map(|row| {
+                    let sources = reader
+                        .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+                        .map_err(Refusal::host)?;
+                    Ok((row, sources))
+                })
+                .collect::<Result<Vec<_>, Refusal>>()
         })?;
         let ended = batch.len() < take;
-        if let Some(last) = batch.last() {
+        if let Some((last, _)) = batch.last() {
             cursor = Some(last.id.clone());
         }
         let seen: Vec<(bool, ObjectRecord)> = batch
             .into_iter()
-            .filter(|row| permitted(host, access, actor, row, Population))
-            .map(|row| (permitted(host, access, actor, &row, Values), row))
+            .filter(|(row, sources)| {
+                permitted(host, access, actor, row, Population)
+                    && question_sources_permitted(host, access, actor, sources, Population)
+            })
+            .map(|(row, sources)| {
+                let readable = permitted(host, access, actor, &row, Values)
+                    && question_sources_permitted(host, access, actor, &sources, Values);
+                (readable, row)
+            })
             .collect();
         let (held, catalog, marked) = locked(host, access, &mut start, |reader| {
             held_and_marked(
@@ -738,19 +875,29 @@ pub fn get_queried_object<E: SqlEngine>(
 ) -> Result<DisclosedQueriedObject, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
-    let row = locked(host, access, &mut start, |reader| {
+    let (row, sources) = locked(host, access, &mut start, |reader| {
         if !reader.model().has_type(object_type) {
             return Err(not_found());
         }
-        reader
+        let Some(row) = reader
             .object(MAIN_WORLD, object_type, id)
-            .map_err(Refusal::host)
+            .map_err(Refusal::host)?
+        else {
+            return Ok(None);
+        };
+        let sources = reader
+            .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+            .map_err(Refusal::host)?;
+        Ok(Some((row, sources)))
     })?
     .ok_or_else(not_found)?;
-    if !permitted(host, access, &actor, &row, Population) {
+    if !permitted(host, access, &actor, &row, Population)
+        || !question_sources_permitted(host, access, &actor, &sources, Population)
+    {
         return Err(not_found());
     }
-    let readable = permitted(host, access, &actor, &row, Values);
+    let readable = permitted(host, access, &actor, &row, Values)
+        && question_sources_permitted(host, access, &actor, &sources, Values);
     // The closing section always runs, so a commit during authorization is
     // detected for a withheld record too; only the quarantine lookup needs
     // Values.

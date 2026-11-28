@@ -1,8 +1,9 @@
 //! Norn-owned host built-in Functions (FUNCTION-HOST-1, Core 07; #761).
 //!
 //! This crate is the engine's compiled-in registry: [`decision`]
-//! (`norn.decision@1`, a person decides) and [`action`] (`norn.action@1`, the
-//! cell calls a governed action). A built-in's manifest pins this crate
+//! (`norn.decision@1`, a person decides), [`action`] (`norn.action@1`, the
+//! cell calls a governed action), and [`question`] (`norn.question@1`, the
+//! cell evaluates a read-only admitted question with freshness guards). A built-in's manifest pins this crate
 //! by name, version and HOST-TREE-1 source-tree digest. The digest lives in
 //! `registry/builtins/norn-builtins.json`, outside the tree it digests.
 //! `build.rs` recomputes the digest and fails the build when the crate's
@@ -20,6 +21,7 @@
 pub mod action;
 pub mod decision;
 pub mod geo;
+pub mod question;
 
 use std::sync::OnceLock;
 
@@ -171,6 +173,28 @@ pub fn registered_action() -> Result<Registered, RegistryError> {
         .clone()
 }
 
+/// The registered `norn.question@1`.
+///
+/// # Errors
+/// A [`RegistryError`].
+pub fn registered_question() -> Result<Registered, RegistryError> {
+    static CACHED: OnceLock<Result<Registered, RegistryError>> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            Registered::new(host_manifest(&HostFunction {
+                id: question::FUNCTION_ID,
+                version: question::VERSION,
+                schemas: [
+                    ("norn.question.input", question::INPUT_SCHEMA),
+                    ("norn.question.output", question::OUTPUT_SCHEMA),
+                    ("norn.question.error", question::ERROR_SCHEMA),
+                ],
+                max_input_bytes: question::MAX_INPUT_BYTES,
+            })?)
+        })
+        .clone()
+}
+
 /// A compiled-in host Function: its identity, its input, output and error
 /// schemas (each its id and document), and its input bound.
 struct HostFunction {
@@ -244,8 +268,10 @@ fn host_manifest(function: &HostFunction) -> Result<FunctionManifest, RegistryEr
 
 /// PARKED-1: whether a perform command waits outside the FIFO perform queue
 /// until the cell resolves it: a `norn.decision@1` perform, which a person
-/// answers, or a `norn.action@1` perform, which the cell executes itself. `payload` is the kernel command's payload (the flow's perform
-/// record `{kind: "perform", function, functionVersion, ...}`). Compiled in, so
+/// answers, a `norn.action@1` perform, which the cell executes itself, or a
+/// `norn.question@1` perform, which the cell evaluates read-only. `payload` is
+/// the kernel command's payload (the flow's perform record
+/// `{kind: "perform", function, functionVersion, ...}`). Compiled in, so
 /// every host and every replay classifies a command the same way.
 #[must_use]
 pub fn parks(payload: &norn_ir::RuntimeValue) -> bool {
@@ -253,7 +279,7 @@ pub fn parks(payload: &norn_ir::RuntimeValue) -> bool {
     text("kind") == Some("perform")
         && matches!(
             text("function"),
-            Some(decision::FUNCTION_ID | action::FUNCTION_ID)
+            Some(decision::FUNCTION_ID | action::FUNCTION_ID | question::FUNCTION_ID)
         )
         && text("functionVersion") == Some("1")
 }
@@ -269,6 +295,8 @@ pub fn resolve(function_id: &str, version: u32) -> Result<Option<Registered>, Re
         registered_decision().map(Some)
     } else if function_id == action::FUNCTION_ID && version == action::VERSION {
         registered_action().map(Some)
+    } else if function_id == question::FUNCTION_ID && version == question::VERSION {
+        registered_question().map(Some)
     } else {
         Ok(None)
     }

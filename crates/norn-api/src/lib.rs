@@ -46,6 +46,8 @@ pub mod definition_routes;
 /// The `flow` retained-definition kind (automations lowered by `lowerFlow`).
 pub mod flow_definitions;
 pub mod flow_driver;
+/// QUESTION-STEP-1: read-only evaluation of parked `norn.question@1` flow steps.
+pub mod flow_question;
 /// Shared cell and definition epoch.
 pub mod host;
 /// INBOX-1: what needs the caller's attention, one bounded work queue.

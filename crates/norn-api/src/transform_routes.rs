@@ -395,6 +395,30 @@ fn row_access<E: SqlEngine>(
     }
 }
 
+/// QUESTION-STEP-1 / PRIVACY-3: enforce inherited `RunQuestionRead` grants on
+/// every object type `plan` reads inside the same transaction snapshot that
+/// evaluates or refreshes the transform.
+fn check_inherited_inputs<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &norn_cell::StoreReader<'_, E>,
+    access: &dyn ObjectAccess,
+    actor: &str,
+    plan: &TransformPlan,
+) -> Result<(), Refusal> {
+    for input in plan.inputs.values() {
+        if !crate::object_routes::inherited_type_permitted(
+            host,
+            reader,
+            access,
+            Some(actor),
+            &input.object_type,
+        )? {
+            return Err(read_denied());
+        }
+    }
+    Ok(())
+}
+
 /// The rows a reader is served: live, or a materialized transform's stored
 /// result when the reader may read every input row (VIEW-MAT-1), together with
 /// the effective column markings, live head commit and marking catalog checked
@@ -430,6 +454,7 @@ fn evaluate<E: SqlEngine>(
             |row| Ok(row_access(host, access, &actor, row)),
             now.as_millis(),
             |reader, stale| {
+                check_inherited_inputs(host, reader, access, &actor, &plan)?;
                 crate::privacy::classify_transform_in_tx(
                     host,
                     reader,
@@ -902,6 +927,7 @@ pub fn refresh_transform<E: SqlEngine>(
             |row| Ok(row_access(host, access, &actor, row)),
             now.as_millis(),
             |reader| {
+                check_inherited_inputs(host, reader, access, &actor, &plan)?;
                 let _ = crate::privacy::guard_transform_in_tx(
                     host,
                     reader,

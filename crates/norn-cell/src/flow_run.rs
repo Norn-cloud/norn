@@ -13,6 +13,8 @@
 //! an index for reads, never authority: run state is the run object's
 //! lifecycle property, and every read goes through the caller's read gates.
 
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
 use norn_ir::RuntimeValue as Value;
 use serde::{Deserialize, Serialize};
 
@@ -29,8 +31,20 @@ pub use norn_builtins::action::{
     parse_step as parse_action_step,
 };
 
+/// QUESTION-STEP-1: a flow step that evaluates an admitted read-only question
+/// with `RequiredSources` freshness enforcement, executed by the cell under
+/// the run starter's authority. Hosts reach the built-in through the cell.
+pub use norn_builtins::question::{
+    FUNCTION_ID as QUESTION_FUNCTION, QuestionFreshnessGuard, QuestionStep, QuestionStepPin,
+    StepRefusal as QuestionStepRefusal, parse_step as parse_question_step,
+};
+
 /// The `type` of the ledger event that starts a run.
 pub const RUN_STARTED: &str = "norn.run.started";
+/// The `type` of the ledger event recording source object types read by an
+/// `Answered` `norn.question@1` step whose output was persisted into a run
+/// object (`QUESTION-STEP-1` / `PRIVACY-3`).
+pub const RUN_QUESTION_READ: &str = "norn.run.question_read";
 /// The first generation of every run.
 pub const FIRST_GENERATION: u64 = 1;
 /// The most rows one [`StoreReader::flow_runs`] page returns.
@@ -40,9 +54,10 @@ pub const MAX_RUN_PAGE: u32 = 200;
 const MAX_START_EVENTS: usize = 4096;
 
 pub(crate) const FLOW_RUN: &str = "_norn_flow_run";
+pub(crate) const FLOW_RUN_SOURCE: &str = "_norn_flow_run_source";
 
 /// The run ledger's DDL, applied with the other system tables.
-pub(crate) const DDL: [&str; 3] = [
+pub(crate) const DDL: [&str; 4] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_flow_run" (
   "world" TEXT NOT NULL,
   "run_id" TEXT NOT NULL,
@@ -61,6 +76,14 @@ pub(crate) const DDL: [&str; 3] = [
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_flow_run/object" ON "_norn_flow_run" ("world", "object_type", "run_id")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_flow_run/flow_state" ON "_norn_flow_run" ("world", "flow_id", "state", "run_id")"#,
+    r#"CREATE TABLE IF NOT EXISTS "_norn_flow_run_source" (
+  "world" TEXT NOT NULL,
+  "object_type" TEXT NOT NULL,
+  "run_id" TEXT NOT NULL,
+  "source_type" TEXT NOT NULL,
+  "requires_sources" INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY ("world", "object_type", "run_id", "source_type")
+)"#,
 ];
 
 /// The installed flow a run executes, pinned by artifact identity.
@@ -121,6 +144,11 @@ pub struct RunStart {
     /// Who started it, when the host recorded a verified principal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<RunStarter>,
+    /// STEP-PIN-1: `mapping_id -> {connector_id}` snapshot of persisted
+    /// `source.Connection` bindings captured atomically at run start, so
+    /// binding-only drift is detected even when definitions versions match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_bindings: Option<BTreeMap<String, BTreeSet<String>>>,
 }
 
 impl RunStart {
@@ -140,6 +168,90 @@ impl RunStart {
             .into(),
         ))
     }
+}
+
+/// What a [`RUN_QUESTION_READ`] bookkeeping event records: the source object
+/// types read by a settled `norn.question@1` step on the run object, and
+/// whether readers must also hold `Sources` clearance (when `StaleSource`
+/// persisted source identifiers).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunQuestionRead {
+    /// The run id: the run object's key.
+    pub run_id: String,
+    /// The flow's Run object type.
+    pub object_type: String,
+    /// Distinct source object types read by the question step.
+    pub source_types: Vec<String>,
+    /// Whether readers of this run must also hold `ReadCapability::Sources` on
+    /// these source types (for example when `StaleSource.sources` was persisted).
+    #[serde(default)]
+    pub requires_sources: bool,
+}
+
+/// One inherited source permission requirement recorded on a flow run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunQuestionSource {
+    /// Underlying source object type name.
+    pub source_type: String,
+    /// Whether `ReadCapability::Sources` is also required in addition to
+    /// `Population` and `Values`.
+    pub requires_sources: bool,
+}
+
+impl RunQuestionRead {
+    /// The ledger event attached to the settling commit.
+    ///
+    /// # Errors
+    /// A value outside the runtime value domain.
+    pub fn event(&self) -> Result<Value, CellError> {
+        Ok(Value::Object(
+            [
+                (
+                    "type".to_owned(),
+                    Value::String(RUN_QUESTION_READ.to_owned()),
+                ),
+                (
+                    "questionRead".to_owned(),
+                    norn_ir::runtime::encode(self).map_err(CellError::Encoding)?,
+                ),
+            ]
+            .into(),
+        ))
+    }
+}
+
+/// Whether a ledger event records a `norn.question@1` source read on a run.
+#[must_use]
+pub fn is_run_question_read(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some(RUN_QUESTION_READ)
+}
+
+fn question_reads(batch: &CommitBatch) -> Result<Vec<RunQuestionRead>, CellError> {
+    let mut out = Vec::new();
+    for event in &batch.events {
+        if !is_run_question_read(event) {
+            continue;
+        }
+        let object = event
+            .as_object()
+            .ok_or_else(|| refused("run.question_read_invalid"))?;
+        if object.len() != 2 {
+            return Err(refused("run.question_read_invalid"));
+        }
+        let record: RunQuestionRead = object
+            .get("questionRead")
+            .and_then(|value| norn_ir::runtime::decode(value).ok())
+            .ok_or_else(|| refused("run.question_read_invalid"))?;
+        if record.run_id.is_empty()
+            || record.object_type.is_empty()
+            || record.source_types.iter().any(String::is_empty)
+        {
+            return Err(refused("run.question_read_invalid"));
+        }
+        out.push(record);
+    }
+    Ok(out)
 }
 
 /// One run, as the ledger records it.
@@ -370,6 +482,17 @@ pub(crate) fn apply<E: SqlEngine>(
             ],
         )?;
     }
+    for read in question_reads(batch)? {
+        let req_src = i64::from(read.requires_sources);
+        for source_type in read.source_types {
+            conn.execute(
+                &format!(
+                    r#"INSERT INTO "{FLOW_RUN_SOURCE}" ("world","object_type","run_id","source_type","requires_sources") VALUES (?1,?2,?3,?4,?5) ON CONFLICT ("world","object_type","run_id","source_type") DO UPDATE SET "requires_sources" = MAX("requires_sources", excluded."requires_sources")"#
+                ),
+                params![world, read.object_type, read.run_id, source_type, req_src],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -435,6 +558,109 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         Ok(None)
+    }
+
+    fn direct_object_type_question_source_types(
+        &self,
+        world: &str,
+        object_type: &str,
+    ) -> Result<Vec<RunQuestionSource>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT "source_type", MAX("requires_sources") FROM "{FLOW_RUN_SOURCE}" WHERE "world"=?1 AND "object_type"=?2 GROUP BY "source_type" ORDER BY "source_type""#
+            ),
+            params![world, object_type],
+        )?;
+        rows.into_iter()
+            .map(|values| {
+                let row = SqlRow(values);
+                Ok(RunQuestionSource {
+                    source_type: row.get(0)?,
+                    requires_sources: row.get::<i64>(1)? != 0,
+                })
+            })
+            .collect()
+    }
+
+    fn expand_transitive_question_sources(
+        &self,
+        world: &str,
+        initial: Vec<RunQuestionSource>,
+    ) -> Result<Vec<RunQuestionSource>, CellError> {
+        let mut merged: BTreeMap<String, bool> = BTreeMap::new();
+        let mut expanded: BTreeSet<String> = BTreeSet::new();
+        let mut queue: VecDeque<String> = VecDeque::new();
+        for req in initial {
+            *merged.entry(req.source_type.clone()).or_insert(false) |= req.requires_sources;
+            if expanded.insert(req.source_type.clone()) {
+                queue.push_back(req.source_type);
+            }
+        }
+        while let Some(ty) = queue.pop_front() {
+            for next in self.direct_object_type_question_source_types(world, &ty)? {
+                *merged.entry(next.source_type.clone()).or_insert(false) |= next.requires_sources;
+                if expanded.insert(next.source_type.clone()) {
+                    queue.push_back(next.source_type);
+                }
+            }
+        }
+        Ok(merged
+            .into_iter()
+            .map(|(source_type, requires_sources)| RunQuestionSource {
+                source_type,
+                requires_sources,
+            })
+            .collect())
+    }
+
+    /// Source object types persisted at settlement time for
+    /// `(world, object_type, run_id)` (already transitively frozen across the
+    /// upstream runs and sources this run depended on). Empty for non-run
+    /// objects and for runs without settled question reads. Never traverses the
+    /// live type-wide ledger, so later unrelated runs of the same type cannot
+    /// retroactively alter point-read grants on an already-settled run.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn run_question_source_types(
+        &self,
+        world: &str,
+        object_type: &str,
+        run_id: &str,
+    ) -> Result<Vec<RunQuestionSource>, CellError> {
+        self.check_live()?;
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT "source_type", "requires_sources" FROM "{FLOW_RUN_SOURCE}" WHERE "world"=?1 AND "object_type"=?2 AND "run_id"=?3 ORDER BY "source_type""#
+            ),
+            params![world, object_type, run_id],
+        )?;
+        rows.into_iter()
+            .map(|values| {
+                let row = SqlRow(values);
+                Ok(RunQuestionSource {
+                    source_type: row.get(0)?,
+                    requires_sources: row.get::<i64>(1)? != 0,
+                })
+            })
+            .collect()
+    }
+
+    /// Distinct source object types read by any settled `norn.question@1` step
+    /// across all runs of `(world, object_type)`, expanded transitively across
+    /// Run types, for bulk/collection read gates (exports and whole-grain
+    /// engine queries).
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn object_type_question_source_types(
+        &self,
+        world: &str,
+        object_type: &str,
+    ) -> Result<Vec<RunQuestionSource>, CellError> {
+        self.check_live()?;
+        let direct = self.direct_object_type_question_source_types(world, object_type)?;
+        self.expand_transitive_question_sources(world, direct)
     }
 
     /// The run `run_id` in `world`, if it was started.

@@ -1,0 +1,82 @@
+{
+  "flow": "ops.question_guard",
+  "flowAt": {
+    "file": "fixtures/flows/question-guard.builder.ts",
+    "line": 15
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_perform_check_question/failure/1": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 28
+    },
+    "awaiting_perform_check_question/failure/2": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 18
+    },
+    "awaiting_perform_check_question/failure/3": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 18
+    },
+    "awaiting_perform_check_question/result/1": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 21
+    },
+    "awaiting_perform_check_question/result/2": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 24
+    },
+    "awaiting_perform_convert/failure/1": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 21
+    },
+    "awaiting_perform_convert/failure/2": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 21
+    },
+    "awaiting_perform_convert/result/1": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 22
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 18
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/question-guard.flow.ts",
+  "states": {
+    "awaiting_perform_check_question": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 18
+    },
+    "awaiting_perform_convert": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 21
+    },
+    "completed": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 24
+    },
+    "failed_denied": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 18
+    },
+    "failed_refused": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 18
+    },
+    "started": null
+  },
+  "steps": {
+    "check_question": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 18
+    },
+    "convert": {
+      "file": "fixtures/flows/question-guard.builder.ts",
+      "line": 21
+    }
+  },
+  "version": "1.0.0"
+}

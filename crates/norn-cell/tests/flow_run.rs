@@ -44,6 +44,7 @@ fn start(run_id: &str, flow: &str) -> RunStart {
         object_type: RUN.to_owned(),
         state_property: "status".to_owned(),
         started_by: None,
+        connection_bindings: None,
     }
 }
 
@@ -559,5 +560,87 @@ fn provisioning_replay_adds_a_system_table_an_older_file_lacks() {
             .flow_run("main", "run-1")
             .expect("read")
             .is_some()
+    );
+}
+
+#[test]
+fn run_question_source_types_uses_persisted_per_run_evidence_without_later_run_taint() {
+    use norn_cell::flow_run::{RunQuestionRead, RunQuestionSource};
+    let mut store = store();
+    let commit_run = |store: &mut CellStore,
+                      time: u64,
+                      run_id: &str,
+                      sources: Vec<String>,
+                      requires_sources: bool| {
+        let read = RunQuestionRead {
+            run_id: run_id.to_owned(),
+            object_type: RUN.to_owned(),
+            source_types: sources,
+            requires_sources,
+        };
+        let mut b = batch(time, vec![put(run_id, "completed")], &[start(run_id, "f")]);
+        b.events.push(read.event().expect("question read event"));
+        store.commit(&b).expect("commit run");
+    };
+
+    commit_run(
+        &mut store,
+        10,
+        "run-a",
+        vec!["canon.OrderLine".into()],
+        false,
+    );
+    commit_run(
+        &mut store,
+        20,
+        "run-t",
+        vec![RUN.into(), "canon.OrderLine".into()],
+        false,
+    );
+    commit_run(&mut store, 30, "run-b", vec!["canon.Secret".into()], true);
+
+    let reader = store.read();
+    assert_eq!(
+        reader
+            .run_question_source_types("main", RUN, "run-a")
+            .expect("run-a sources"),
+        vec![RunQuestionSource {
+            source_type: "canon.OrderLine".into(),
+            requires_sources: false,
+        }]
+    );
+    assert_eq!(
+        reader
+            .run_question_source_types("main", RUN, "run-t")
+            .expect("run-t sources"),
+        vec![
+            RunQuestionSource {
+                source_type: RUN.into(),
+                requires_sources: false,
+            },
+            RunQuestionSource {
+                source_type: "canon.OrderLine".into(),
+                requires_sources: false,
+            },
+        ]
+    );
+    assert_eq!(
+        reader
+            .object_type_question_source_types("main", RUN)
+            .expect("type-wide sources"),
+        vec![
+            RunQuestionSource {
+                source_type: RUN.into(),
+                requires_sources: false,
+            },
+            RunQuestionSource {
+                source_type: "canon.OrderLine".into(),
+                requires_sources: false,
+            },
+            RunQuestionSource {
+                source_type: "canon.Secret".into(),
+                requires_sources: true,
+            },
+        ]
     );
 }

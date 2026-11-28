@@ -38,7 +38,7 @@ use utoipa::ToSchema;
 
 use crate::{
     host::DevHost,
-    object_routes::{ObjectAccess, not_found, row_readable},
+    object_routes::{ObjectAccess, not_found, row_and_sources_readable},
     privacy::{self, MarkingCatalog},
     refusal::Refusal,
     scope::ScopeQuery,
@@ -224,6 +224,7 @@ struct Candidate {
     row: ObjectRecord,
     property: String,
     markings: Vec<String>,
+    sources: Vec<norn_cell::flow_run::RunQuestionSource>,
 }
 
 fn upper_snake(text: &str) -> String {
@@ -288,10 +289,15 @@ fn marked_fields<E: SqlEngine>(
     row: &ObjectRecord,
 ) -> Result<Vec<Candidate>, Refusal> {
     let markings = privacy::row_markings(reader, catalog, row)?;
-    Ok(context_candidates(catalog, row, markings.as_ref())
-        .into_iter()
-        .filter(|candidate| candidate.text)
-        .collect())
+    let sources = reader
+        .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+        .map_err(Refusal::host)?;
+    Ok(
+        context_candidates(catalog, row, markings.as_ref(), &sources)
+            .into_iter()
+            .filter(|candidate| candidate.text)
+            .collect(),
+    )
 }
 
 /// GUARD-ORACLE-1: every marked field of a context `row`, whatever its value
@@ -302,6 +308,7 @@ fn context_candidates(
     catalog: &MarkingCatalog,
     row: &ObjectRecord,
     markings: Option<&BTreeMap<String, Vec<String>>>,
+    sources: &[norn_cell::flow_run::RunQuestionSource],
 ) -> Vec<Candidate> {
     let unmarked: &[String] = &[];
     let marked: BTreeMap<&String, &[String]> = match markings {
@@ -329,6 +336,7 @@ fn context_candidates(
                 row: row.clone(),
                 property: property.clone(),
                 markings: ids.to_vec(),
+                sources: sources.to_vec(),
             }
         })
         .collect()
@@ -415,8 +423,8 @@ struct Tokenized {
 /// The context rows and the marked values to look for, read in one section.
 /// What the guard reads from the cell for one prompt.
 struct Candidates {
-    /// The context rows.
-    rows: Vec<ObjectRecord>,
+    /// The context rows and their persisted Run question source requirements.
+    rows: Vec<(ObjectRecord, Vec<norn_cell::flow_run::RunQuestionSource>)>,
     /// Their marked fields, whatever their values.
     context_fields: Vec<Candidate>,
     /// Marked text values elsewhere in the cell (bounded).
@@ -445,7 +453,10 @@ fn read_candidates<E: SqlEngine>(
         {
             return Err(not_found());
         }
-        context.push(row);
+        let sources = reader
+            .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+            .map_err(Refusal::host)?;
+        context.push((row, sources));
     }
     // Marked values anywhere in the cell, bounded: they are tokenized
     // wherever the text names them, whoever may read them.
@@ -480,9 +491,14 @@ fn read_candidates<E: SqlEngine>(
         }
     }
     let mut fields = Vec::new();
-    for row in &context {
+    for (row, sources) in &context {
         let markings = privacy::row_markings(&reader, &catalog, row)?;
-        fields.extend(context_candidates(&catalog, row, markings.as_ref()));
+        fields.extend(context_candidates(
+            &catalog,
+            row,
+            markings.as_ref(),
+            sources,
+        ));
     }
     Ok(Candidates {
         rows: context,
@@ -719,11 +735,12 @@ pub fn guard<E: SqlEngine>(
     let scanned: Vec<Candidate> = scanned
         .into_iter()
         .filter(|candidate| {
-            revealed(candidate) && row_readable(host, access, actor, &candidate.row)
+            revealed(candidate)
+                && row_and_sources_readable(host, access, actor, &candidate.row, &candidate.sources)
         })
         .collect();
-    for row in &rows {
-        if !row_readable(host, access, actor, row) {
+    for (row, sources) in &rows {
+        if !row_and_sources_readable(host, access, actor, row, sources) {
             return Err(not_found());
         }
     }
@@ -733,7 +750,8 @@ pub fn guard<E: SqlEngine>(
         field_tokens,
         mut safe_prompt,
     } = tokenize(&request.text, &context_fields, &revealed, &scanned);
-    safe_prompt.push_str(&context_block(&rows, &field_tokens));
+    let plain_rows: Vec<ObjectRecord> = rows.into_iter().map(|(row, _)| row).collect();
+    safe_prompt.push_str(&context_block(&plain_rows, &field_tokens));
     let event = Guarded {
         kind: GUARDED.to_owned(),
         actor: actor.to_owned(),
@@ -1016,15 +1034,18 @@ fn restore_one<E: SqlEngine>(
                         let current = reader
                             .effective_markings(MAIN_WORLD, &row.object_type, &row.id, None)
                             .map_err(Refusal::host)?;
-                        Some((row, current))
+                        let sources = reader
+                            .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+                            .map_err(Refusal::host)?;
+                        Some((row, current, sources))
                     }
                     Some(_) | None => None,
                 }
             };
-            let Some((mut row, current)) = read else {
+            let Some((mut row, current, sources)) = read else {
                 return kept();
             };
-            if !row_readable(host, access, actor, &row) {
+            if !row_and_sources_readable(host, access, actor, &row, &sources) {
                 return kept();
             }
             let Some(current) = current else {

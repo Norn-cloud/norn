@@ -209,11 +209,17 @@ fn decide_as(cell: &Cell, as_caller: Caller, id: &str, now: u64) -> Option<u16> 
     cell.caller.record(Some(as_caller));
     let decided = norn_api::decisions::decide(
         &cell.host,
-        &DecideCall { scope: &scope(), actor: Some(&subject), id, body: &body, now: LogicalTime::from_millis(now) },
+        &DecideCall {
+            scope: &scope(),
+            actor: Some(&subject),
+            id,
+            body: &body,
+            now: LogicalTime::from_millis(now),
+        },
         &reads,
         &cell.handles,
         &|_requester: &norn_cell::flow_run::RunStarter,
-          _dispatch: &mut dyn FnMut() -> Result<ActionAnswer, norn_api::refusal::Refusal>| None,
+          _dispatch: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| None,
     );
     cell.caller.record(None);
     decided.err().map(|refused| refused.refusal.status)

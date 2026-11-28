@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "_tag": { "type": "string", "enum": ["StaleSource", "Denied", "Refused"] },
+    "code": { "type": "string" },
+    "freshness": { "type": "string", "enum": ["stale", "incomplete", "fresh"] },
+    "complete": { "type": "boolean" },
+    "sources": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["_tag"],
+  "additionalProperties": false
+}

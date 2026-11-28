@@ -43,6 +43,7 @@ use crate::host::DevHost;
 use crate::object_links::{GatedFinding, disclosed_findings, gate_findings};
 use crate::object_routes::{
     MAX_QUERY_SCAN, ObjectAccess, SCAN_BATCH, collection, locked, not_found, permitted,
+    question_sources_permitted,
 };
 use crate::privacy::{
     DisclosedObjectFindings, DisclosedObjectHistory, DisclosedObjectVersion,
@@ -221,46 +222,56 @@ fn reviewable<E: SqlEngine>(
     object: (&str, &str),
     start: &mut Option<(u64, Option<(u64, u64)>)>,
 ) -> Result<ObjectRecord, Refusal> {
-    let row = raw_row(host, access, object, start)?;
+    let (row, sources) = raw_row(host, access, object, start)?;
     if permitted(host, access, actor, &row, Sources) {
-        readable(host, access, actor, row)
+        readable(host, access, actor, row, &sources)
     } else {
         Err(not_found())
     }
 }
 
-/// `row`, when the caller holds Population and Values on it; otherwise the
+/// `row`, when the caller holds Population and Values on it (and on any
+/// `norn.question@1` source types persisted into a Run object); otherwise the
 /// opaque 404.
 fn readable<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,
     row: ObjectRecord,
+    sources: &[norn_cell::flow_run::RunQuestionSource],
 ) -> Result<ObjectRecord, Refusal> {
-    if [Population, Values]
-        .into_iter()
-        .all(|capability| permitted(host, access, actor, &row, capability))
-    {
+    if [Population, Values].into_iter().all(|capability| {
+        permitted(host, access, actor, &row, capability)
+            && question_sources_permitted(host, access, actor, sources, capability)
+    }) {
         Ok(row)
     } else {
         Err(not_found())
     }
 }
 
-/// The raw row, quarantined or not, before any read decision.
+/// The raw row, quarantined or not, before any read decision, together with
+/// any persisted `norn.question@1` source object types recorded on it.
 fn raw_row<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     (object_type, id): (&str, &str),
     start: &mut Option<(u64, Option<(u64, u64)>)>,
-) -> Result<ObjectRecord, Refusal> {
+) -> Result<(ObjectRecord, Vec<norn_cell::flow_run::RunQuestionSource>), Refusal> {
     locked(host, access, start, |reader| {
         if !reader.model().has_type(object_type) {
             return Err(not_found());
         }
-        reader
+        let Some(row) = reader
             .object(MAIN_WORLD, object_type, id)
-            .map_err(Refusal::host)
+            .map_err(Refusal::host)?
+        else {
+            return Ok(None);
+        };
+        let sources = reader
+            .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+            .map_err(Refusal::host)?;
+        Ok(Some((row, sources)))
     })?
     .ok_or_else(not_found)
 }
@@ -614,8 +625,8 @@ pub fn get_object_history<E: SqlEngine>(
     let mut start = None;
     // The history is the row's values over time: Population and Values on the
     // current row to read it at all, then each version's own decision.
-    let row = raw_row(host, access, (object_type, id), &mut start)?;
-    let row = readable(host, access, &actor, row)?;
+    let (row, sources) = raw_row(host, access, (object_type, id), &mut start)?;
+    let row = readable(host, access, &actor, row, &sources)?;
     let max_versions = usize::try_from(MAX_HISTORY_VERSIONS).unwrap_or(usize::MAX);
     locked(host, access, &mut start, |reader| {
         let (versions, truncated) =
@@ -674,7 +685,11 @@ pub fn get_quarantined_objects<E: SqlEngine>(
     let mut start = None;
     let mut after: Option<String> = None;
     let mut scanned = 0usize;
-    let mut candidates: Vec<(ObjectRecord, Vec<GatedFinding>)> = Vec::new();
+    let mut candidates: Vec<(
+        ObjectRecord,
+        Vec<norn_cell::flow_run::RunQuestionSource>,
+        Vec<GatedFinding>,
+    )> = Vec::new();
     let exhausted = loop {
         let (batch, done) = locked(host, access, &mut start, |reader| {
             if !reader.model().has_type(object_type) {
@@ -690,22 +705,29 @@ pub fn get_quarantined_objects<E: SqlEngine>(
                     .observation_is_quarantined(MAIN_WORLD, &row)
                     .map_err(Refusal::host)?
                 {
+                    let sources = reader
+                        .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+                        .map_err(Refusal::host)?;
                     let open: Vec<DataQualityFinding> = reader
                         .observation_findings(MAIN_WORLD, &row.object_type, &row.id)
                         .map_err(Refusal::host)?
                         .into_iter()
                         .filter(|finding| finding.status == norn_ir::DataQualityFindingStatus::Open)
                         .collect();
-                    held.push((row, gate_findings(reader, open).map_err(Refusal::host)?));
+                    held.push((
+                        row,
+                        sources,
+                        gate_findings(reader, open).map_err(Refusal::host)?,
+                    ));
                 } else {
-                    held.push((row, Vec::new()));
+                    held.push((row, Vec::new(), Vec::new()));
                 }
             }
             Ok((held, done))
         })?;
         scanned = scanned.saturating_add(batch.len());
-        after = batch.last().map(|(row, _)| row.id.clone());
-        candidates.extend(batch.into_iter().filter(|(_, open)| !open.is_empty()));
+        after = batch.last().map(|(row, _, _)| row.id.clone());
+        candidates.extend(batch.into_iter().filter(|(_, _, open)| !open.is_empty()));
         if done {
             break true;
         }
@@ -716,10 +738,9 @@ pub fn get_quarantined_objects<E: SqlEngine>(
     // Authorization runs outside the cell lock, row by row.
     let readable: Vec<_> = candidates
         .into_iter()
-        .filter(|(row, _)| {
-            [Population, Values]
-                .into_iter()
-                .all(|capability| permitted(host, access, &actor, row, capability))
+        .filter_map(|(row, sources, open)| {
+            crate::object_routes::row_and_sources_readable(host, access, &actor, &row, &sources)
+                .then_some((row, open))
         })
         .collect();
     // OBS-LINK-DISPUTE-1: a held link counts only where it is disclosed, at

@@ -128,57 +128,46 @@ sealed_projection_eq!(
     /// One projected object record (`GET` / page item).
     pub struct DisclosedObject(NornObjectRecord);
 );
-
 sealed_projection_eq!(
     /// One projected page of objects.
     pub struct DisclosedObjectPage(NornObjectPage);
 );
-
 sealed_projection_eq!(
     /// One projected grid record (`GET /v1/objects/{type}/{id}` or grid item).
     pub struct DisclosedQueriedObject(NornQueriedRecord);
 );
-
 sealed_projection_eq!(
     /// One projected page of grid query results (`GET /v1/objects/{type}`).
     pub struct DisclosedObjectQueryPage(NornObjectQueryPage);
 );
-
 sealed_projection!(
     /// One projected object history version.
     pub struct DisclosedObjectVersion(NornObjectVersion);
 );
-
 sealed_projection!(
     /// One projected object history document (`GET /v1/objects/{type}/{id}/history`).
     pub struct DisclosedObjectHistory(NornObjectHistory);
 );
-
 sealed_projection!(
     /// One projected object findings document (`GET /v1/objects/{type}/{id}/findings`).
     pub struct DisclosedObjectFindings(NornObjectFindings);
 );
-
 sealed_projection!(
     /// One projected page of quarantined objects (`GET /v1/objects/{type}:quarantined`).
     pub struct DisclosedQuarantinedPage(NornQuarantinedPage);
 );
-
 sealed_projection_eq!(
     /// One projected page of visible links (`GET /v1/objects/{type}/{id}/links`).
     pub struct DisclosedObjectLinks(NornObjectLinkPage);
 );
-
 sealed_projection!(
     /// One projected source-lineage document (`GET /v1/objects/{type}/{id}/lineage`).
     pub struct DisclosedSourceLineage(InstanceSourceProvenance);
 );
-
 sealed_projection_eq!(
     /// One projected transform rows page (`GET /v1/transforms/{transform}/rows`).
     pub struct DisclosedTransformPage(NornTransformPage);
 );
-
 sealed_projection_eq!(
     /// One projected transform row lineage (`GET /v1/transforms/{transform}/rows/{row}/lineage`).
     pub struct DisclosedTransformLineage(NornTransformLineage);
@@ -723,19 +712,28 @@ fn stored_values_leave<E: SqlEngine>(
     Ok(catalog.is_empty() || (!super::declares(&catalog) && unlabeled(reader, object_type)))
 }
 
-/// Issue a sealed export permit only after bracketing `stored_values_leave`
-/// and `store.analytics_source` at one cell snapshot (S3, #1547). No caller
-/// can supply the decision or construct a permit directly.
+/// Issue a sealed export permit after bracketing `stored_values_leave`,
+/// inherited Run question source grants, and `store.analytics_source` at one
+/// cell snapshot (S3, #1547).
 pub(crate) fn admit_export<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
+    access: &dyn crate::object_routes::ObjectAccess,
+    actor: Option<&str>,
     object_type: &str,
 ) -> Result<DisclosedExportPermit, Refusal> {
     let scope_key = host.scope().key();
     for _attempt in 0..3 {
         let reader = store.read();
         let start = crate::object_routes::version_of(&reader)?;
-        let leave = stored_values_leave(host, &reader, object_type)?;
+        let leave = stored_values_leave(host, &reader, object_type)?
+            && crate::object_routes::inherited_type_permitted(
+                host,
+                &reader,
+                access,
+                actor,
+                object_type,
+            )?;
         let (source, snapshot) = store
             .analytics_source(MAIN_WORLD, &scope_key, object_type)
             .map_err(|error| {

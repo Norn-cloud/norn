@@ -1,9 +1,9 @@
-//! FLOW-DRIVER-1 and ACTION-STEP-1: a perform step's result moves its run.
+//! FLOW-DRIVER-1, ACTION-STEP-1, and QUESTION-STEP-1: a perform step's result moves its run.
 //!
 //! A run's turns dispatch perform commands into the cell's outbox. A parked
 //! one waits until the cell resolves it: a person decides a `norn.decision@1`
-//! step (DECISIONS-1), and the cell executes a `norn.action@1` step itself
-//! ([`drive_run`]). Once a command's result is recorded, the flow's result
+//! step (DECISIONS-1), the cell executes a `norn.action@1` step itself, and
+//! the cell evaluates a `norn.question@1` step read-only ([`drive_run`]). Once a command's result is recorded, the flow's result
 //! turn is evaluated over the run's current values and committed consuming
 //! that delivery, so the run advances exactly once per result. This is host
 //! code: the decide route and the host call it after their own
@@ -129,16 +129,13 @@ pub(crate) fn result_turn<E: SqlEngine>(
 /// keep dispatching more continues on its next drive.
 pub const MAX_ACTION_STEPS: usize = 64;
 
-/// How the host runs one action call under a recorded principal's authority
-/// (a run's starter for its action steps, a parked call's requester once it
-/// is approved): it makes `principal` the verified principal its policy
-/// decides for, runs `call`, and restores the request's own principal on
-/// every path. `None` when the host cannot act as that principal, which
-/// denies the call.
-pub type AsStarter<'a> = &'a dyn Fn(
-    &RunStarter,
-    &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
-) -> Option<Result<ActionAnswer, Refusal>>;
+/// How the host runs one flow step (`norn.action@1` or `norn.question@1`) or
+/// approved action call under a recorded principal's authority: it makes
+/// `principal` the verified principal its policy decides for, runs `call`, and
+/// restores the request's own principal on every path. `None` when the host
+/// cannot act as that principal, which denies the step.
+pub type AsStarter<'a> =
+    &'a dyn Fn(&RunStarter, &mut dyn FnMut() -> Result<(), Refusal>) -> Option<Result<(), Refusal>>;
 
 /// The prefix of every step attempt's call key ([`step_call_key`]).
 const STEP_CALL_PREFIX: &str = "step-";
@@ -200,8 +197,18 @@ pub(crate) fn attempt_of_run<E: SqlEngine>(
         .next())
 }
 
-/// A parked `norn.action@1` command payload's parsed coordinates.
-struct ParkedActionCommand<'a> {
+/// Which cell-executed parked step a command represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CellStepKind {
+    /// `norn.action@1`
+    Action,
+    /// `norn.question@1`
+    Question,
+}
+
+/// A parked `norn.action@1` or `norn.question@1` command payload's parsed coordinates.
+struct ParkedCellCommand<'a> {
+    kind: CellStepKind,
     payload: &'a RuntimeValue,
     run_id: &'a str,
     step: &'a str,
@@ -209,24 +216,31 @@ struct ParkedActionCommand<'a> {
     step_key: &'a str,
 }
 
-fn parse_action_command(command: &RuntimeValue) -> Option<ParkedActionCommand<'_>> {
+fn parse_cell_command(command: &RuntimeValue) -> Option<ParkedCellCommand<'_>> {
     let payload = command.get("payload")?;
     let text = |name: &str| payload.get(name).and_then(RuntimeValue::as_str);
-    let (Some(norn_cell::flow_run::ACTION_FUNCTION), Some(run_id), Some(step), Some(attempt)) = (
-        text("function"),
-        text("runId"),
-        text("step"),
-        payload.get("attempt"),
-    ) else {
+    let kind = match text("function") {
+        Some(norn_cell::flow_run::ACTION_FUNCTION) => CellStepKind::Action,
+        Some(norn_cell::flow_run::QUESTION_FUNCTION) => CellStepKind::Question,
+        Some(_) | None => return None,
+    };
+    let (Some(run_id), Some(step), Some(attempt)) =
+        (text("runId"), text("step"), payload.get("attempt"))
+    else {
         return None;
     };
-    Some(ParkedActionCommand {
+    Some(ParkedCellCommand {
+        kind,
         payload,
         run_id,
         step,
         attempt,
         step_key: text("idempotencyKey").unwrap_or(step),
     })
+}
+
+fn parse_action_command(command: &RuntimeValue) -> Option<ParkedCellCommand<'_>> {
+    parse_cell_command(command).filter(|parsed| parsed.kind == CellStepKind::Action)
 }
 
 /// The pending action step attempts (of `run_id` only, when given) that
@@ -320,9 +334,10 @@ pub(crate) fn attempt_makes<E: SqlEngine>(
         && step_call_key(parsed.step_key, parsed.attempt)? == idempotency_key)
 }
 
-/// A parked `norn.action@1` step: its delivery coordinates, its step
-/// input, the idempotency key of its attempt's call and its run's starter.
+/// A parked `norn.action@1` or `norn.question@1` step: its kind, delivery
+/// coordinates, step input, attempt call key, starter, and starting definitions version.
 struct StepCall {
+    kind: CellStepKind,
     run_id: String,
     command: CommandId,
     generation: Generation,
@@ -332,20 +347,25 @@ struct StepCall {
     input: RuntimeValue,
     starter: Option<RunStarter>,
     run_definitions_version: Option<u64>,
+    run_connection_bindings: Option<crate::flow_question::ConnectionBindings>,
 }
 
-/// Every parked `norn.action@1` step (of `run_id` only, when given), with
-/// its recorded result when one is recorded and not yet consumed.
-fn action_steps<E: SqlEngine>(
+/// Every parked cell-executed step (`norn.action@1` or `norn.question@1`,
+/// filtered by `run_id` and `only_actions`), with its recorded result if any.
+fn cell_steps<E: SqlEngine>(
     cell: &ActionCell<E>,
     run_id: Option<&str>,
+    only_actions: bool,
 ) -> Result<Vec<(StepCall, Option<RuntimeValue>)>, Refusal> {
     let reader = cell.store().read();
     let mut found = Vec::new();
     for pending in reader.parked_commands().map_err(Refusal::host)? {
-        let Some(parsed) = parse_action_command(&pending.command.command) else {
+        let Some(parsed) = parse_cell_command(&pending.command.command) else {
             continue;
         };
+        if only_actions && parsed.kind != CellStepKind::Action {
+            continue;
+        }
         if run_id.is_some_and(|wanted| wanted != parsed.run_id) {
             continue;
         }
@@ -355,10 +375,13 @@ fn action_steps<E: SqlEngine>(
             .and_then(|input| input.get(parsed.step))
             .cloned()
             .unwrap_or(RuntimeValue::Null);
-        let starter = reader
+        let run_start = reader
             .run_start(MAIN_WORLD, parsed.run_id)
-            .map_err(Refusal::host)?
-            .and_then(|start| start.started_by);
+            .map_err(Refusal::host)?;
+        let starter = run_start
+            .as_ref()
+            .and_then(|start| start.started_by.clone());
+        let run_connection_bindings = run_start.and_then(|start| start.connection_bindings);
         let run_definitions_version = match reader
             .flow_run(MAIN_WORLD, parsed.run_id)
             .map_err(Refusal::host)?
@@ -371,6 +394,7 @@ fn action_steps<E: SqlEngine>(
         };
         found.push((
             StepCall {
+                kind: parsed.kind,
                 run_id: parsed.run_id.to_owned(),
                 command: CommandId(pending.command.command_id.clone()),
                 generation: Generation(pending.command.generation),
@@ -380,6 +404,7 @@ fn action_steps<E: SqlEngine>(
                 input,
                 starter,
                 run_definitions_version,
+                run_connection_bindings,
             },
             pending.result,
         ));
@@ -387,12 +412,22 @@ fn action_steps<E: SqlEngine>(
     Ok(found)
 }
 
-/// The pending (no result recorded) action step of `run_id`, if any.
+/// Every parked `norn.action@1` step (of `run_id` only, when given), with
+/// its recorded result when one is recorded and not yet consumed.
+fn action_steps<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    run_id: Option<&str>,
+) -> Result<Vec<(StepCall, Option<RuntimeValue>)>, Refusal> {
+    cell_steps(cell, run_id, true)
+}
+
+/// The pending (no result recorded) cell-executed step (`norn.action@1` or
+/// `norn.question@1`) of `run_id`, if any.
 fn pending_step<E: SqlEngine>(
     cell: &ActionCell<E>,
     run_id: &str,
 ) -> Result<Option<StepCall>, Refusal> {
-    Ok(action_steps(cell, Some(run_id))?
+    Ok(cell_steps(cell, Some(run_id), false)?
         .into_iter()
         .find_map(|(step, result)| result.is_none().then_some(step)))
 }
@@ -593,6 +628,7 @@ pub(crate) fn deliver_recorded<E: SqlEngine>(
             outcome: step.outcome.clone(),
         },
         step.recorded,
+        &[],
         now,
     )
 }
@@ -653,16 +689,35 @@ pub fn drive_run<E: SqlEngine>(
             let Some(step) = pending_step(&cell, run_id)? else {
                 return Ok(());
             };
-            let waiting = matches!(
-                step_approval(&cell, &step)?,
-                Some((.., StepApproval::Waiting))
-            );
-            // STEP-PIN-1 retry recovery: if this attempt already committed its
-            // action before a crash prior to settlement, recover that committed
-            // outcome before checking pins for a new execution.
-            let committed = committed_outcome_for_step(&cell, &step)?;
-            (step, waiting, committed)
+            if step.kind == CellStepKind::Question {
+                (step, false, None)
+            } else {
+                let waiting = matches!(
+                    step_approval(&cell, &step)?,
+                    Some((.., StepApproval::Waiting))
+                );
+                // STEP-PIN-1 retry recovery: if this attempt already committed its
+                // action before a crash prior to settlement, recover that committed
+                // outcome before checking pins for a new execution.
+                let committed = committed_outcome_for_step(&cell, &step)?;
+                (step, waiting, committed)
+            }
         };
+        if step.kind == CellStepKind::Question {
+            let dispatch = crate::flow_question::dispatch_question_step(
+                host,
+                &crate::flow_question::QuestionStepContext {
+                    input: &step.input,
+                    starter: step.starter.as_ref(),
+                    run_definitions_version: step.run_definitions_version,
+                    run_connection_bindings: step.run_connection_bindings.as_ref(),
+                },
+                as_starter,
+                disclosure,
+            )?;
+            settle_question(host, &step, dispatch, now)?;
+            continue;
+        }
         if let Some(outcome) = already_committed {
             if !settle(host, &step, outcome, false, now)? {
                 return Ok(());
@@ -734,8 +789,9 @@ fn dispatch_step<E: SqlEngine>(
             let principal = waiting
                 .then(|| host.authorizer.verified_principal(&starter.subject))
                 .flatten();
-            let mut call = || {
-                crate::actions::call_action_bound(
+            let mut answer: Option<ActionAnswer> = None;
+            let mut call = || -> Result<(), Refusal> {
+                answer = Some(crate::actions::call_action_bound(
                     host,
                     &crate::actions::ActionCall {
                         query: &scope,
@@ -749,20 +805,24 @@ fn dispatch_step<E: SqlEngine>(
                     },
                     disclosure,
                     None,
-                )
+                )?);
+                Ok(())
             };
             let acting = if waiting { as_requester } else { as_starter };
             match acting(starter, &mut call) {
                 // The requester is not here to run its approved call.
                 None if waiting => Ok(None),
                 None => Ok(Some((failure("Denied", None), true))),
-                // An approval gates the action: the step waits on its
-                // decision, and the run moves once someone decides.
-                Some(Ok(ActionAnswer::Pending(_))) => Ok(None),
-                Some(Ok(ActionAnswer::Receipt(receipt))) => Ok(Some((
-                    output(receipt.object_type, receipt.object_id, receipt.version)?,
-                    false,
-                ))),
+                Some(Ok(())) => match answer {
+                    // An approval gates the action: the step waits on its
+                    // decision, and the run moves once someone decides.
+                    Some(ActionAnswer::Pending(_)) => Ok(None),
+                    Some(ActionAnswer::Receipt(receipt)) => Ok(Some((
+                        output(receipt.object_type, receipt.object_id, receipt.version)?,
+                        false,
+                    ))),
+                    None => Err(Refusal::host("action dispatch returned no answer")),
+                },
                 Some(Err(refused)) => match refused.category {
                     crate::refusal::RefusalCategory::Internal => Err(refused),
                     crate::refusal::RefusalCategory::Permission
@@ -841,9 +901,37 @@ fn settle<E: SqlEngine>(
             outcome,
         },
         false,
+        &[],
         now,
     )?;
     Ok(true)
+}
+
+/// Settle a read-only `norn.question@1` step's outcome directly into the run's
+/// result turn under one cell hold, atomically recording its read source types
+/// (`RunQuestionRead`) whenever an `Answered` or `StaleSource` outcome settles.
+fn settle_question<E: SqlEngine>(
+    host: &DevHost<E>,
+    step: &StepCall,
+    dispatch: crate::flow_question::QuestionDispatch,
+    now: LogicalTime,
+) -> Result<(), Refusal> {
+    let _epoch = host.definition_read()?;
+    let mut cell = host.cell()?;
+    deliver_in(
+        &mut cell,
+        Delivery {
+            command: &step.command,
+            generation: step.generation,
+            run_id: &step.run_id,
+            step: &step.step,
+            attempt: step.attempt.clone(),
+            outcome: dispatch.outcome,
+        },
+        false,
+        &dispatch.sources,
+        now,
+    )
 }
 
 /// Record a step's result and commit its run's result turn under `cell`;
@@ -853,6 +941,7 @@ fn deliver_in<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     delivery: Delivery<'_>,
     recorded: bool,
+    question_sources: &[norn_cell::flow_run::RunQuestionSource],
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     let row = cell
@@ -866,15 +955,23 @@ fn deliver_in<E: SqlEngine>(
     let result = match &delivery.outcome {
         StepOutcome::Output(object) | StepOutcome::Failure(object) => object.clone(),
     };
-    // The flow must accept the result; the commit records and consumes it
-    // in one transaction (P3), so a refused turn leaves nothing recorded.
     let commit = result_turn(cell, &flow, delivery, now)?;
     let settlement = if recorded {
         norn_cell::Settlement::Recorded
     } else {
         norn_cell::Settlement::Record(result)
     };
-    let Err(error) = cell.commit_settled(commit, settlement) else {
+    let committed = if question_sources.is_empty() {
+        cell.commit_settled(commit, settlement)
+    } else {
+        let events = crate::flow_question::question_read_events(
+            &row.run_id,
+            &flow.object_type,
+            question_sources,
+        )?;
+        cell.attributed(events, |cell| cell.commit_settled(commit, settlement))
+    };
+    let Err(error) = committed else {
         return Ok(());
     };
     // Settled already, by another drive.

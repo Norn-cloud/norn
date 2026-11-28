@@ -56,6 +56,7 @@ pub mod questions;
 pub mod recorded;
 pub mod reveal;
 mod runs;
+pub use runs::run_due_with_runtime;
 pub mod seed;
 pub mod server;
 pub mod tenant;

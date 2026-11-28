@@ -496,11 +496,9 @@ fn decide_as_approver(
 }
 
 fn decide_ask_review_without_driving(cell: &Cell, decision_id: &str, key: &str) {
-    let no_requester = |_p: &norn_cell::flow_run::RunStarter,
-                        _c: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| None;
+    let no_requester =
+        |_p: &norn_cell::flow_run::RunStarter,
+         _c: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| None;
     let _ = decide_as_approver(
         cell,
         decision_id,
@@ -533,23 +531,19 @@ fn retry_after_commit_and_definition_change_recovers_committed_outcome() {
     decide_ask_review_without_driving(&cell, &id, "k-recover");
 
     let now_ms = step_cell::NOW.saturating_mul(1000);
-    let no_requester = |_p: &norn_cell::flow_run::RunStarter,
-                        _c: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| None;
+    let no_requester =
+        |_p: &norn_cell::flow_run::RunStarter,
+         _c: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| None;
     // First drive commits the action, then simulates an interruption before `settle`.
-    let crash_after_commit = |starter: &norn_cell::flow_run::RunStarter,
-                              dispatch: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| {
-        cell.caller.record(Some(starter_caller(starter)));
-        let committed = dispatch();
-        cell.caller.record(None);
-        assert!(committed.is_ok(), "action must commit: {committed:?}");
-        Some(Err(norn_api::refusal::Refusal::host("simulated crash")))
-    };
+    let crash_after_commit =
+        |starter: &norn_cell::flow_run::RunStarter,
+         dispatch: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| {
+            cell.caller.record(Some(starter_caller(starter)));
+            let committed = dispatch();
+            cell.caller.record(None);
+            assert!(committed.is_ok(), "action must commit: {committed:?}");
+            Some(Err(norn_api::refusal::Refusal::host("simulated crash")))
+        };
     assert!(
         norn_api::flow_driver::drive_run(
             &cell.host,
@@ -567,16 +561,14 @@ fn retry_after_commit_and_definition_change_recovers_committed_outcome() {
 
     // Mutate action definition before retry; retry recovers committed outcome.
     revise_action_to_omits_loss(&cell);
-    let as_starter = |starter: &norn_cell::flow_run::RunStarter,
-                      dispatch: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| {
-        cell.caller.record(Some(starter_caller(starter)));
-        let out = dispatch();
-        cell.caller.record(None);
-        Some(out)
-    };
+    let as_starter =
+        |starter: &norn_cell::flow_run::RunStarter,
+         dispatch: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| {
+            cell.caller.record(Some(starter_caller(starter)));
+            let out = dispatch();
+            cell.caller.record(None);
+            Some(out)
+        };
     norn_api::flow_driver::drive_run(
         &cell.host,
         "melt-run-recover",
@@ -631,16 +623,14 @@ fn an_approved_step_preserves_pin_mismatch_when_definitions_version_drifts() {
     // Advance definitions version past `pinned_version` while keeping the action present.
     revise_action_to_omits_loss(&cell);
 
-    let as_requester = |starter: &norn_cell::flow_run::RunStarter,
-                        dispatch: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| {
-        let previous = cell.caller.replace(Some(starter_caller(starter)), false);
-        let out = dispatch();
-        cell.caller.replace(previous.0, previous.1);
-        Some(out)
-    };
+    let as_requester =
+        |starter: &norn_cell::flow_run::RunStarter,
+         dispatch: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| {
+            let previous = cell.caller.replace(Some(starter_caller(starter)), false);
+            let out = dispatch();
+            cell.caller.replace(previous.0, previous.1);
+            Some(out)
+        };
     let now_ms = step_cell::NOW.saturating_mul(1000).saturating_add(2);
     let decided = decide_as_approver(&cell, &approval_id, "k-approve-pin", now_ms, &as_requester);
     assert_eq!(
@@ -648,11 +638,9 @@ fn an_approved_step_preserves_pin_mismatch_when_definitions_version_drifts() {
         Some(norn_api::step_pin::step_pin_codes::PIN_MISMATCH),
         "{decided:?}"
     );
-    let no_requester = |_p: &norn_cell::flow_run::RunStarter,
-                        _c: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| None;
+    let no_requester =
+        |_p: &norn_cell::flow_run::RunStarter,
+         _c: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| None;
     norn_api::flow_driver::drive_run(
         &cell.host,
         "melt-run-approved-pin",

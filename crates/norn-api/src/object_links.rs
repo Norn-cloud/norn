@@ -28,7 +28,7 @@ use crate::host::DevHost;
 use crate::object_query::{self, CURSOR_KEY, Cursor};
 use crate::object_routes::{
     MAX_QUERY_SCAN, ObjectAccess, SCAN_BATCH, collection, locked, mapped, not_found, permitted,
-    scan_bound_exceeded, snapshot_moved,
+    question_sources_permitted, scan_bound_exceeded, snapshot_moved,
 };
 use crate::objects::{
     NornLinkCount, NornLinkCounts, NornLinkDirection, NornLinkEdge, NornObjectLinkPage,
@@ -75,8 +75,16 @@ struct LinkQuery {
     limit: usize,
 }
 
+/// One endpoint row together with any persisted `RunQuestionRead` source
+/// requirements recorded on it.
+type RowWithSources = (ObjectRecord, Vec<norn_cell::flow_run::RunQuestionSource>);
+
 /// One link candidate with its source and target rows, when they exist.
-type Candidate = (LinkEdgeRecord, Option<ObjectRecord>, Option<ObjectRecord>);
+type Candidate = (
+    LinkEdgeRecord,
+    Option<RowWithSources>,
+    Option<RowWithSources>,
+);
 
 /// One link's identity: declaring type, link id, source, target type, target.
 type Identity = (String, String, String, String, String);
@@ -197,13 +205,26 @@ fn parse_links(params: &ObjectLinkParams, links: &BTreeSet<String>) -> Result<Li
     }
 }
 
-/// Whether the caller may see `row` as a link endpoint: Population on the row
-/// and on its collection. Quarantine is checked separately, under the lock.
+fn read_row_with_sources<E: SqlEngine>(
+    reader: &norn_cell::StoreReader<'_, E>,
+    object_type: &str,
+    id: &str,
+) -> Result<Option<RowWithSources>, norn_cell::CellError> {
+    let Some(row) = reader.object(MAIN_WORLD, object_type, id)? else {
+        return Ok(None);
+    };
+    let sources = reader.run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)?;
+    Ok(Some((row, sources)))
+}
+
+/// Whether the caller may see `row` as a link endpoint: Population on the row,
+/// its collection, and any inherited `RunQuestionRead` sources. Quarantine is
+/// checked separately, under the lock.
 fn endpoint_listed<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,
-    row: &ObjectRecord,
+    (row, sources): &RowWithSources,
     collections: &mut BTreeMap<String, bool>,
 ) -> bool {
     let collection = *collections
@@ -224,7 +245,9 @@ fn endpoint_listed<E: SqlEngine>(
                 })
             })
         });
-    collection && permitted(host, access, actor, row, Population)
+    collection
+        && permitted(host, access, actor, row, Population)
+        && question_sources_permitted(host, access, actor, sources, Population)
 }
 
 /// OBS-LINK-DISPUTE-1: a finding about one link (`core.boundary.link_held`)
@@ -237,7 +260,7 @@ pub(crate) struct GatedFinding {
     finding: norn_ir::DataQualityFinding,
     /// The rows a link finding names (`None` for one that is absent);
     /// `None` for a finding that names no link.
-    endpoints: Option<Vec<Option<ObjectRecord>>>,
+    endpoints: Option<Vec<Option<RowWithSources>>>,
 }
 
 /// Read the rows each link finding of `findings` names, under the lock.
@@ -258,7 +281,11 @@ pub(crate) fn gate_findings<E: SqlEngine>(
                         .subjects
                         .iter()
                         .map(|subject| {
-                            reader.object(MAIN_WORLD, subject.object_type.as_str(), &subject.key)
+                            read_row_with_sources(
+                                reader,
+                                subject.object_type.as_str(),
+                                &subject.key,
+                            )
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 )
@@ -341,9 +368,11 @@ fn visible_batch<E: SqlEngine>(
         if endpoint_listed(host, access, actor, &source, &mut scan.collections)
             && endpoint_listed(host, access, actor, &target, &mut scan.collections)
         {
-            let readable =
-                [&source, &target].map(|row| permitted(host, access, actor, row, Values));
-            seen.push((edge, [source, target], readable));
+            let readable = [&source, &target].map(|(row, sources)| {
+                permitted(host, access, actor, row, Values)
+                    && question_sources_permitted(host, access, actor, sources, Values)
+            });
+            seen.push((edge, [source.0, target.0], readable));
         }
     }
     let held = locked(host, access, &mut scan.start, |reader| {
@@ -435,11 +464,9 @@ fn scan_links<E: SqlEngine>(
             let mut batch = Vec::with_capacity(page.items.len());
             for item in &page.items {
                 let edge = &item.edge;
-                let source = reader
-                    .object(MAIN_WORLD, &edge.source_type, &edge.source)
+                let source = read_row_with_sources(reader, &edge.source_type, &edge.source)
                     .map_err(Refusal::host)?;
-                let target = reader
-                    .object(MAIN_WORLD, &edge.target_type, &edge.target)
+                let target = read_row_with_sources(reader, &edge.target_type, &edge.target)
                     .map_err(Refusal::host)?;
                 batch.push((item.clone(), source, target));
             }
@@ -585,19 +612,20 @@ fn requested_row<E: SqlEngine>(
     (object_type, id): (&str, &str),
     start: &mut Option<(u64, Option<(u64, u64)>)>,
 ) -> Result<(), Refusal> {
-    let row = locked(host, access, start, |reader| {
+    let (row, sources) = locked(host, access, start, |reader| {
         if !reader.model().has_type(object_type) {
             return Err(not_found());
         }
-        reader
-            .object(MAIN_WORLD, object_type, id)
-            .map_err(Refusal::host)
+        read_row_with_sources(reader, object_type, id).map_err(Refusal::host)
     })?
     .ok_or_else(not_found)?;
-    if !permitted(host, access, actor, &row, Population) {
+    if !permitted(host, access, actor, &row, Population)
+        || !question_sources_permitted(host, access, actor, &sources, Population)
+    {
         return Err(not_found());
     }
     if permitted(host, access, actor, &row, Values)
+        && question_sources_permitted(host, access, actor, &sources, Values)
         && locked(host, access, start, |reader| {
             reader
                 .observation_is_quarantined(MAIN_WORLD, &row)
@@ -627,20 +655,21 @@ pub fn get_object_lineage<E: SqlEngine>(
 ) -> Result<crate::privacy::DisclosedSourceLineage, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
-    let row = locked(host, access, &mut start, |reader| {
+    let (row, sources) = locked(host, access, &mut start, |reader| {
         if !reader.model().has_type(object_type) {
             return Err(not_found());
         }
-        reader
-            .object(MAIN_WORLD, object_type, id)
-            .map_err(Refusal::host)
+        read_row_with_sources(reader, object_type, id).map_err(Refusal::host)
     })?
     .ok_or_else(not_found)?;
     // Authorization runs outside the cell lock; the provenance is read under
     // the same snapshot as the row.
     let disclosed = [Population, Values, Sources]
         .into_iter()
-        .all(|capability| permitted(host, access, &actor, &row, capability));
+        .all(|capability| permitted(host, access, &actor, &row, capability))
+        && [Population, Values].into_iter().all(|capability| {
+            question_sources_permitted(host, access, &actor, &sources, capability)
+        });
     if !disclosed {
         return Err(not_found());
     }

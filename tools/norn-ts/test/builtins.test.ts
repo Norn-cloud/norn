@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { DECISION_FN, S, actionFn } from "../src/builder/index.ts"
+import { DECISION_FN, S, actionFn, questionFn } from "../src/builder/index.ts"
 
 const schema = (name: string) => Bun.file(new URL(`../../../crates/norn-builtins/src/schemas/${name}.json`, import.meta.url)).json()
 
@@ -41,4 +41,136 @@ test("an action step handle restates the norn-builtins contract, with the action
   expect(() =>
     actionFn("ops.refund.approve", input, { pinFields: ["__proto__"] as unknown as ["artifactId"] }),
   ).toThrow(/unknown actionFn pin field/)
+})
+
+test("a question step handle restates the norn-builtins contract exactly", async () => {
+  const trace = S.record(
+    { traceId: S.text(), intentRef: S.text(), sessionDigest: S.text() },
+    ["intentRef", "sessionDigest"],
+  )
+  const basic = questionFn("inventory.on_hand")
+  expect(basic.id).toBe("norn.question")
+  expect(basic.version).toBe("1")
+  expect(basic.input).toEqual(S.record({ question: S.text(["inventory.on_hand"]), trace }, ["trace"]))
+  expect(basic.output).toEqual(await schema("question.output"))
+
+  const errors = await schema("question.error")
+  expect(basic.errors.map((error) => error.tag)).toEqual(errors.properties._tag.enum)
+  const stale = basic.errors.find((error) => error.tag === "StaleSource")
+  expect(stale?.fields).toEqual(
+    S.record(
+      {
+        code: S.text(),
+        freshness: S.text(errors.properties.freshness.enum),
+        complete: S.boolean,
+        sources: S.array(S.text()),
+      },
+      ["code", "freshness", "complete", "sources"],
+    ),
+  )
+
+  const inputDoc = await schema("question.input")
+  expect(inputDoc.additionalProperties).toBe(false)
+  expect(inputDoc.properties.params.type).toBe("object")
+  expect(inputDoc.properties.params.additionalProperties).toEqual({
+    type: ["string", "number", "boolean", "null"],
+  })
+  expect(inputDoc.properties.pin.minProperties).toBe(1)
+  expect(inputDoc.properties.pin.additionalProperties).toBe(false)
+  expect(inputDoc.properties.pin.properties.digest.pattern).toBe("^[0-9a-f]{64}$")
+  expect(inputDoc.properties.pin.properties.definitionsVersion.minimum).toBe(1)
+  expect(inputDoc.properties.freshness.minProperties).toBe(1)
+  expect(inputDoc.properties.freshness.additionalProperties).toBe(false)
+  expect(inputDoc.properties.freshness.properties.maxAgeMs.minimum).toBe(0)
+  expect(inputDoc.properties.trace.required).toEqual(["traceId"])
+  expect(inputDoc.properties.trace.additionalProperties).toBe(false)
+  expect(inputDoc.properties.trace.properties.sessionDigest.pattern).toBe("^sha256:[0-9a-f]{64}$")
+
+  const params = S.record({ warehouse: S.text(), limit: S.integer, active: S.nullable(S.boolean) })
+  const full = questionFn("inventory.on_hand", {
+    params,
+    asOf: true,
+    freshnessFields: ["maxAgeMs", "requireExact"],
+    pinFields: ["artifactId", "version", "digest", "definitionsVersion"],
+  })
+  expect(full.input.additionalProperties).toBe(false)
+  expect(Object.keys(full.input.properties).sort()).toEqual(Object.keys(inputDoc.properties).sort())
+  expect(full.input.required).toEqual(inputDoc.required)
+
+  const pin = full.input.properties.pin as S.ObjectSchema
+  expect(pin.additionalProperties).toBe(false)
+  expect(Object.keys(pin.properties).sort()).toEqual(Object.keys(inputDoc.properties.pin.properties).sort())
+  expect(pin.required).toEqual(["artifactId", "version", "digest", "definitionsVersion"])
+  for (const [key, field] of Object.entries(pin.properties)) {
+    expect(field.type).toBe(inputDoc.properties.pin.properties[key].type)
+  }
+
+  const freshness = full.input.properties.freshness as S.ObjectSchema
+  expect(freshness.additionalProperties).toBe(false)
+  expect(Object.keys(freshness.properties).sort()).toEqual(
+    Object.keys(inputDoc.properties.freshness.properties).sort(),
+  )
+  expect(freshness.required).toEqual(["maxAgeMs", "requireExact"])
+  for (const [key, field] of Object.entries(freshness.properties)) {
+    expect(field.type).toBe(inputDoc.properties.freshness.properties[key].type)
+  }
+
+  const fullTrace = full.input.properties.trace as S.ObjectSchema
+  expect(fullTrace.required).toEqual(inputDoc.properties.trace.required)
+  expect(fullTrace.additionalProperties).toBe(false)
+  for (const [key, field] of Object.entries(fullTrace.properties)) {
+    expect(field.type).toBe(inputDoc.properties.trace.properties[key].type)
+  }
+
+  expect(() => questionFn("inventory.on_hand", { pinFields: [] as unknown as ["artifactId"] })).toThrow(
+    /at least one pin field/,
+  )
+  expect(() =>
+    questionFn("inventory.on_hand", { pinFields: ["toString"] as unknown as ["artifactId"] }),
+  ).toThrow(/unknown questionFn pin field/)
+  expect(() =>
+    questionFn("inventory.on_hand", { pinFields: ["__proto__"] as unknown as ["artifactId"] }),
+  ).toThrow(/unknown questionFn pin field/)
+  expect(() =>
+    questionFn("inventory.on_hand", { freshnessFields: [] as unknown as ["maxAgeMs"] }),
+  ).toThrow(/at least one freshness field/)
+  expect(() =>
+    questionFn("inventory.on_hand", { freshnessFields: ["allowStale"] as unknown as ["maxAgeMs"] }),
+  ).toThrow(/unknown questionFn freshness field/)
+  expect(() =>
+    questionFn("inventory.on_hand", { params: S.record({ nested: S.record({ a: S.text() }) }) }),
+  ).toThrow(/must have a scalar schema/)
+  expect(() =>
+    questionFn("inventory.on_hand", { params: S.record({ items: S.array(S.text()) }) }),
+  ).toThrow(/must have a scalar schema/)
+  expect(() =>
+    questionFn("inventory.on_hand", { params: S.record({ any: S.jsonValue }) }),
+  ).toThrow(/must have a scalar schema/)
+  expect(() =>
+    questionFn("inventory.on_hand", {
+      params: { type: "object" } as unknown as S.ObjectSchema,
+    }),
+  ).toThrow(/additionalProperties to false or a scalar schema/)
+  expect(() =>
+    questionFn("inventory.on_hand", {
+      params: { type: "object", properties: { warehouse: S.text() }, additionalProperties: true } as unknown as S.ObjectSchema,
+    }),
+  ).toThrow(/additionalProperties to false or a scalar schema/)
+  expect(() =>
+    questionFn("inventory.on_hand", {
+      params: {
+        type: "object",
+        properties: {},
+        additionalProperties: { type: "object" },
+      } as unknown as S.ObjectSchema,
+    }),
+  ).toThrow(/additionalProperties to false or a scalar schema/)
+
+  const scalarMapParams = {
+    type: "object",
+    properties: {},
+    additionalProperties: { type: ["string", "number", "boolean", "null"] },
+  } as unknown as S.ObjectSchema
+  const withScalarMap = questionFn("inventory.on_hand", { params: scalarMapParams })
+  expect(withScalarMap.input.properties.params).toEqual(scalarMapParams)
 })

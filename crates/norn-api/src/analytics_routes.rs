@@ -290,6 +290,12 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
     fn handle_key(&self) -> &[u8] {
         self.inner.handle_key()
     }
+    fn as_ad_hoc(&self) -> Option<&dyn AdHocQuestions<E>> {
+        Some(self)
+    }
+    fn configured_connections(&self) -> BTreeMap<String, String> {
+        self.inner.configured_connections()
+    }
     fn collection_access(
         &self,
         scope: &CellScope,
@@ -471,12 +477,11 @@ pub fn export_objects<E: SqlEngine>(
         .collect();
     let guard = host.cell()?;
     let store = guard.store();
-    // PRIVACY-1: an export carries stored values, so a cell that declares
-    // markings or holds dynamic `_norn_markings` exports nothing; a marked
-    // value leaves only through a reveal. `admit_export` brackets the marking
-    // decision and the exported source at one cell version (S3, #1547) and
-    // issues a non-cloneable permit consumed at export dispatch.
-    let permit = crate::privacy::disclosure::admit_export(host, store, object_type)?;
+    // PRIVACY-1 / QUESTION-STEP-1: an export carries stored values, so
+    // `admit_export` brackets the marking check, inherited Run question source
+    // grants, and the exported source at one sealed cell version (S3, #1547)
+    // and issues a non-cloneable permit consumed at export dispatch.
+    let permit = crate::privacy::disclosure::admit_export(host, store, access, actor, object_type)?;
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
     let mut named = std::collections::BTreeSet::new();
     for column in &columns {
@@ -1614,6 +1619,15 @@ pub fn dataset_lineage<E: SqlEngine>(
         .ok_or_else(crate::object_routes::not_found)?;
     let guard = host.cell()?;
     let store = guard.store();
+    if !crate::object_routes::inherited_type_permitted(
+        host,
+        &store.read(),
+        access,
+        actor,
+        object_type,
+    )? {
+        return Err(crate::authz::read_denied());
+    }
     let current = store
         .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
         .map_err(Refusal::host)?
@@ -1749,7 +1763,6 @@ pub fn page_objects<E: SqlEngine>(
     use crate::objects::{NornAppliedQuery, NornQueryTotal};
     use norn_cell::analytics::{PageRequest, PageResponse};
     let values = uniform_gate(host, scope, actor, object_type, access)?;
-    let actor = actor.unwrap_or_default();
     let guard = host.cell()?;
     let store = guard.store();
     let properties = store
@@ -1757,9 +1770,12 @@ pub fn page_objects<E: SqlEngine>(
         .effective_property_types(object_type)
         .map_err(|_unknown| crate::object_routes::not_found())?;
     let query = object_query::parse(params, &properties)?;
-    let (source, snapshot) = store
-        .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
-        .map_err(engine_failure)?;
+    let ((), source, snapshot, _start_version) = decided_source(host, store, object_type, |r| {
+        if !crate::object_routes::inherited_type_permitted(host, r, access, actor, object_type)? {
+            return Err(crate::authz::read_denied());
+        }
+        Ok(())
+    })?;
     let quarantined = store
         .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
         .map_err(Refusal::host)?
@@ -1771,7 +1787,7 @@ pub fn page_objects<E: SqlEngine>(
     let bound = [
         digest,
         Cursor::scope_digest(&host.scope().key()),
-        Cursor::actor_digest(actor),
+        Cursor::actor_digest(actor.unwrap_or_default()),
     ];
     let offset = match query.after.as_deref() {
         None => 0,
@@ -2008,9 +2024,13 @@ pub fn record_object<E: SqlEngine>(
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();
-    let (source, _snapshot) = store
-        .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
-        .map_err(engine_failure)?;
+    let ((), source, _snapshot, _start_version) = decided_source(host, store, object_type, |r| {
+        if !crate::object_routes::inherited_run_permitted(host, r, access, actor, object_type, id)?
+        {
+            return Err(crate::object_routes::not_found());
+        }
+        Ok(())
+    })?;
     let tenant = TenantId::of_scope(&host.scope().key());
     let call = EngineCall::new(
         "page",
@@ -2136,8 +2156,13 @@ enum ProfilePlan {
 fn decide_profile<E: SqlEngine>(
     host: &DevHost<E>,
     reader: &norn_cell::StoreReader<'_, E>,
+    access: &dyn ObjectAccess,
+    actor: Option<&str>,
     object_type: &str,
 ) -> Result<ProfilePlan, Refusal> {
+    if !crate::object_routes::inherited_type_permitted(host, reader, access, actor, object_type)? {
+        return Err(crate::authz::read_denied());
+    }
     if let Some(current) = reader
         .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
         .map_err(Refusal::host)?
@@ -2220,7 +2245,7 @@ pub fn profile_objects<E: SqlEngine>(
     let guard = host.cell()?;
     let store = guard.store();
     let (plan, source, _snapshot, start_version) = decided_source(host, store, object_type, |r| {
-        decide_profile(host, r, object_type)
+        decide_profile(host, r, access, actor, object_type)
     })?;
     match plan {
         ProfilePlan::Native => {

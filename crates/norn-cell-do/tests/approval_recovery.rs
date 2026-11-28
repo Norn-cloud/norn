@@ -1052,11 +1052,10 @@ fn a_requester_verified_from_another_role_table_never_consumes_the_approval() {
 /// runs, and the step stays pending for its requester.
 #[test]
 fn an_approval_recorded_while_a_step_dispatches_on_recorded_authority_is_never_consumed() {
-    use norn_api::actions::ActionAnswer;
     use norn_api::refusal::Refusal;
     use norn_cell::flow_run::RunStarter;
     use norn_cell_do::policy::Caller;
-    type Dispatch<'a> = &'a mut dyn FnMut() -> Result<ActionAnswer, Refusal>;
+    type Dispatch<'a> = &'a mut dyn FnMut() -> Result<(), Refusal>;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let id = parked_step(&path);
@@ -1118,7 +1117,6 @@ fn an_attempt_that_ended_before_the_decision_never_gets_its_call_run() {
 /// after the approval is recorded and before its call dispatches as its
 /// requester: what the decide answers for the call.
 fn approve_dispatching<E: SqlEngine>(cell: &Cell<E>, id: &str, before: &dyn Fn()) -> Value {
-    use norn_api::actions::ActionAnswer;
     use norn_api::refusal::Refusal;
     use norn_cell::flow_run::RunStarter;
     use norn_cell_do::policy::Caller;
@@ -1148,13 +1146,13 @@ fn approve_dispatching<E: SqlEngine>(cell: &Cell<E>, id: &str, before: &dyn Fn()
             object_type,
         )
     };
-    let as_requester =
-        |requester: &RunStarter, dispatch: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-            before();
-            cell.caller
-                .record(Some(as_caller(&requester.subject, &requester.roles)));
-            Some(dispatch())
-        };
+    let as_requester = |requester: &RunStarter,
+                        dispatch: &mut dyn FnMut() -> Result<(), Refusal>| {
+        before();
+        cell.caller
+            .record(Some(as_caller(&requester.subject, &requester.roles)));
+        Some(dispatch())
+    };
     let decided = norn_api::decisions::decide(
         &cell.host,
         &norn_api::decisions::DecideCall {
@@ -1310,11 +1308,10 @@ fn an_opened_file_and_its_restored_export_attribute_a_commit_alike() {
 /// committed outcome, never the denial.
 #[test]
 fn a_stale_drive_denied_after_the_requesters_commit_delivers_the_commit() {
-    use norn_api::actions::ActionAnswer;
     use norn_api::refusal::Refusal;
     use norn_cell::flow_run::RunStarter;
     use norn_cell_do::policy::Caller;
-    type Dispatch<'a> = &'a mut dyn FnMut() -> Result<ActionAnswer, Refusal>;
+    type Dispatch<'a> = &'a mut dyn FnMut() -> Result<(), Refusal>;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let id = parked_step(&path);

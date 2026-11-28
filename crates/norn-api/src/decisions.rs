@@ -1459,10 +1459,8 @@ fn run_approved<E: SqlEngine>(
         environment_id: Some(host.scope().environment_id.clone()),
         version: held.call.definitions_version,
     };
-    let mut commit = || {
-        // S2: the request's own authenticated principal, as the host's
-        // trusted seam verified it for this try; the dispatch compares it
-        // with the parked requester under its own hold.
+    let mut commit = || -> Result<(), Refusal> {
+        // S2: the request's verified principal, compared under dispatch's hold.
         let principal = host
             .authorizer
             .verified_principal(&held.call.requester.subject);
@@ -1472,8 +1470,6 @@ fn run_approved<E: SqlEngine>(
                 query: &query,
                 actor: Some(&held.call.requester.subject),
                 principal: principal.as_ref(),
-                // S5a: the step attempt the call was parked for, as the
-                // trusted flow dispatch recorded it; none for a direct call.
                 attempt: held.call.attempt.as_ref(),
                 step_pin: None,
                 action_id: &held.call.action,
@@ -1482,10 +1478,11 @@ fn run_approved<E: SqlEngine>(
             },
             disclosure,
             Some(&command),
-        )
+        )?;
+        Ok(())
     };
     let tried = match as_requester(&held.call.requester, &mut commit) {
-        Some(Ok(_answer)) => None,
+        Some(Ok(())) => None,
         Some(Err(refusal)) => Some(refusal.code),
         // The requester's current authority cannot be established on this
         // request (it is not the requester's own): nothing runs, and the call

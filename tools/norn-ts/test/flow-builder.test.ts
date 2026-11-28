@@ -35,7 +35,7 @@ function golden(file: string, actual: string): void {
   expect(actual).toBe(readFileSync(file, "utf8"))
 }
 
-const VALID = ["sequence", "route", "typed-failure", "retry-timer", "terminal-fact", "ask", "melt"]
+const VALID = ["sequence", "route", "typed-failure", "retry-timer", "terminal-fact", "ask", "melt", "question-guard", "decide-then-question", "timer-question-guard"]
 const INVALID: Record<string, string> = {
   "undeclared-tag": "NORN-FLOW-TAG",
   "unbounded-retry": "NORN-FLOW-UNBOUNDED",

@@ -1378,6 +1378,7 @@ where
             // event (RUN-LEDGER-1, DECISION-LEDGER-1); it stays in the
             // hash-chained ledger but is not an `E` to decode.
             if crate::flow_run::is_run_start(&entry.event)
+                || crate::flow_run::is_run_question_read(&entry.event)
                 || crate::decision_ledger::is_decision_resolved(&entry.event)
                 || crate::decision_ledger::is_approval_refused(&entry.event)
                 || crate::decision_ledger::is_approval_consumed(&entry.event)

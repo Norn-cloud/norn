@@ -463,6 +463,9 @@ pub fn recheck(flow: &Flow, bindings: &BTreeMap<String, u64>) -> Result<(), Refu
 /// a person and the run waits for their server-issued receipt.
 pub const DECISION_FUNCTION: &str = "norn.decision";
 
+/// The built-in function a read-only question step is lowered to (QUESTION-STEP-1).
+pub const QUESTION_FUNCTION: &str = "norn.question";
+
 /// The plain-words restatement (D59) of a flow payload, from its IR: what
 /// starts it, then each step in the order the rule performs it, by its
 /// label (or id), with the tool and exact version it calls, or the person
@@ -518,6 +521,9 @@ pub fn restate(canonical: &str) -> Result<String, String> {
         let does = match &perform.name {
             Some((function, _)) if function == DECISION_FUNCTION => {
                 "asks a person to decide, and waits for their decision".to_owned()
+            }
+            Some((function, _)) if function == QUESTION_FUNCTION => {
+                "reads an admitted question (read-only)".to_owned()
             }
             Some((function, function_version)) => {
                 format!("calls {function} at version {function_version}")
