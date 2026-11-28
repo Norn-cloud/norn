@@ -104,6 +104,7 @@ impl Context {
 pub(crate) fn eligible(record: &ExportRecord) -> bool {
     record.format == EXPORT_FORMAT
         && record.batch.world == MAIN_WORLD
+        && record.receipt.body.fork_pin.is_none()
         && record.quantity_input.is_none()
         && record.consumed_input.is_none()
         && record.initial_model.is_none()
@@ -345,6 +346,7 @@ impl ResidueCursor {
                 event,
                 prev_hash: row.get(4)?,
                 hash: row.get(5)?,
+                fork_pin: None,
             });
         }
         Ok(())

@@ -1,0 +1,56 @@
+{
+  "artifactId": "core.ValuedLedgerEffect.currency_matches_event.law",
+  "dependencies": [
+    {
+      "artifactId": "core.ValuedLedgerEffect.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "core.ValuedEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A valued ledger effect carries the valuation currency of its economic event",
+  "namespace": "core",
+  "payload": {
+    "id": "core.ValuedLedgerEffect.currency_matches_event",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/rea.ts"
+    },
+    "rationale": "Every ledger leg of a valued economic event must use the event's declared valuation_currency so mixed currencies are never netted (core.law.value_conservation).",
+    "response": {
+      "expression": "self.currency == self.event.valuation_currency",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.ValuedLedgerEffect"
+      ],
+      "root": {
+        "id": "core.ValuedLedgerEffect",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.ValuedLedgerEffect"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.ValuedLedgerEffect.currency_matches_event.law.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

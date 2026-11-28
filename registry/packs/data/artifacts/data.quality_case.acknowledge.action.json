@@ -1,0 +1,64 @@
+{
+  "artifactId": "data.quality_case.acknowledge.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Acknowledge a data quality case",
+  "namespace": "data",
+  "payload": {
+    "actionId": "data.quality_case.acknowledge",
+    "effectProgram": {
+      "entityArtifactId": "data.QualityCase.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "finding_id",
+      "objectKind": "data.QualityCase",
+      "transition": "acknowledge"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "finding_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "finding_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "finding_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "finding_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Acknowledge a data quality case",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "data.QualityCase"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.quality_case.acknowledge.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -6,7 +6,7 @@
     "objectId": "SCAN-INV-1041",
     "version": 2,
     "receipt": {
-      "receiptHash": "d96825d30002ad9b92f386403a3b584a13306590ecf0be6a0223972ec3780d80",
+      "receiptHash": "448f09b1616dc29b31fb2a75d76a0d905c641ed70ec5b5261b64a0a2b772c0b3",
       "commitSeq": 5,
       "recordedAtMs": 1800000000000
     }

@@ -1,0 +1,87 @@
+{
+  "artifactId": "data.catalog_dataset.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a catalog dataset",
+  "namespace": "data",
+  "payload": {
+    "actionId": "data.catalog_dataset.register",
+    "effectProgram": {
+      "entityArtifactId": "data.CatalogDataset.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "dataset_id",
+      "objectKind": "data.CatalogDataset",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {
+          "type": "string"
+        },
+        "freshness_sla_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "table",
+            "stream",
+            "log",
+            "metric_cube",
+            "document_corpus"
+          ],
+          "type": "string"
+        },
+        "schema_uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset_id",
+        "schema_uri",
+        "freshness_sla_ms",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Register a catalog dataset",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "data.CatalogDataset"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.catalog_dataset.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

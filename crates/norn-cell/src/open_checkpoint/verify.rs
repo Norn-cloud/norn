@@ -470,7 +470,12 @@ impl<E: SqlEngine> CellStore<E> {
         }
         if target.seq > 0 {
             let mut budget = crate::scrub::RowBudget::new(4);
-            let entry = reader.scrub_ledger_page(target.seq, 1, &mut budget)?;
+            let entry = reader.scrub_ledger_page(
+                target.seq,
+                1,
+                receipt.body.fork_pin.as_ref(),
+                &mut budget,
+            )?;
             if !entry
                 .first()
                 .is_some_and(|e| e.seq == target.seq && e.hash == target.hash)

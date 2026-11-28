@@ -294,7 +294,12 @@ impl HistoryCursor {
         if budget.remaining() < LEDGER_ENTRY_MAX_ROWS {
             return Ok(false);
         }
-        let entries = reader.scrub_ledger_page(base, 1, budget)?;
+        let expected_pin = self
+            .anchor
+            .anchor_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.body.fork_pin.as_ref());
+        let entries = reader.scrub_ledger_page(base, 1, expected_pin, budget)?;
         let entry = entries
             .into_iter()
             .next()
@@ -458,6 +463,7 @@ impl HistoryCursor {
                     break;
                 }
                 let receipt = self.next_receipt(reader, target_commits, budget)?;
+                crate::fork_evidence::verify_receipt_fork_binding(store.fork_pin(), &receipt.body)?;
                 self.active = Some(self.begin_commit(receipt)?);
             }
             let mut active = self.active.take().ok_or_else(|| {
@@ -804,7 +810,8 @@ fn step_commit_events<E: SqlEngine>(
         } else {
             active.next_event_seq
         };
-        let entries = reader.scrub_ledger_page(from, want, budget)?;
+        let entries =
+            reader.scrub_ledger_page(from, want, active.receipt.body.fork_pin.as_ref(), budget)?;
         if entries.len() < want {
             return Err(corrupt("receipt names events past the ledger head"));
         }
@@ -829,7 +836,10 @@ fn verify_event_entry(active: &mut ActiveCommit, entry: &LedgerEntry) -> Result<
         return Err(event_corrupt("previous hash does not chain"));
     }
     let body = &active.receipt.body;
-    if entry.commit_seq != body.commit_seq || entry.world != body.world {
+    if entry.commit_seq != body.commit_seq
+        || entry.world != body.world
+        || entry.fork_pin != body.fork_pin
+    {
         return Err(CellError::LedgerCorrupt {
             seq: body.commit_seq,
             reason: "an event does not belong to its receipt".to_owned(),
