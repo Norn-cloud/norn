@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::fs_io::ZeroCiStatus;
 #[cfg(unix)]
-use super::fs_io::final_dir_flags;
+use super::fs_io::{final_dir_flags, format_dir_open_error};
 use super::trusted_dir::TrustedDir;
 
 /// Diagnostic code emitted when a downstream Norn app contains `.github/workflows`.
@@ -112,7 +112,7 @@ fn inspect_workflows_zero_ci_unix(
     root_fd: std::os::fd::BorrowedFd<'_>,
     root_display: &Path,
 ) -> ZeroCiStatus {
-    use rustix::fs::{AtFlags, FileType, Mode, openat, statat};
+    use rustix::fs::{Mode, openat};
     use rustix::io::Errno;
     use std::os::fd::AsFd as _;
 
@@ -120,27 +120,14 @@ fn inspect_workflows_zero_ci_unix(
     let github_fd = match openat(root_fd, ".github", final_dir_flags(), Mode::empty()) {
         Ok(fd) => fd,
         Err(err) if err == Errno::NOENT => return ZeroCiStatus::Absent,
-        Err(err) if err == Errno::LOOP => {
-            return ZeroCiStatus::Error(format!(
-                "{}: symlinks are refused",
-                github_display.display()
+        Err(err) => {
+            return ZeroCiStatus::Error(format_dir_open_error(
+                root_fd,
+                std::ffi::OsStr::new(".github"),
+                &github_display,
+                err,
             ));
         }
-        Err(err) if err == Errno::NOTDIR => {
-            if let Ok(stat) = statat(root_fd, ".github", AtFlags::SYMLINK_NOFOLLOW)
-                && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
-            {
-                return ZeroCiStatus::Error(format!(
-                    "{}: symlinks are refused",
-                    github_display.display()
-                ));
-            }
-            return ZeroCiStatus::Error(format!(
-                "{}: .github is not a directory",
-                github_display.display()
-            ));
-        }
-        Err(err) => return ZeroCiStatus::Error(format!("{}: {err}", github_display.display())),
     };
 
     let workflows_display = github_display.join("workflows");
@@ -152,10 +139,12 @@ fn inspect_workflows_zero_ci_unix(
     ) {
         Ok(_workflows_fd) => ZeroCiStatus::Present(".github/workflows".to_owned()),
         Err(err) if err == Errno::NOENT => ZeroCiStatus::Absent,
-        Err(err) if err == Errno::LOOP || err == Errno::NOTDIR => {
-            ZeroCiStatus::Present(".github/workflows".to_owned())
-        }
-        Err(err) => ZeroCiStatus::Error(format!("{}: {err}", workflows_display.display())),
+        Err(err) => ZeroCiStatus::Error(format_dir_open_error(
+            github_fd.as_fd(),
+            std::ffi::OsStr::new("workflows"),
+            &workflows_display,
+            err,
+        )),
     }
 }
 
@@ -170,10 +159,7 @@ fn inspect_workflows_zero_ci_non_unix(root: &Path) -> ZeroCiStatus {
                 return ZeroCiStatus::Error(format!("{}: symlinks are refused", github.display()));
             }
             if !meta.is_dir() {
-                return ZeroCiStatus::Error(format!(
-                    "{}: .github is not a directory",
-                    github.display()
-                ));
+                return ZeroCiStatus::Error(format!("{}: not a directory", github.display()));
             }
         }
     }
@@ -181,7 +167,15 @@ fn inspect_workflows_zero_ci_non_unix(root: &Path) -> ZeroCiStatus {
     match std::fs::symlink_metadata(&workflows) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => ZeroCiStatus::Absent,
         Err(err) => ZeroCiStatus::Error(format!("{}: {err}", workflows.display())),
-        Ok(_) => ZeroCiStatus::Present(".github/workflows".to_owned()),
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                ZeroCiStatus::Error(format!("{}: symlinks are refused", workflows.display()))
+            } else if !meta.is_dir() {
+                ZeroCiStatus::Error(format!("{}: not a directory", workflows.display()))
+            } else {
+                ZeroCiStatus::Present(".github/workflows".to_owned())
+            }
+        }
     }
 }
 

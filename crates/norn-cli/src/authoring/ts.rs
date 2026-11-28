@@ -4,7 +4,7 @@
 //! All source and relative-import reads run through FD-pinned [`TrustedDir`] handles
 //! under an invocation-wide [`InvocationBudget`] without reopening pathnames.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 
 use norn_authoring::{
@@ -19,8 +19,8 @@ use serde_json::{Value, json};
 use super::AuthoringFailure;
 use super::atomic_io::write_file_atomic;
 use super::fs_io::{
-    BoundedJsonArray, BoundedJsonWriter, InvocationBudget, SourceLang, classify_source_file,
-    discover_tool_root, display_posix_path, is_ts_or_json_support,
+    BoundedJsonArray, BoundedJsonWriter, InvocationBudget, LoadedFile, SourceLang,
+    classify_source_file, discover_tool_root, display_posix_path,
 };
 use super::trusted_dir::{TrustedDir, open_regular_file_pinned};
 
@@ -44,10 +44,10 @@ pub(crate) enum TsCompileTarget<'a> {
         display_path: &'a Path,
         content: String,
     },
-    /// Directory already opened as a trusted fd with top-level relative `.ts`/`.tsx` paths.
+    /// Directory already opened as a trusted fd with pre-loaded top-level `.ts`/`.tsx` files.
     Directory {
         root_dir: &'a TrustedDir,
-        root_rel_paths: Vec<PathBuf>,
+        root_files: Vec<LoadedFile>,
     },
 }
 
@@ -96,7 +96,10 @@ fn extract_relative_specifiers(source: &str) -> Vec<String> {
     let mut specs = Vec::new();
     for line in source.lines() {
         let trimmed = line.trim();
-        if !(trimmed.starts_with("import ") || trimmed.starts_with("export ")) {
+        if !(trimmed.starts_with("import ")
+            || trimmed.starts_with("export ")
+            || trimmed.starts_with('}'))
+        {
             continue;
         }
         if let Some((_, after_from)) = trimmed.split_once(" from ")
@@ -224,125 +227,110 @@ fn virtual_path_from_rel(rel: &Path, up_levels: usize) -> Result<String, Authori
     Ok(format!("/workspace/{}", parts.join("/")))
 }
 
-fn mount_single_file_closure(
-    parent_dir: &TrustedDir,
-    file_name: &str,
-    display_path: &Path,
-    initial_content: String,
+fn collect_ts_import_closure(
+    base_dir: &TrustedDir,
+    root_files: Vec<LoadedFile>,
+    package_hint_path: &Path,
+    budget: &mut InvocationBudget,
+) -> Result<(Vec<PathBuf>, Vec<LoadedFile>), AuthoringFailure> {
+    let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut queue: VecDeque<(LoadedFile, usize)> = VecDeque::new();
+    let mut root_rels: Vec<PathBuf> = Vec::with_capacity(root_files.len());
+    for file in root_files {
+        let norm_rel = normalize_lexical_relative(&file.rel_path);
+        if visited.insert(norm_rel.clone()) {
+            root_rels.push(norm_rel.clone());
+            queue.push_back((
+                LoadedFile {
+                    display_path: file.display_path,
+                    rel_path: norm_rel,
+                    content: file.content,
+                },
+                0,
+            ));
+        }
+    }
+
+    let mut loaded: Vec<LoadedFile> = Vec::with_capacity(queue.len());
+    let mut imported_count: usize = 0;
+    while let Some((current, depth)) = queue.pop_front() {
+        if depth < MAX_LOCAL_IMPORT_DEPTH {
+            for spec in extract_relative_specifiers(&current.content) {
+                for candidate in relative_candidates(&current.rel_path, &spec) {
+                    if visited.contains(&candidate) {
+                        break;
+                    }
+                    if let Some(imported_text) = base_dir
+                        .probe_import_file_rel(&candidate, budget)
+                        .map_err(AuthoringFailure::Io)?
+                    {
+                        if imported_count >= MAX_LOCAL_IMPORTS {
+                            return Err(AuthoringFailure::Io(format!(
+                                "{}: local import closure exceeds {MAX_LOCAL_IMPORTS} files",
+                                package_hint_path.display()
+                            )));
+                        }
+                        imported_count = imported_count.saturating_add(1);
+                        let candidate_display =
+                            normalize_display_join(base_dir.display_path(), &candidate);
+                        visited.insert(candidate.clone());
+                        queue.push_back((
+                            LoadedFile {
+                                display_path: candidate_display,
+                                rel_path: candidate,
+                                content: imported_text,
+                            },
+                            depth.saturating_add(1),
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+        loaded.push(current);
+    }
+    Ok((root_rels, loaded))
+}
+
+fn mount_ts_closure(
+    base_dir: &TrustedDir,
+    root_files: Vec<LoadedFile>,
+    package_hint_path: &Path,
     explicit_tool_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<MountedTsContext, AuthoringFailure> {
     let profile = Profile::load().map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     let mut vfs = BoundedVfs::default();
     let effect_dist_prefix =
-        mount_pinned_packages(&mut vfs, &profile, display_path, explicit_tool_root)?;
+        mount_pinned_packages(&mut vfs, &profile, package_hint_path, explicit_tool_root)?;
 
-    let initial_rel = PathBuf::from(file_name);
-    let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
-    visited.insert(initial_rel.clone());
-    let mut queue: Vec<(PathBuf, usize, String)> = vec![(initial_rel, 0, initial_content)];
-    let mut loaded: Vec<(PathBuf, String)> = Vec::new();
-
-    while let Some((current_rel, depth, text)) = queue.pop() {
-        if loaded.len() >= MAX_LOCAL_IMPORTS {
-            return Err(AuthoringFailure::Io(format!(
-                "{}: local import closure exceeds {MAX_LOCAL_IMPORTS} files",
-                display_path.display()
-            )));
-        }
-        if depth < MAX_LOCAL_IMPORT_DEPTH {
-            for spec in extract_relative_specifiers(&text) {
-                for candidate in relative_candidates(&current_rel, &spec) {
-                    if visited.contains(&candidate) {
-                        break;
-                    }
-                    if let Some(imported_text) = parent_dir
-                        .probe_import_file_rel(&candidate, budget)
-                        .map_err(AuthoringFailure::Io)?
-                    {
-                        visited.insert(candidate.clone());
-                        queue.push((candidate, depth.saturating_add(1), imported_text));
-                        break;
-                    }
-                }
-            }
-        }
-        loaded.push((current_rel, text));
-    }
-
+    let (root_rels, loaded) =
+        collect_ts_import_closure(base_dir, root_files, package_hint_path, budget)?;
     let up_levels = loaded
         .iter()
-        .map(|(rel, _)| count_leading_parent_dirs(rel))
+        .map(|file| count_leading_parent_dirs(&file.rel_path))
         .max()
         .unwrap_or(0);
     let mut source_paths = BTreeMap::new();
-    let mut primary_vpath = String::new();
-    for (idx, (rel_path, text)) in loaded.into_iter().enumerate() {
-        let vpath = virtual_path_from_rel(&rel_path, up_levels)?;
-        let normalized = vfs
-            .add_file(&vpath, text)
-            .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-        if idx == 0 {
-            primary_vpath.clone_from(&normalized);
-        }
-        let disk_display = normalize_display_join(parent_dir.display_path(), &rel_path);
-        source_paths.insert(normalized, display_posix_path(&disk_display));
-    }
-
-    Ok(MountedTsContext {
-        profile,
-        vfs,
-        effect_dist_prefix,
-        root_vpaths: vec![primary_vpath],
-        source_paths,
-    })
-}
-
-fn mount_ts_files_and_support(
-    root_dir: &TrustedDir,
-    root_rel_paths: &[PathBuf],
-    explicit_tool_root: Option<&Path>,
-    budget: &mut InvocationBudget,
-) -> Result<MountedTsContext, AuthoringFailure> {
-    let profile = Profile::load().map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    let mut vfs = BoundedVfs::default();
-    let effect_dist_prefix = mount_pinned_packages(
-        &mut vfs,
-        &profile,
-        root_dir.display_path(),
-        explicit_tool_root,
-    )?;
-
-    let support_files = root_dir
-        .walk_files(is_ts_or_json_support, budget)
-        .map_err(AuthoringFailure::Io)?;
-    let mut source_paths = BTreeMap::new();
     let mut rel_to_vpath = BTreeMap::new();
-    for loaded in support_files {
-        let vpath = virtual_path_from_rel(&loaded.rel_path, 0)?;
+    for file in loaded {
+        let vpath = virtual_path_from_rel(&file.rel_path, up_levels)?;
         let normalized = vfs
-            .add_file(&vpath, loaded.content)
+            .add_file(&vpath, file.content)
             .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-        source_paths.insert(normalized.clone(), display_posix_path(&loaded.display_path));
-        rel_to_vpath.insert(loaded.rel_path, normalized);
+        source_paths.insert(normalized.clone(), display_posix_path(&file.display_path));
+        rel_to_vpath.insert(file.rel_path, normalized);
     }
 
-    let mut root_vpaths = Vec::with_capacity(root_rel_paths.len());
-    for root_rel in root_rel_paths {
-        if let Some(vpath) = rel_to_vpath.get(root_rel) {
-            root_vpaths.push(vpath.clone());
-        } else {
-            let text = root_dir
-                .read_regular_file_rel(root_rel, budget)
-                .map_err(AuthoringFailure::Io)?;
-            let vpath = virtual_path_from_rel(root_rel, 0)?;
-            let normalized = vfs
-                .add_file(&vpath, text)
-                .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-            let shown = display_posix_path(&root_dir.display_path().join(root_rel));
-            source_paths.insert(normalized.clone(), shown);
-            root_vpaths.push(normalized);
-        }
+    let mut root_vpaths = Vec::with_capacity(root_rels.len());
+    for root_rel in root_rels {
+        let vpath = rel_to_vpath.remove(&root_rel).ok_or_else(|| {
+            AuthoringFailure::Io(format!(
+                "{}: missing mounted virtual path",
+                root_rel.display()
+            ))
+        })?;
+        root_vpaths.push(vpath);
     }
 
     Ok(MountedTsContext {
@@ -352,6 +340,28 @@ fn mount_ts_files_and_support(
         root_vpaths,
         source_paths,
     })
+}
+
+fn mount_single_file_closure(
+    parent_dir: &TrustedDir,
+    file_name: &str,
+    display_path: &Path,
+    initial_content: String,
+    explicit_tool_root: Option<&Path>,
+    budget: &mut InvocationBudget,
+) -> Result<MountedTsContext, AuthoringFailure> {
+    let root_file = LoadedFile {
+        display_path: display_path.to_path_buf(),
+        rel_path: PathBuf::from(file_name),
+        content: initial_content,
+    };
+    mount_ts_closure(
+        parent_dir,
+        vec![root_file],
+        display_path,
+        explicit_tool_root,
+        budget,
+    )
 }
 
 fn open_single_ts_file_pinned(
@@ -547,7 +557,7 @@ pub(crate) fn compile_ts_targets_into(
 ) -> Result<(), AuthoringFailure> {
     let single_module = match &target {
         TsCompileTarget::SingleFile { .. } => true,
-        TsCompileTarget::Directory { root_rel_paths, .. } => root_rel_paths.len() == 1,
+        TsCompileTarget::Directory { root_files, .. } => root_files.len() == 1,
     };
     let mounted = match target {
         TsCompileTarget::SingleFile {
@@ -565,8 +575,14 @@ pub(crate) fn compile_ts_targets_into(
         )?,
         TsCompileTarget::Directory {
             root_dir,
-            root_rel_paths,
-        } => mount_ts_files_and_support(root_dir, &root_rel_paths, opts.tool_root, budget)?,
+            root_files,
+        } => mount_ts_closure(
+            root_dir,
+            root_files,
+            root_dir.display_path(),
+            opts.tool_root,
+            budget,
+        )?,
     };
     let mut sink = ArtifactSink {
         seen_ids,

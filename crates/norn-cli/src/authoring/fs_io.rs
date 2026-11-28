@@ -21,6 +21,9 @@ pub(crate) const MAX_TREE_FILES: usize = 1_024;
 /// Maximum cumulative source bytes read across one CLI invocation (`32 MiB`).
 pub(crate) const MAX_TREE_BYTES: u64 = 32 * 1024 * 1024;
 
+/// Maximum JSON nesting depth allowed when streaming canonical JSON values.
+const MAX_CANONICAL_JSON_DEPTH: usize = 256;
+
 /// Invocation-wide resource budget shared across directory walks, file reads,
 /// import closures, manifest batches, and retained outputs.
 #[derive(Clone, Debug)]
@@ -208,7 +211,7 @@ pub(crate) enum SourceLang {
 pub(crate) enum ZeroCiStatus {
     /// Neither `.github` nor `.github/workflows` exists (verified via `ENOENT`).
     Absent,
-    /// `.github/workflows` exists (directory, non-directory, or symlink).
+    /// `.github/workflows` exists as a real directory.
     Present(String),
     /// Fail-closed inspection refusal (`ELOOP`, `ENOTDIR`, `EACCES`, or other OS error).
     Error(String),
@@ -300,7 +303,7 @@ impl BoundedJsonArray {
         self.count = self.count.saturating_add(1);
     }
 
-    /// Streams one `serde_json::Value` element directly through [`BoundedJsonWriter`].
+    /// Streams one `serde_json::Value` element as compact canonical JSON through [`BoundedJsonWriter`].
     pub(crate) fn push_value(
         &mut self,
         label: &str,
@@ -310,7 +313,7 @@ impl BoundedJsonArray {
         self.push_prefix(label, budget)?;
         {
             let mut writer = self.writer(label, budget);
-            serde_json::to_writer(&mut writer, value).map_err(|err| err.to_string())?;
+            write_canonical_json_value(&mut writer, value)?;
         }
         self.mark_pushed();
         Ok(())
@@ -329,6 +332,94 @@ impl BoundedJsonArray {
         }
         String::from_utf8(self.out).map_err(|err| format!("{label}: invalid UTF-8: {err}"))
     }
+}
+
+fn js_array_index(key: &str) -> Option<u32> {
+    if key == "0" {
+        return Some(0);
+    }
+    let first = key.bytes().next()?;
+    if !(b'1'..=b'9').contains(&first) || !key.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let idx = key.parse::<u32>().ok()?;
+    if idx == u32::MAX { None } else { Some(idx) }
+}
+
+fn js_key_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    match (js_array_index(left), js_array_index(right)) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => left.encode_utf16().cmp(right.encode_utf16()),
+    }
+}
+
+fn write_canonical_json_value_at(
+    writer: &mut BoundedJsonWriter<'_>,
+    value: &serde_json::Value,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_CANONICAL_JSON_DEPTH {
+        return Err(format!(
+            "canonical JSON nesting exceeds {MAX_CANONICAL_JSON_DEPTH} levels"
+        ));
+    }
+    match value {
+        serde_json::Value::Null => writer.write_all(b"null").map_err(|err| err.to_string()),
+        serde_json::Value::Bool(true) => writer.write_all(b"true").map_err(|err| err.to_string()),
+        serde_json::Value::Bool(false) => writer.write_all(b"false").map_err(|err| err.to_string()),
+        serde_json::Value::Number(num) => {
+            let rendered =
+                norn_authoring::compact_canonical_json(&serde_json::Value::Number(num.clone()))
+                    .map_err(|err| err.to_string())?;
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(|err| err.to_string())
+        }
+        serde_json::Value::String(text) => {
+            serde_json::to_writer(&mut *writer, text).map_err(|err| err.to_string())
+        }
+        serde_json::Value::Array(items) => {
+            writer.write_all(b"[").map_err(|err| err.to_string())?;
+            let next_depth = depth.saturating_add(1);
+            for (idx, item) in items.iter().enumerate() {
+                if idx > 0 {
+                    writer.write_all(b",").map_err(|err| err.to_string())?;
+                }
+                write_canonical_json_value_at(writer, item, next_depth)?;
+            }
+            writer.write_all(b"]").map_err(|err| err.to_string())
+        }
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<(&str, &serde_json::Value)> =
+                map.iter().map(|(key, val)| (key.as_str(), val)).collect();
+            entries.sort_by(|(left, _), (right, _)| js_key_cmp(left, right));
+            writer.write_all(b"{").map_err(|err| err.to_string())?;
+            let next_depth = depth.saturating_add(1);
+            for (idx, (key, val)) in entries.into_iter().enumerate() {
+                if key == "__proto__" {
+                    return Err("__proto__ is not a portable JSON member name".to_owned());
+                }
+                if idx > 0 {
+                    writer.write_all(b",").map_err(|err| err.to_string())?;
+                }
+                serde_json::to_writer(&mut *writer, key).map_err(|err| err.to_string())?;
+                writer.write_all(b":").map_err(|err| err.to_string())?;
+                write_canonical_json_value_at(writer, val, next_depth)?;
+            }
+            writer.write_all(b"}").map_err(|err| err.to_string())
+        }
+    }
+}
+
+/// Streams `value` as compact canonical JSON directly into `writer`, charging every
+/// byte against [`InvocationBudget`] before allocation.
+pub(crate) fn write_canonical_json_value(
+    writer: &mut BoundedJsonWriter<'_>,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    write_canonical_json_value_at(writer, value, 0)
 }
 
 /// A regular file already opened and read directly from a trusted descriptor.
@@ -369,18 +460,6 @@ pub(crate) fn classify_source_file(path: &Path) -> Option<SourceLang> {
 pub(crate) fn is_json_file(path: &Path) -> bool {
     path.extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-}
-
-/// Returns `true` if `path` has a `.ts` (non-`.d.ts`) or `.json` extension.
-pub(crate) fn is_ts_or_json_support(name: &str, path: &Path) -> bool {
-    if is_declaration_file(name) {
-        return false;
-    }
-    path.extension().is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("ts")
-            || ext.eq_ignore_ascii_case("tsx")
-            || ext.eq_ignore_ascii_case("json")
-    })
 }
 
 /// Returns `true` if `path` is formattable by `norn fmt` (`.ts`, `.tsx`, or `.py`).

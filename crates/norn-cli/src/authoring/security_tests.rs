@@ -3,17 +3,21 @@
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 
 use super::atomic_io::write_file_atomic;
-use super::fs_io::{BoundedJsonArray, BoundedJsonWriter, InvocationBudget, is_ts_or_json_support};
+use super::fs_io::{BoundedJsonArray, BoundedJsonWriter, InvocationBudget, is_formattable_file};
 use super::trusted_dir::TrustedDir;
 use super::zero_ci::{
     ZERO_CI_DIAGNOSTIC_CODE, build_zero_ci_report, find_norn_app_root_from_dir_with_limit,
 };
-use super::{CheckSourceRequest, CompileArgs, execute_check_source, execute_compile};
+use super::{
+    AuthoringFailure, CheckSourceRequest, CompileArgs, compile_path_to_json, execute_check_source,
+    execute_compile,
+};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -110,9 +114,9 @@ fn invocation_budget_enforces_scanned_entry_cap_and_shared_byte_cap() -> TestRes
     for idx in 0..6_usize {
         scratch.write(&format!("noise_{idx}.txt"), "ignored-by-filter")?;
     }
-    let dir = TrustedDir::open(scratch.path())?;
+    let dir = Arc::new(TrustedDir::open(scratch.path())?);
     let mut scan_budget = InvocationBudget::with_limits(4, 100, 1024, 4096, 4096);
-    let scan_err = dir.walk_files(is_ts_or_json_support, &mut scan_budget);
+    let scan_err = dir.walk_files_pinned(is_formattable_file, &mut scan_budget);
     assert!(
         scan_err
             .as_ref()
@@ -226,10 +230,11 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         tool_root: None,
     });
     assert_eq!(sym_github.exit_code, 2);
+    assert_eq!(sym_github.stdout, "");
     assert!(sym_github.stderr.contains("symlink"));
     std::fs::remove_file(&github_path)?;
 
-    // Case 2: `.github/workflows` is a regular file -> must be refused (exit 1).
+    // Case 2: `.github/workflows` is a regular file -> fail-closed inspection error (exit 2), NOT policy refusal.
     scratch.write(".github/workflows", "not a directory\n")?;
     let file_workflows = execute_check_source(&CheckSourceRequest {
         source: scratch.path(),
@@ -239,12 +244,16 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         forbid_unsafe_zen: false,
         tool_root: None,
     });
-    assert_eq!(file_workflows.exit_code, 1);
-    let parsed: Value = serde_json::from_str(&file_workflows.stdout)?;
-    assert_eq!(parsed.get("admitted").and_then(Value::as_bool), Some(false));
+    assert_eq!(file_workflows.exit_code, 2);
+    assert_eq!(file_workflows.stdout, "");
+    assert!(
+        file_workflows.stderr.contains("not a directory"),
+        "expected .github/workflows not a directory error, got: {}",
+        file_workflows.stderr
+    );
     std::fs::remove_file(scratch.path().join(".github/workflows"))?;
 
-    // Case 3: `.github/workflows` is a symlink -> must be refused (exit 1).
+    // Case 3: `.github/workflows` is a symlink -> fail-closed inspection error (exit 2), NOT policy refusal.
     symlink(decoy.path(), scratch.path().join(".github/workflows"))?;
     let sym_workflows = execute_check_source(&CheckSourceRequest {
         source: scratch.path(),
@@ -254,7 +263,13 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         forbid_unsafe_zen: false,
         tool_root: None,
     });
-    assert_eq!(sym_workflows.exit_code, 1);
+    assert_eq!(sym_workflows.exit_code, 2);
+    assert_eq!(sym_workflows.stdout, "");
+    assert!(
+        sym_workflows.stderr.contains("symlink"),
+        "expected .github/workflows symlink refusal, got: {}",
+        sym_workflows.stderr
+    );
     std::fs::remove_dir_all(scratch.path().join(".github"))?;
 
     // Case 4: `.github` is a regular file -> must fail closed (exit 2), never treated as clean.
@@ -268,6 +283,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         tool_root: None,
     });
     assert_eq!(regular_github.exit_code, 2);
+    assert_eq!(regular_github.stdout, "");
     assert!(
         regular_github.stderr.contains("not a directory"),
         "expected .github not a directory error, got: {}",
@@ -627,6 +643,119 @@ fn manifest_source_dir_refuses_hidden_symlink_and_hidden_unsupported_file() -> T
         junk_out.stderr.contains("unsupported file"),
         "expected unsupported hidden file refusal, got: {}",
         junk_out.stderr
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_directory_compile_charges_single_read_budget_and_resolves_imports() -> TestResult {
+    let ts_root = tools_norn_ts_root();
+    let scratch = SecWorkspace::new("ts-single-read")?;
+    let billing_src = r#"import { Norn } from "@norn/authoring"
+
+export const loadInvoice = Norn.fn<{
+  readonly invoiceId: string
+}, {
+  readonly id: string
+}>({ id: "billing.load_invoice", version: "1.0.0" })
+"#;
+    let charge_src = r#"import { Norn } from "@norn/authoring"
+
+export const chargeCard = Norn.fn<{
+  readonly invoiceId: string
+}, { readonly receiptId: string }>({
+  id: "billing.charge_card",
+  version: "1.0.0",
+})
+"#;
+    let sequence_src = r#"import { Effect } from "effect"
+import { Norn } from "@norn/authoring"
+import { loadInvoice } from "./billing"
+import { chargeCard } from "./support/charge"
+
+export default Norn.flow(
+  { id: "billing.sequence", version: "1.0.0" },
+  Effect.gen(function* () {
+    const invoice = yield* Norn.perform("load", loadInvoice, { invoiceId: "inv-1" })
+    const receipt = yield* Norn.perform("charge", chargeCard, { invoiceId: invoice.id })
+    return { invoice: invoice.id, receipt: receipt.receiptId }
+  }),
+)
+"#;
+    scratch.write("billing.ts", billing_src)?;
+    scratch.write("support/charge.ts", charge_src)?;
+    scratch.write("sequence.ts", sequence_src)?;
+
+    let total_len = billing_src
+        .len()
+        .saturating_add(charge_src.len())
+        .saturating_add(sequence_src.len());
+    let expected_bytes = u64::try_from(total_len)?;
+    let mut budget = InvocationBudget::with_limits(100, 3, 65_536, expected_bytes, 65_536);
+
+    let compiled = match compile_path_to_json(
+        scratch.path(),
+        "local",
+        "dev",
+        false,
+        Some(&ts_root),
+        &mut budget,
+    ) {
+        Ok(text) => text,
+        Err(AuthoringFailure::Diagnostics(doc)) => {
+            return Err(format!("unexpected TS diagnostics: {doc}").into());
+        }
+        Err(AuthoringFailure::Io(msg)) => return Err(msg.into()),
+    };
+    assert_eq!(budget.bytes_read(), expected_bytes);
+    let parsed: Value = serde_json::from_str(&compiled)?;
+    let items = parsed.as_array().ok_or("expected JSON artifact array")?;
+    assert_eq!(items.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn bounded_json_array_emits_canonical_json_with_sorted_keys_and_zero_norm() -> TestResult {
+    let mut budget = InvocationBudget::new();
+    let mut array = BoundedJsonArray::new();
+    let sample = json!({
+        "b": { "z": -0.0, "a": 1.0 },
+        "a": 1e21,
+        "10": 1.0,
+        "2": 1,
+        "01": -0.0,
+        "0": -0.0,
+    });
+    array.push_value("canonical test", &sample, &mut budget)?;
+    let rendered = array.finish("canonical test", &mut budget)?;
+    assert_eq!(
+        rendered,
+        "[{\"0\":0,\"2\":1,\"10\":1,\"01\":0,\"a\":1e+21,\"b\":{\"a\":1,\"z\":0}}]\n"
+    );
+
+    let mut proto_budget = InvocationBudget::new();
+    let mut proto_array = BoundedJsonArray::new();
+    let proto_err =
+        proto_array.push_value("proto test", &json!({ "__proto__": 1 }), &mut proto_budget);
+    assert!(
+        proto_err
+            .as_ref()
+            .is_err_and(|msg| msg.contains("__proto__")),
+        "expected __proto__ refusal, got: {proto_err:?}"
+    );
+
+    let mut out_of_range_budget = InvocationBudget::new();
+    let mut out_of_range_array = BoundedJsonArray::new();
+    let out_of_range_err = out_of_range_array.push_value(
+        "out-of-range int test",
+        &json!({ "big": 9_007_199_254_740_993_u64 }),
+        &mut out_of_range_budget,
+    );
+    assert!(
+        out_of_range_err
+            .as_ref()
+            .is_err_and(|msg| msg.contains("safe integer")),
+        "expected safe integer refusal, got: {out_of_range_err:?}"
     );
     Ok(())
 }

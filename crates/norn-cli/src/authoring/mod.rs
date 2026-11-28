@@ -314,7 +314,7 @@ fn compile_source_dir_entries(
     let top_files = source_dir
         .read_top_level_files(state.budget)
         .map_err(AuthoringFailure::Io)?;
-    let mut typescript_rels = Vec::new();
+    let mut typescript_files = Vec::new();
     let mut python_files = Vec::new();
     let mut json_files = Vec::new();
     for file in top_files {
@@ -331,7 +331,7 @@ fn compile_source_dir_entries(
             continue;
         }
         match classify_source_file(&file.display_path) {
-            Some(SourceLang::TypeScript) => typescript_rels.push(file.rel_path),
+            Some(SourceLang::TypeScript) => typescript_files.push(file),
             Some(SourceLang::Python) => python_files.push(file),
             None => {
                 return Err(AuthoringFailure::Io(format!(
@@ -344,7 +344,7 @@ fn compile_source_dir_entries(
 
     let before_count = state.out.len();
     let mut retained_count = 0_usize;
-    if !typescript_rels.is_empty() {
+    if !typescript_files.is_empty() {
         let ts_opts = TsCompileOptions {
             org: opts.org,
             env: opts.env,
@@ -354,7 +354,7 @@ fn compile_source_dir_entries(
         ts::compile_ts_targets_into(
             TsCompileTarget::Directory {
                 root_dir: source_dir,
-                root_rel_paths: typescript_rels,
+                root_files: typescript_files,
             },
             &ts_opts,
             state.seen_ids,

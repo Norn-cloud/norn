@@ -62,26 +62,6 @@ impl TrustedDir {
         self.fd.as_fd()
     }
 
-    /// Duplicates the underlying pinned directory descriptor (`F_DUPFD_CLOEXEC` on Unix).
-    pub(crate) fn try_clone(&self) -> Result<Self, String> {
-        #[cfg(unix)]
-        {
-            let dup = self
-                .fd
-                .try_clone()
-                .map_err(|err| format!("{}: {err}", self.display_path.display()))?;
-            Ok(Self {
-                fd: dup,
-                display_path: self.display_path.clone(),
-            })
-        }
-        #[cfg(not(unix))]
-        {
-            Ok(Self {
-                display_path: self.display_path.clone(),
-            })
-        }
-    }
     /// Opens `dir` component-by-component without following symlinks.
     pub(crate) fn open(dir: &Path) -> Result<Self, String> {
         #[cfg(unix)]
@@ -201,17 +181,6 @@ impl TrustedDir {
             ));
         };
         self.open_and_read_segments(&parent_segs, final_seg, false, budget)
-    }
-
-    /// Reads a strict relative regular file under `self`, failing if missing or non-regular.
-    pub(crate) fn read_regular_file_rel(
-        &self,
-        rel: &Path,
-        budget: &mut InvocationBudget,
-    ) -> Result<String, String> {
-        let display = self.display_path.join(rel);
-        self.try_read_regular_file_rel(rel, budget)?
-            .ok_or_else(|| format!("{}: file not found", display.display()))
     }
 
     /// Probes a relative import path (`./` or `../`) under `self`, refusing symlinks and
@@ -387,30 +356,6 @@ impl TrustedDir {
         {
             read_top_level_files_non_unix(&self.display_path, budget)
         }
-    }
-
-    /// Recursively walks `self`, verifying every entry's type without following symlinks
-    /// and reading accepted regular files directly from their opened descriptors.
-    pub(crate) fn walk_files(
-        &self,
-        accept: fn(&str, &Path) -> bool,
-        budget: &mut InvocationBudget,
-    ) -> Result<Vec<LoadedFile>, String> {
-        let root = Arc::new(self.try_clone()?);
-        let mut files = Vec::new();
-        walk_dir_shared(
-            &root,
-            accept,
-            budget,
-            &mut |_parent, _name, display_path, rel_path, content| {
-                files.push(LoadedFile {
-                    display_path,
-                    rel_path,
-                    content,
-                });
-            },
-        )?;
-        Ok(files)
     }
 
     /// Recursively walks `self`, retaining the exact opened parent [`TrustedDir`] handle
