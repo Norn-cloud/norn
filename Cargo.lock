@@ -3727,11 +3727,13 @@ dependencies = [
 name = "norn-authoring-py"
 version = "0.1.0"
 dependencies = [
+ "norn-canonical",
  "ruff_formatter",
  "ruff_python_ast",
  "ruff_python_formatter",
  "ruff_python_parser",
  "ruff_text_size",
+ "rustix",
  "thiserror 2.0.20",
 ]
 

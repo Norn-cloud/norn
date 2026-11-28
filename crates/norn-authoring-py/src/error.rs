@@ -28,6 +28,38 @@ pub const CODE_RAW_EXPR: &str = "NORN-PY-RAW-EXPR";
 pub const CODE_UNKNOWN_FIELD: &str = "NORN-PY-UNKNOWN-FIELD";
 /// Stable diagnostic code for formatter configuration, layout, or printing errors.
 pub const CODE_FORMAT: &str = "NORN-PY-FORMAT";
+/// Stable diagnostic code for schema structure, metadata, or cardinality errors.
+pub const CODE_SCHEMA: &str = "NORN-PY-SCHEMA";
+/// Stable diagnostic code when raw IR dictionaries or subclassing of closed IR specs are attempted.
+pub const CODE_RAW_IR: &str = "NORN-PY-RAW-IR";
+/// Stable diagnostic code when `Annotated[base, meta...]` base types conflict with metadata.
+pub const CODE_TYPE_MISMATCH: &str = "NORN-PY-TYPE-MISMATCH";
+/// Stable diagnostic code for unsafe, unknown, or overly deep field type annotations.
+pub const CODE_UNSAFE_ANNOTATION: &str = "NORN-PY-UNSAFE-ANNOTATION";
+/// Stable diagnostic code when an interface declares a lifecycle block.
+pub const CODE_INTERFACE_LIFECYCLE: &str = "NORN-PY-INTERFACE-LIFECYCLE";
+/// Stable diagnostic code for invalid dotted object-type names or disallowed interface defaults.
+pub const CODE_FLOW_LITERAL: &str = "NORN-FLOW-LITERAL";
+/// Stable diagnostic code for canonical JSON or `Norn1` serialization refusals.
+pub const CODE_CANONICAL: &str = "NORN-PY-CANONICAL";
+/// Stable diagnostic code for duplicate pack identifiers during composition.
+pub const CODE_PACK_DUPLICATE: &str = "NORN-PY-PACK-DUPLICATE";
+/// Stable diagnostic code when a composed pack requires a missing dependency pack.
+pub const CODE_PACK_MISSING_DEP: &str = "NORN-PY-PACK-MISSING-DEP";
+/// Stable diagnostic code when pack `requires` edges form a cycle.
+pub const CODE_PACK_CYCLE: &str = "NORN-PY-PACK-CYCLE";
+/// Stable diagnostic code when packs collide under `fail_closed` conflict policy or pass an invalid policy.
+pub const CODE_PACK_CONFLICT: &str = "NORN-PY-PACK-CONFLICT";
+/// Stable diagnostic code when `DeploymentSpec` omits non-empty `org_id` or `environment_id`.
+pub const CODE_DEPLOYMENT_SCOPE: &str = "NORN-PY-DEPLOYMENT-SCOPE";
+/// Stable diagnostic code for invalid `DeploymentSpec` worker endpoint keys or URLs.
+pub const CODE_DEPLOYMENT_ENDPOINT: &str = "NORN-PY-DEPLOYMENT-ENDPOINT";
+/// Stable diagnostic code when `DeploymentSpec.initial_settings` contains a secret-like key name.
+pub const CODE_RAW_SECRET: &str = "NORN-PY-RAW-SECRET";
+/// Stable diagnostic code for module elaboration errors (such as disallowed attribute lookups or statements).
+pub const CODE_ELABORATION: &str = "NORN-PY-ELABORATION";
+/// Stable diagnostic code for bounded file I/O refusals (symlinks, non-regular files, read errors).
+pub const CODE_IO: &str = "NORN-PY-IO";
 
 /// Exact author source span captured from Python source text.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
