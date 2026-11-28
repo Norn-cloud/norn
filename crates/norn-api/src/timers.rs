@@ -30,8 +30,10 @@
 //! that did not commit is not due work: it stays visibly approved and not
 //! executed until the requester's own retry runs it.
 
+use std::collections::BTreeSet;
+
 use norn_cell::MAIN_WORLD;
-use norn_cell::due_retry::{approval_item, decision_item, timer_item};
+use norn_cell::due_retry::{approval_item, decision_item, question_item, timer_item};
 use norn_cell::engine::SqlEngine;
 use norn_cell::read::PendingTimer;
 use norn_ir::RuntimeObject;
@@ -41,9 +43,21 @@ use norn_kernel::{
 };
 
 use crate::decisions::OpenDecision;
-use crate::flow_driver::RecordedStep;
+use crate::flow_driver::{AsStarter, RecordedStep};
+use crate::flow_question::PendingQuestionStep;
 use crate::host::{ActionCell, DevHost};
+use crate::question_routes::QuestionRuntime;
 use crate::refusal::Refusal;
+
+/// Host-supplied starter-impersonation and question-runtime seam for
+/// dispatching parked `norn.question@1` steps (and timer-woken runs) on the
+/// durable timer/alarm wake path under the run's recorded starter.
+pub struct StepWake<'a, E: SqlEngine> {
+    /// Run one step under the run's recorded starter (`acting = true`).
+    pub as_starter: AsStarter<'a>,
+    /// The cell's question/disclosure runtime.
+    pub disclosure: &'a dyn QuestionRuntime<E>,
+}
 
 /// The most items one [`run_due`] call tries, handled or failed alike; the
 /// rest are left for the next wake, which [`DueWork::next`] then asks for at
@@ -209,6 +223,7 @@ enum Item {
     Timer(PendingTimer),
     Decision(Box<OpenDecision>),
     Step(Box<RecordedStep>),
+    Question(Box<PendingQuestionStep>),
 }
 
 impl Item {
@@ -219,6 +234,7 @@ impl Item {
             Self::Timer(pending) => (pending.timer.due, 1, &pending.timer.timer_id),
             Self::Decision(decision) => (decision.expires_at_ms, 2, &decision.id),
             Self::Step(step) => (step.approved_at_ms, 3, &step.decision_id),
+            Self::Question(step) => (step.due_at_ms, 4, &step.command_id),
         }
     }
 
@@ -230,6 +246,7 @@ impl Item {
             }
             Self::Decision(decision) => (decision_item(&decision.id), decision.generation.0),
             Self::Step(step) => (approval_item(&step.decision_id), 1),
+            Self::Question(step) => (question_item(&step.command_id), step.generation),
         }
     }
 }
@@ -238,49 +255,104 @@ impl Item {
 /// release expired quantity reservations, deliver flow timers to their runs,
 /// and resolve decisions past their deadline (resuming an expiry whose
 /// resolving commit never landed). Items are tried earliest deadline first
-/// across all three kinds, each committing on its own through the cell's
-/// ordinary path; one that cannot be handled is recorded with its retry
-/// eligibility (TIMER-RETRY-1), counts toward the budget, and never stops
-/// the items behind it. An item still within its backoff is not tried.
+/// across all kinds, each committing on its own through the cell's ordinary
+/// path; one that cannot be handled is recorded with its retry eligibility
+/// (TIMER-RETRY-1), counts toward the budget, and never stops the items behind
+/// it. An item still within its backoff is not tried.
 ///
 /// # Errors
 /// A host failure reading the cell or recording a failure. An item that
 /// fails is not an error of the call: it stays due.
 pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueWork, Refusal> {
+    run_due_with(host, now, None)
+}
+
+/// Like [`run_due`], also dispatching parked `norn.question@1` steps (both
+/// already-parked steps and those parked by timers fired during this wake)
+/// through `wake` under each run's recorded starter (`QUESTION-STEP-1`).
+///
+/// # Errors
+/// A host failure reading the cell or recording a failure.
+pub fn run_due_with<E: SqlEngine>(
+    host: &DevHost<E>,
+    now: LogicalTime,
+    wake: Option<StepWake<'_, E>>,
+) -> Result<DueWork, Refusal> {
     // OPEN-CHECKPOINT-1 (S12, #1551 round 6): on an already-fenced cell, retry
     // pending durable fence persistence and keep `next` armed until persisted.
     if let Some(work) = retry_pending_fence(host, now) {
         return Ok(work);
     }
+    let mut work = DueWork::default();
+    let mut pending_questions: Vec<PendingQuestionStep> = Vec::new();
+    let mut woken_runs: BTreeSet<String> = BTreeSet::new();
+    let Some((at, more, scrubbing, effective_now)) = run_due_in_cell(
+        host,
+        now,
+        wake.is_some(),
+        &mut work,
+        &mut pending_questions,
+        &mut woken_runs,
+    )?
+    else {
+        return Ok(work);
+    };
+
+    if let Some(wake) = wake {
+        drive_wake_questions(
+            host,
+            &wake,
+            pending_questions,
+            &woken_runs,
+            (effective_now, at),
+            &mut work,
+        )?;
+    }
+
+    let _epoch = host.definition_read()?;
+    let cell = host.cell()?;
+    work.next = if more { Some(at) } else { next_wake(&cell)? };
+    if scrubbing {
+        let pause = at.saturating_add(SCRUB_PAUSE_MS);
+        work.next = Some(work.next.map_or(pause, |next| next.min(pause)));
+    }
+    Ok(work)
+}
+
+fn run_due_in_cell<E: SqlEngine>(
+    host: &DevHost<E>,
+    now: LogicalTime,
+    has_wake: bool,
+    work: &mut DueWork,
+    pending_questions: &mut Vec<PendingQuestionStep>,
+    woken_runs: &mut BTreeSet<String>,
+) -> Result<Option<(u64, bool, bool, LogicalTime)>, Refusal> {
     let _epoch = host.definition_read()?;
     let mut cell = match host.cell() {
         Ok(cell) => cell,
         Err(err) if err.code == crate::refusal::codes::CELL_FENCED => {
-            return Ok(retry_pending_fence(host, now)
-                .unwrap_or_else(|| fenced_due_work(&err.message, None)));
+            *work = retry_pending_fence(host, now)
+                .unwrap_or_else(|| fenced_due_work(&err.message, None));
+            return Ok(None);
         }
         Err(err) => return Err(err),
     };
-    // OPEN-CHECKPOINT-1 (#1551): one bounded step of the history scrub per
-    // wake, between commits (the Durable Object's alarm, the dev host's
-    // timer loop). A defect fences the cell; the next request is refused.
     let scrub = cell.store().scrub_step();
     if let norn_cell::ScrubStatus::Fenced { finding } = &scrub {
         let next = cell
             .store()
             .fence_persist_pending()
             .then(|| now.as_millis().saturating_add(FENCE_RETRY_MS));
-        return Ok(fenced_due_work(finding, next));
+        *work = fenced_due_work(finding, next);
+        return Ok(None);
     }
     let scrubbing = matches!(scrub, norn_cell::ScrubStatus::Verifying { .. });
     let now = crate::actions::turn_clock(&mut cell, now)?;
     let at = now.as_millis();
     cell.store().prune_timer_retries().map_err(Refusal::host)?;
-    let mut items = eligible(&cell, at)?;
-    // One more than the budget tells whether work is left for the next wake.
+    let mut items = eligible(&cell, at, has_wake)?;
     let more = items.len() > MAX_DUE_STEPS;
     items.truncate(MAX_DUE_STEPS);
-    let mut work = DueWork::default();
     let step_budget = u64::try_from(MAX_DUE_STEPS).unwrap_or(1);
     let mut meter = TurnEnvelopeMeter::with_limits(
         EnvelopeLimits::V1,
@@ -292,33 +364,11 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
     );
     for item in items {
         let (key, incarnation) = item.retry_key();
-        let handled = match &item {
-            Item::Quantity(pending) => {
-                cell.advance_to(now);
-                cell.expire_quantity(pending)
-                    .map(|()| &mut work.expired_reservations)
-                    .map_err(|error| format!("quantity expiry {}: {error}", pending.timer.timer_id))
-            }
-            Item::Timer(pending) => norn_ir::runtime::decode(&pending.timer.timer)
-                .map_err(Refusal::host)
-                .and_then(|timer| {
-                    let due = DueTimer {
-                        timer,
-                        incarnation: norn_kernel::LedgerSeq(pending.commit_seq),
-                    };
-                    fire_timer(&mut cell, &due, now, &mut meter)
-                })
-                .map(|()| &mut work.timers)
-                .map_err(|refusal| format!("timer {}: {}", pending.timer.timer_id, why(&refusal))),
-            Item::Decision(decision) => expire_decision(&mut cell, decision, now)
-                .map(|()| &mut work.decisions)
-                .map_err(|why| format!("decision {}: {why}", decision.id)),
-            Item::Step(step) => crate::flow_driver::deliver_recorded(&mut cell, step, now)
-                .map(|()| &mut work.steps)
-                .map_err(|refusal| {
-                    format!("approved step {}: {}", step.decision_id, why(&refusal))
-                }),
-        };
+        if let Item::Question(step) = item {
+            pending_questions.push(*step);
+            continue;
+        }
+        let handled = dispatch_due_item(&mut cell, &item, now, &mut meter, work, woken_runs);
         match handled {
             Ok(count) => {
                 *count = count.saturating_add(1);
@@ -332,18 +382,127 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
             }
         }
     }
-    work.next = if more { Some(at) } else { next_wake(&cell)? };
-    if scrubbing {
-        let pause = at.saturating_add(SCRUB_PAUSE_MS);
-        work.next = Some(work.next.map_or(pause, |next| next.min(pause)));
+    if !has_wake {
+        work.next = if more { Some(at) } else { next_wake(&cell)? };
+        if scrubbing {
+            let pause = at.saturating_add(SCRUB_PAUSE_MS);
+            work.next = Some(work.next.map_or(pause, |next| next.min(pause)));
+        }
+        return Ok(None);
     }
-    Ok(work)
+    Ok(Some((at, more, scrubbing, now)))
+}
+
+fn dispatch_due_item<'w, E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    item: &Item,
+    now: LogicalTime,
+    meter: &mut TurnEnvelopeMeter,
+    work: &'w mut DueWork,
+    woken_runs: &mut BTreeSet<String>,
+) -> Result<&'w mut usize, String> {
+    match item {
+        Item::Quantity(pending) => {
+            cell.advance_to(now);
+            cell.expire_quantity(pending)
+                .map(|()| &mut work.expired_reservations)
+                .map_err(|error| format!("quantity expiry {}: {error}", pending.timer.timer_id))
+        }
+        Item::Timer(pending) => norn_ir::runtime::decode(&pending.timer.timer)
+            .map_err(Refusal::host)
+            .and_then(|timer| {
+                let due = DueTimer {
+                    timer,
+                    incarnation: norn_kernel::LedgerSeq(pending.commit_seq),
+                };
+                fire_timer(cell, &due, now, meter)
+            })
+            .map(|run_id| {
+                if let Some(run_id) = run_id {
+                    woken_runs.insert(run_id);
+                }
+                &mut work.timers
+            })
+            .map_err(|refusal| format!("timer {}: {}", pending.timer.timer_id, why(&refusal))),
+        Item::Decision(decision) => expire_decision(cell, decision, now)
+            .map(|()| &mut work.decisions)
+            .map_err(|why| format!("decision {}: {why}", decision.id)),
+        Item::Step(step) => crate::flow_driver::deliver_recorded(cell, step, now)
+            .map(|()| &mut work.steps)
+            .map_err(|refusal| format!("approved step {}: {}", step.decision_id, why(&refusal))),
+        Item::Question(_) => unreachable!("question items are collected before dispatch"),
+    }
+}
+
+/// Dispatch parked `norn.question@1` steps (already-parked or newly parked by
+/// timers fired during this wake) under each run's recorded starter, without
+/// holding `host.cell()` across `drive_run`. `as_requester` always returns
+/// `None` so APPROVAL-RECOVERY-1 is preserved on alarm wakes.
+fn drive_wake_questions<E: SqlEngine>(
+    host: &DevHost<E>,
+    wake: &StepWake<'_, E>,
+    mut pending_questions: Vec<PendingQuestionStep>,
+    woken_runs: &BTreeSet<String>,
+    (now, at): (LogicalTime, u64),
+    work: &mut DueWork,
+) -> Result<(), Refusal> {
+    if !woken_runs.is_empty() {
+        let _epoch = host.definition_read()?;
+        let cell = host.cell()?;
+        for step in crate::flow_question::pending_question_steps(&cell)? {
+            if woken_runs.contains(&step.run_id)
+                && !pending_questions
+                    .iter()
+                    .any(|existing| existing.command_id == step.command_id)
+            {
+                pending_questions.push(step);
+            }
+        }
+    }
+    let no_requester: AsStarter<'_> = &|_, _| None;
+    let mut driven_runs: BTreeSet<String> = BTreeSet::new();
+    for step in pending_questions.into_iter().take(MAX_DUE_STEPS) {
+        if !driven_runs.insert(step.run_id.clone()) {
+            continue;
+        }
+        let key = question_item(&step.command_id);
+        match crate::flow_driver::drive_run(
+            host,
+            &step.run_id,
+            wake.as_starter,
+            no_requester,
+            wake.disclosure,
+            now,
+        ) {
+            Ok(()) => {
+                work.steps = work.steps.saturating_add(1);
+                let cell = host.cell()?;
+                cell.store().clear_due_retry(&key).map_err(Refusal::host)?;
+            }
+            Err(refusal) => {
+                let cell = host.cell()?;
+                cell.store()
+                    .record_due_failure(&key, step.generation, at, (STUCK_RETRY_MS, MAX_RETRY_MS))
+                    .map_err(Refusal::host)?;
+                work.failed.push(format!(
+                    "question step {}: {}",
+                    step.command_id,
+                    why(&refusal)
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Every item due at `at` and eligible to be tried, earliest deadline first
-/// across reservations, flow timers and decisions, at most one more than the
-/// budget.
-fn eligible<E: SqlEngine>(cell: &ActionCell<E>, at: u64) -> Result<Vec<Item>, Refusal> {
+/// across reservations, flow timers, decisions, approved steps, and parked
+/// question steps, at most one more than the budget.
+fn eligible<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    at: u64,
+    include_questions: bool,
+) -> Result<Vec<Item>, Refusal> {
     let bound = MAX_DUE_STEPS.saturating_add(1);
     let reader = cell.store().read();
     let mut items: Vec<Item> = reader
@@ -388,6 +547,23 @@ fn eligible<E: SqlEngine>(cell: &ActionCell<E>, at: u64) -> Result<Vec<Item>, Re
             })
             .map(|step| Item::Step(Box::new(step))),
     );
+    if include_questions {
+        let q_retries = reader
+            .due_retries(&question_item(""))
+            .map_err(Refusal::host)?;
+        items.extend(
+            crate::flow_question::pending_question_steps(cell)?
+                .into_iter()
+                .filter(|step| {
+                    step.due_at_ms <= at
+                        && q_retries
+                            .get(&question_item(&step.command_id))
+                            .filter(|retry| retry.incarnation == step.generation)
+                            .is_none_or(|retry| retry.eligible_at <= at)
+                })
+                .map(|step| Item::Question(Box::new(step))),
+        );
+    }
     items.sort_by(|left, right| left.order().cmp(&right.order()));
     items.truncate(bound);
     Ok(items)
@@ -453,7 +629,23 @@ fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal>
             step.approved_at_ms.max(eligible)
         })
         .min();
-    Ok([timer, decision, step].into_iter().flatten().min())
+    let q_retries = reader
+        .due_retries(&question_item(""))
+        .map_err(Refusal::host)?;
+    let question = crate::flow_question::pending_question_steps(cell)?
+        .into_iter()
+        .map(|step| {
+            let eligible = q_retries
+                .get(&question_item(&step.command_id))
+                .filter(|retry| retry.incarnation == step.generation)
+                .map_or(0, |retry| retry.eligible_at);
+            step.due_at_ms.max(eligible)
+        })
+        .min();
+    Ok([timer, decision, step, question]
+        .into_iter()
+        .flatten()
+        .min())
 }
 
 /// What an item's refusal says for the operator: its host cause, else its code.
@@ -477,7 +669,7 @@ fn fire_timer<E: SqlEngine>(
     due: &DueTimer<RuntimeObject>,
     now: LogicalTime,
     meter: &mut TurnEnvelopeMeter,
-) -> Result<(), Refusal> {
+) -> Result<Option<String>, Refusal> {
     let consumed = Some(due.consumed());
     let record = &due.timer.payload;
     let run_id = match (
@@ -495,7 +687,7 @@ fn fire_timer<E: SqlEngine>(
             .map_err(Refusal::host)?,
         None => None,
     };
-    let commit = match (run_id, row) {
+    let (commit, woken_run) = match (run_id, row) {
         (Some(run_id), Some(row)) => {
             // TIMER-PIN-1: the run's own rule and environment, as pinned when it
             // started; a pin the cell cannot produce keeps the timer due.
@@ -524,19 +716,20 @@ fn fire_timer<E: SqlEngine>(
                         world: World::Main,
                         consumes: consumed,
                     };
-                    norn_kernel::decision_cell_commit_with_host_and_meter(
+                    let commit = norn_kernel::decision_cell_commit_with_host_and_meter(
                         &*cell, &catalog, &slice, &turn, &output, meter,
                     )
-                    .map_err(|refusal| Refusal::host(refusal.code()))?
+                    .map_err(|refusal| Refusal::host(refusal.code()))?;
+                    (commit, Some(run_id))
                 }
                 // The run object is gone: the run ended.
-                None => empty(consumed),
+                None => (empty(consumed), None),
             }
         }
-        _ => empty(consumed),
+        _ => (empty(consumed), None),
     };
     CellHost::commit(cell, commit).map_err(|error| Refusal::from_commit_host_error(&error))?;
-    Ok(())
+    Ok(woken_run)
 }
 
 fn empty(

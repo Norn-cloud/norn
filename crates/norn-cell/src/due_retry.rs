@@ -50,6 +50,12 @@ pub fn approval_item(decision_id: &str) -> String {
     format!("approval/{decision_id}")
 }
 
+/// The retry key of a parked `norn.question@1` flow step (`QUESTION-STEP-1`).
+#[must_use]
+pub fn question_item(command_id: &str) -> String {
+    format!("question/{command_id}")
+}
+
 /// One item's retry record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DueRetry {

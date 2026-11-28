@@ -623,6 +623,7 @@ pub(crate) fn deliver_recorded<E: SqlEngine>(
             outcome: step.outcome.clone(),
         },
         step.recorded,
+        &[],
         now,
     )
 }
@@ -698,7 +699,7 @@ pub fn drive_run<E: SqlEngine>(
             }
         };
         if step.kind == CellStepKind::Question {
-            let outcome = crate::flow_question::dispatch_question_step(
+            let dispatch = crate::flow_question::dispatch_question_step(
                 host,
                 &crate::flow_question::QuestionStepContext {
                     input: &step.input,
@@ -708,7 +709,7 @@ pub fn drive_run<E: SqlEngine>(
                 as_starter,
                 disclosure,
             )?;
-            settle_question(host, &step, outcome, now)?;
+            settle_question(host, &step, dispatch, now)?;
             continue;
         }
         if let Some(outcome) = already_committed {
@@ -894,17 +895,19 @@ fn settle<E: SqlEngine>(
             outcome,
         },
         false,
+        &[],
         now,
     )?;
     Ok(true)
 }
 
 /// Settle a read-only `norn.question@1` step's outcome directly into the run's
-/// result turn under one cell hold.
+/// result turn under one cell hold, atomically recording its read source types
+/// (`RunQuestionRead`) when an `Answered` output is persisted.
 fn settle_question<E: SqlEngine>(
     host: &DevHost<E>,
     step: &StepCall,
-    outcome: StepOutcome,
+    dispatch: crate::flow_question::QuestionDispatch,
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     let _epoch = host.definition_read()?;
@@ -917,9 +920,10 @@ fn settle_question<E: SqlEngine>(
             run_id: &step.run_id,
             step: &step.step,
             attempt: step.attempt.clone(),
-            outcome,
+            outcome: dispatch.outcome,
         },
         false,
+        &dispatch.source_types,
         now,
     )
 }
@@ -931,6 +935,7 @@ fn deliver_in<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     delivery: Delivery<'_>,
     recorded: bool,
+    question_sources: &[String],
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     let row = cell
@@ -944,15 +949,25 @@ fn deliver_in<E: SqlEngine>(
     let result = match &delivery.outcome {
         StepOutcome::Output(object) | StepOutcome::Failure(object) => object.clone(),
     };
-    // The flow must accept the result; the commit records and consumes it
-    // in one transaction (P3), so a refused turn leaves nothing recorded.
     let commit = result_turn(cell, &flow, delivery, now)?;
     let settlement = if recorded {
         norn_cell::Settlement::Recorded
     } else {
         norn_cell::Settlement::Record(result)
     };
-    let Err(error) = cell.commit_settled(commit, settlement) else {
+    let committed = if question_sources.is_empty() {
+        cell.commit_settled(commit, settlement)
+    } else {
+        let event = norn_cell::flow_run::RunQuestionRead {
+            run_id: row.run_id,
+            object_type: flow.object_type,
+            source_types: question_sources.to_vec(),
+        }
+        .event()
+        .map_err(Refusal::host)?;
+        cell.attributed(vec![event], |cell| cell.commit_settled(commit, settlement))
+    };
+    let Err(error) = committed else {
         return Ok(());
     };
     // Settled already, by another drive.

@@ -1460,20 +1460,16 @@ fn run_approved<E: SqlEngine>(
         version: held.call.definitions_version,
     };
     let mut commit = || -> Result<(), Refusal> {
-        // S2: the request's own authenticated principal, as the host's
-        // trusted seam verified it for this try; the dispatch compares it
-        // with the parked requester under its own hold.
+        // S2: the request's verified principal, compared under dispatch's hold.
         let principal = host
             .authorizer
             .verified_principal(&held.call.requester.subject);
-        let _answer = crate::actions::call_action_bound(
+        crate::actions::call_action_bound(
             host,
             &crate::actions::ActionCall {
                 query: &query,
                 actor: Some(&held.call.requester.subject),
                 principal: principal.as_ref(),
-                // S5a: the step attempt the call was parked for, as the
-                // trusted flow dispatch recorded it; none for a direct call.
                 attempt: held.call.attempt.as_ref(),
                 step_pin: None,
                 action_id: &held.call.action,

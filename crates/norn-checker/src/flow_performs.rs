@@ -84,9 +84,7 @@ pub fn perform_refs(payload: &Value) -> Result<Vec<PerformRef>, Unverifiable> {
             "a flow rule has exactly one decision table",
         ));
     }
-    if let Some(output_schema) = payload.get("outputSchema") {
-        verify_question_step_schemas(output_schema, &found)?;
-    }
+    verify_question_step_schemas(payload.get("outputSchema"), &found)?;
     Ok(found)
 }
 
@@ -246,27 +244,43 @@ fn table(node: &Value, n: usize, found: &mut Vec<PerformRef>) -> Result<(), Unve
 
 /// Statically verify the closed input schema declared for each `norn.question@1`
 /// step in `outputSchema.properties.commands.items.properties.input.properties.<step>`.
+/// Fails closed if any `norn.question@1` perform is present and `outputSchema`
+/// or the command-input schema path is absent.
 fn verify_question_step_schemas(
-    output_schema: &Value,
+    output_schema: Option<&Value>,
     performs: &[PerformRef],
 ) -> Result<(), Unverifiable> {
+    let question_steps: Vec<&str> = performs
+        .iter()
+        .filter(|perform| {
+            matches!(
+                perform.name.as_ref(),
+                Some((function, version))
+                    if function == QUESTION_FUNCTION && version == QUESTION_VERSION
+            )
+        })
+        .filter_map(|perform| perform.step.as_deref())
+        .collect();
+    if question_steps.is_empty() {
+        return Ok(());
+    }
+    let Some(output_schema) = output_schema else {
+        return Err(unverifiable(
+            "/outputSchema",
+            "a flow with norn.question@1 performs requires outputSchema",
+        ));
+    };
     let Some(step_inputs) = output_schema
         .pointer("/properties/commands/items/properties/input/properties")
         .and_then(Value::as_object)
     else {
-        return Ok(());
+        return Err(unverifiable(
+            "/outputSchema/properties/commands/items/properties/input/properties",
+            "norn.question@1 performs require commands input properties schema",
+        ));
     };
     let mut checked = std::collections::BTreeSet::new();
-    for perform in performs {
-        let Some((function, version)) = perform.name.as_ref() else {
-            continue;
-        };
-        if function != QUESTION_FUNCTION || version != QUESTION_VERSION {
-            continue;
-        }
-        let Some(step) = perform.step.as_deref() else {
-            continue;
-        };
+    for step in question_steps {
         if !checked.insert(step) {
             continue;
         }
@@ -333,38 +347,99 @@ fn verify_question_input_schema(schema: &Value, base: &str) -> Result<(), Unveri
             "norn.question@1 step input requires a string question field",
         ));
     }
+    if let Some(as_of) = props.get("asOf")
+        && as_of.get("type").and_then(Value::as_str) != Some("string")
+    {
+        return Err(unverifiable(
+            format!("{base}/properties/asOf"),
+            "norn.question@1 asOf field must be a string",
+        ));
+    }
+    if let Some(params) = props.get("params") {
+        verify_question_params_schema(params, &format!("{base}/properties/params"))?;
+    }
     if let Some(pin) = props.get("pin") {
         verify_non_empty_closed_subobject(
             pin,
             &format!("{base}/properties/pin"),
-            &["artifactId", "version", "digest", "definitionsVersion"],
+            &[
+                ("artifactId", "string"),
+                ("version", "string"),
+                ("digest", "string"),
+                ("definitionsVersion", "integer"),
+            ],
             "norn.question@1 pin",
+            None,
         )?;
     }
     if let Some(freshness) = props.get("freshness") {
         verify_non_empty_closed_subobject(
             freshness,
             &format!("{base}/properties/freshness"),
-            &["maxAgeMs", "requireExact"],
+            &[("maxAgeMs", "integer"), ("requireExact", "boolean")],
             "norn.question@1 freshness",
+            None,
         )?;
     }
     if let Some(trace) = props.get("trace") {
         verify_non_empty_closed_subobject(
             trace,
             &format!("{base}/properties/trace"),
-            &["traceId", "intentRef", "sessionDigest"],
+            &[
+                ("traceId", "string"),
+                ("intentRef", "string"),
+                ("sessionDigest", "string"),
+            ],
             "norn.question@1 trace",
+            Some("traceId"),
         )?;
     }
     Ok(())
 }
 
+fn verify_question_params_schema(schema: &Value, path: &str) -> Result<(), Unverifiable> {
+    let Some(obj) = schema.as_object() else {
+        return Err(unverifiable(
+            path,
+            "norn.question@1 params schema must be an object",
+        ));
+    };
+    if obj.get("type").and_then(Value::as_str) != Some("object") {
+        return Err(unverifiable(
+            path,
+            "norn.question@1 params schema must have type object",
+        ));
+    }
+    if let Some(props) = obj.get("properties").and_then(Value::as_object) {
+        for (key, field) in props {
+            if !is_scalar_schema(field) {
+                return Err(unverifiable(
+                    format!("{path}/properties/{key}"),
+                    format!("norn.question@1 param {key:?} must have a scalar schema"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_scalar_schema(schema: &Value) -> bool {
+    let scalar_name = |ty: &str| matches!(ty, "string" | "number" | "integer" | "boolean" | "null");
+    match schema.get("type") {
+        Some(Value::String(ty)) => scalar_name(ty),
+        Some(Value::Array(types)) if !types.is_empty() => types
+            .iter()
+            .all(|item| item.as_str().is_some_and(scalar_name)),
+        _ => false,
+    }
+}
+
 fn verify_non_empty_closed_subobject(
     schema: &Value,
     path: &str,
-    allowed: &[&str],
+    allowed: &[(&str, &str)],
     label: &str,
+    required_key: Option<&str>,
 ) -> Result<(), Unverifiable> {
     let Some(obj) = schema.as_object() else {
         return Err(unverifiable(
@@ -392,27 +467,82 @@ fn verify_non_empty_closed_subobject(
             format!("{label} schema must declare at least one field"),
         ));
     }
-    for key in props.keys() {
-        if !allowed.contains(&key.as_str()) {
+    for (key, field_schema) in props {
+        let Some((_, expected_type)) = allowed.iter().find(|(name, _)| *name == key.as_str())
+        else {
             return Err(unverifiable(
                 format!("{path}/properties/{key}"),
                 format!("{label} does not admit field {key:?}"),
             ));
+        };
+        if field_schema.get("type").and_then(Value::as_str) != Some(*expected_type) {
+            return Err(unverifiable(
+                format!("{path}/properties/{key}"),
+                format!("{label} field {key:?} must have type {expected_type:?}"),
+            ));
         }
     }
-    if let Some(required) = obj.get("required") {
-        let Some(req) = required.as_array() else {
+    verify_subobject_non_empty(obj, props, path, label, required_key)
+}
+
+fn verify_subobject_non_empty(
+    obj: &serde_json::Map<String, Value>,
+    props: &serde_json::Map<String, Value>,
+    path: &str,
+    label: &str,
+    required_key: Option<&str>,
+) -> Result<(), Unverifiable> {
+    let has_non_empty_required = match obj.get("required") {
+        Some(Value::Array(req)) if !req.is_empty() => {
+            for item in req {
+                let Some(name) = item.as_str() else {
+                    return Err(unverifiable(
+                        format!("{path}/required"),
+                        format!("{label} required entries must be strings"),
+                    ));
+                };
+                if !props.contains_key(name) {
+                    return Err(unverifiable(
+                        format!("{path}/required"),
+                        format!("{label} required field {name:?} is not declared in properties"),
+                    ));
+                }
+            }
+            if let Some(must_require) = required_key
+                && !req.iter().any(|item| item.as_str() == Some(must_require))
+            {
+                return Err(unverifiable(
+                    format!("{path}/required"),
+                    format!("{label} must require {must_require:?}"),
+                ));
+            }
+            true
+        }
+        Some(_) => {
             return Err(unverifiable(
                 format!("{path}/required"),
                 format!("{label} required must be a non-empty array"),
             ));
-        };
-        if req.is_empty() {
-            return Err(unverifiable(
-                format!("{path}/required"),
-                format!("{label} required cannot be empty"),
-            ));
         }
+        None => {
+            if let Some(must_require) = required_key {
+                return Err(unverifiable(
+                    format!("{path}/required"),
+                    format!("{label} must require {must_require:?}"),
+                ));
+            }
+            false
+        }
+    };
+    let has_min_props = obj
+        .get("minProperties")
+        .and_then(Value::as_u64)
+        .is_some_and(|n| n >= 1);
+    if !(has_non_empty_required || has_min_props) {
+        return Err(unverifiable(
+            path,
+            format!("{label} schema must reject empty objects via required or minProperties >= 1"),
+        ));
     }
     Ok(())
 }
@@ -677,9 +807,74 @@ mod tests {
         assert!(perform_refs(&empty_pin).is_err());
 
         // Missing required `question` refuses.
-        let mut no_question = payload;
+        let mut no_question = payload.clone();
         no_question["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]["properties"]
             ["check_stock"]["required"] = json!([]);
         assert!(perform_refs(&no_question).is_err());
+
+        // Missing outputSchema altogether refuses fail-closed when norn.question@1 is present.
+        let mut no_output_schema = payload.clone();
+        no_output_schema
+            .as_object_mut()
+            .unwrap()
+            .remove("outputSchema");
+        assert_eq!(
+            perform_refs(&no_output_schema).unwrap_err().pointer,
+            "/outputSchema"
+        );
+
+        // outputSchema missing the commands input properties path refuses fail-closed.
+        let mut missing_input_path = payload.clone();
+        missing_input_path["outputSchema"] = json!({ "type": "object", "properties": {} });
+        assert_eq!(
+            perform_refs(&missing_input_path).unwrap_err().pointer,
+            "/outputSchema/properties/commands/items/properties/input/properties"
+        );
+
+        // Pin schema admitting `{}` (no `required` and no `minProperties >= 1`) refuses.
+        let mut optional_pin = payload.clone();
+        optional_pin["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]["properties"]
+            ["check_stock"]["properties"]["pin"] = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "definitionsVersion": { "type": "integer" } }
+        });
+        assert!(perform_refs(&optional_pin).is_err());
+
+        // Freshness schema admitting `{}` (no `required` and no `minProperties >= 1`) refuses.
+        let mut optional_freshness = payload.clone();
+        optional_freshness["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
+            ["properties"]["check_stock"]["properties"]["freshness"] = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "maxAgeMs": { "type": "integer" } }
+        });
+        assert!(perform_refs(&optional_freshness).is_err());
+
+        // Wrong field types inside pin, freshness, asOf, or non-scalar params refuse.
+        let mut bad_pin_type = payload.clone();
+        bad_pin_type["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]["properties"]
+            ["check_stock"]["properties"]["pin"]["properties"]["definitionsVersion"] =
+            json!({ "type": "string" });
+        assert!(perform_refs(&bad_pin_type).is_err());
+
+        let mut bad_freshness_type = payload.clone();
+        bad_freshness_type["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
+            ["properties"]["check_stock"]["properties"]["freshness"] = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requireExact"],
+            "properties": { "requireExact": { "type": "string" } }
+        });
+        assert!(perform_refs(&bad_freshness_type).is_err());
+
+        let mut bad_params_type = payload;
+        bad_params_type["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
+            ["properties"]["check_stock"]["properties"]["params"] = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "nested": { "type": "object", "properties": {}, "additionalProperties": false } }
+        });
+        assert!(perform_refs(&bad_params_type).is_err());
     }
 }

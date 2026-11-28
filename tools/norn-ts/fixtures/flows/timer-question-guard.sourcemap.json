@@ -1,0 +1,94 @@
+{
+  "flow": "ops.timer_question_guard",
+  "flowAt": {
+    "file": "fixtures/flows/timer-question-guard.builder.ts",
+    "line": 27
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_perform_check_question/failure/1": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 50
+    },
+    "awaiting_perform_check_question/failure/2": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 33
+    },
+    "awaiting_perform_check_question/failure/3": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 33
+    },
+    "awaiting_perform_check_question/result/1": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 41
+    },
+    "awaiting_perform_check_question/result/2": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 46
+    },
+    "awaiting_perform_convert/failure/1": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 41
+    },
+    "awaiting_perform_convert/failure/2": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 41
+    },
+    "awaiting_perform_convert/result/1": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 42
+    },
+    "sleeping_wait_sync/timer/1": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 33
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 30
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/timer-question-guard.flow.ts",
+  "states": {
+    "awaiting_perform_check_question": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 33
+    },
+    "awaiting_perform_convert": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 41
+    },
+    "completed": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 46
+    },
+    "failed_denied": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 33
+    },
+    "failed_refused": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 33
+    },
+    "sleeping_wait_sync": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 30
+    },
+    "started": null
+  },
+  "steps": {
+    "check_question": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 33
+    },
+    "convert": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 41
+    },
+    "wait_sync": {
+      "file": "fixtures/flows/timer-question-guard.builder.ts",
+      "line": 30
+    }
+  },
+  "version": "1.0.0"
+}

@@ -127,13 +127,18 @@ fn a_parked_question_never_blocks_the_fifo_head() {
         vec![command("q1", question()), command("t1", tool())],
     );
     // `norn.question@1` parks outside the FIFO queue; `t1` is still at the FIFO head.
-    let head = cell.store().read().next_pending_command().unwrap().unwrap();
+    let head = cell.store().read().head_command().unwrap().unwrap();
     assert_eq!(head.command.command_id, "t1");
     assert_eq!(head.queue, Queue::Fifo);
     let parked = cell.store().read().parked_commands().unwrap();
     assert_eq!(parked.len(), 1);
     assert_eq!(parked[0].command.command_id, "q1");
     assert_eq!(parked[0].queue, Queue::Parked);
+    let performed = cell.perform().unwrap().expect("the tool call is performed");
+    assert_eq!(performed.command.0, "t1");
+    consume(&mut cell, "t1").unwrap();
+    assert!(cell.perform().unwrap().is_none());
+    assert_eq!(cell.claim_perform().unwrap(), ClaimOutcome::Empty);
     settle(
         &mut cell,
         "q1",

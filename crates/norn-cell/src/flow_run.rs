@@ -39,6 +39,10 @@ pub use norn_builtins::question::{
 
 /// The `type` of the ledger event that starts a run.
 pub const RUN_STARTED: &str = "norn.run.started";
+/// The `type` of the ledger event recording source object types read by an
+/// `Answered` `norn.question@1` step whose output was persisted into a run
+/// object (`QUESTION-STEP-1` / `PRIVACY-3`).
+pub const RUN_QUESTION_READ: &str = "norn.run.question_read";
 /// The first generation of every run.
 pub const FIRST_GENERATION: u64 = 1;
 /// The most rows one [`StoreReader::flow_runs`] page returns.
@@ -48,9 +52,10 @@ pub const MAX_RUN_PAGE: u32 = 200;
 const MAX_START_EVENTS: usize = 4096;
 
 pub(crate) const FLOW_RUN: &str = "_norn_flow_run";
+pub(crate) const FLOW_RUN_SOURCE: &str = "_norn_flow_run_source";
 
 /// The run ledger's DDL, applied with the other system tables.
-pub(crate) const DDL: [&str; 3] = [
+pub(crate) const DDL: [&str; 4] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_flow_run" (
   "world" TEXT NOT NULL,
   "run_id" TEXT NOT NULL,
@@ -69,6 +74,13 @@ pub(crate) const DDL: [&str; 3] = [
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_flow_run/object" ON "_norn_flow_run" ("world", "object_type", "run_id")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_flow_run/flow_state" ON "_norn_flow_run" ("world", "flow_id", "state", "run_id")"#,
+    r#"CREATE TABLE IF NOT EXISTS "_norn_flow_run_source" (
+  "world" TEXT NOT NULL,
+  "object_type" TEXT NOT NULL,
+  "run_id" TEXT NOT NULL,
+  "source_type" TEXT NOT NULL,
+  PRIMARY KEY ("world", "object_type", "run_id", "source_type")
+)"#,
 ];
 
 /// The installed flow a run executes, pinned by artifact identity.
@@ -148,6 +160,75 @@ impl RunStart {
             .into(),
         ))
     }
+}
+
+/// What a [`RUN_QUESTION_READ`] bookkeeping event records: the source object
+/// types read by an `Answered` `norn.question@1` step whose output was
+/// persisted into the run object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunQuestionRead {
+    /// The run id: the run object's key.
+    pub run_id: String,
+    /// The flow's Run object type.
+    pub object_type: String,
+    /// Distinct source object types read by the question step.
+    pub source_types: Vec<String>,
+}
+
+impl RunQuestionRead {
+    /// The ledger event attached to the settling commit.
+    ///
+    /// # Errors
+    /// A value outside the runtime value domain.
+    pub fn event(&self) -> Result<Value, CellError> {
+        Ok(Value::Object(
+            [
+                (
+                    "type".to_owned(),
+                    Value::String(RUN_QUESTION_READ.to_owned()),
+                ),
+                (
+                    "questionRead".to_owned(),
+                    norn_ir::runtime::encode(self).map_err(CellError::Encoding)?,
+                ),
+            ]
+            .into(),
+        ))
+    }
+}
+
+/// Whether a ledger event records a `norn.question@1` source read on a run.
+#[must_use]
+pub fn is_run_question_read(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some(RUN_QUESTION_READ)
+}
+
+fn question_reads(batch: &CommitBatch) -> Result<Vec<RunQuestionRead>, CellError> {
+    let mut out = Vec::new();
+    for event in &batch.events {
+        if !is_run_question_read(event) {
+            continue;
+        }
+        let object = event
+            .as_object()
+            .ok_or_else(|| refused("run.question_read_invalid"))?;
+        if object.len() != 2 {
+            return Err(refused("run.question_read_invalid"));
+        }
+        let record: RunQuestionRead = object
+            .get("questionRead")
+            .and_then(|value| norn_ir::runtime::decode(value).ok())
+            .ok_or_else(|| refused("run.question_read_invalid"))?;
+        if record.run_id.is_empty()
+            || record.object_type.is_empty()
+            || record.source_types.iter().any(String::is_empty)
+        {
+            return Err(refused("run.question_read_invalid"));
+        }
+        out.push(record);
+    }
+    Ok(out)
 }
 
 /// One run, as the ledger records it.
@@ -378,6 +459,16 @@ pub(crate) fn apply<E: SqlEngine>(
             ],
         )?;
     }
+    for read in question_reads(batch)? {
+        for source_type in read.source_types {
+            conn.execute(
+                &format!(
+                    r#"INSERT OR IGNORE INTO "{FLOW_RUN_SOURCE}" ("world","object_type","run_id","source_type") VALUES (?1,?2,?3,?4)"#
+                ),
+                params![world, read.object_type, read.run_id, source_type],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -443,6 +534,30 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         Ok(None)
+    }
+
+    /// Source object types read by `Answered` `norn.question@1` steps whose
+    /// outputs were persisted into `(world, object_type, run_id)`. Empty for
+    /// non-run objects and for runs without persisted question outputs.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn run_question_source_types(
+        &self,
+        world: &str,
+        object_type: &str,
+        run_id: &str,
+    ) -> Result<Vec<String>, CellError> {
+        self.check_live()?;
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT "source_type" FROM "{FLOW_RUN_SOURCE}" WHERE "world"=?1 AND "object_type"=?2 AND "run_id"=?3 ORDER BY "source_type""#
+            ),
+            params![world, object_type, run_id],
+        )?;
+        rows.into_iter()
+            .map(|values| SqlRow(values).get(0))
+            .collect()
     }
 
     /// The run `run_id` in `world`, if it was started.

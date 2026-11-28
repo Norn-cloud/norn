@@ -284,6 +284,21 @@ pub(crate) fn answer_plan<E: SqlEngine>(
     plan: &QuestionPlan,
     key: &[u8],
 ) -> Result<DisclosedAnswer, Refusal> {
+    answer_plan_inner(host, runtime, actor, question, plan, key, false).map(|eval| eval.disclosed)
+}
+
+/// Evaluate an admitted `plan` for `actor` under one held cell lock and
+/// snapshot verification; when `for_step` is true, also collect same-snapshot
+/// authorization, freshness, and marking evidence for `norn.question@1`.
+pub(crate) fn answer_plan_inner<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: &dyn QuestionRuntime<E>,
+    actor: &str,
+    question: &str,
+    plan: &QuestionPlan,
+    key: &[u8],
+    for_step: bool,
+) -> Result<crate::flow_question::QuestionStepEval, Refusal> {
     let cell = host.cell()?;
     if cell.store().fork_pin().is_some() {
         return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
@@ -295,6 +310,7 @@ pub(crate) fn answer_plan<E: SqlEngine>(
     }
     let historical = snapshot.cutoff.is_some() || plan.as_of();
     let world_name = snapshot.context.world.clone();
+    let snapshot_now_ms = snapshot.context.now_ms;
     refuse_labeled_paths_on(host, &cell.store().read(), plan, &world_name, historical)?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
@@ -319,6 +335,16 @@ pub(crate) fn answer_plan<E: SqlEngine>(
             answer,
         )
     });
+    let evidence = if let (Ok(Ok(answer)), true) = (&disclosed, for_step) {
+        crate::flow_question::collect_step_evidence(
+            (host, runtime, cell.store()),
+            (actor, question, &world_name, plan),
+            (snapshot.cutoff, snapshot_now_ms),
+            answer,
+        )?
+    } else {
+        (false, norn_cell::compute::RequiredSources::default(), false)
+    };
     verify_checked_snapshot(
         host,
         cell.store(),
@@ -331,7 +357,14 @@ pub(crate) fn answer_plan<E: SqlEngine>(
             live_read: snapshot.cutoff.is_none(),
         },
     )?;
-    disclosed.map_err(Refusal::from_compute)?
+    let disclosed = disclosed.map_err(Refusal::from_compute)??;
+    Ok(crate::flow_question::QuestionStepEval {
+        disclosed,
+        all_values_authorized: withheld.is_empty(),
+        sources_authorized: evidence.0,
+        required_sources: evidence.1,
+        has_marked_evidence: evidence.2,
+    })
 }
 
 /// #1164 (D53): the receipt coordinate `actor` may see for a commit outside

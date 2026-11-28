@@ -1,42 +1,48 @@
 //! QUESTION-STEP-1: read-only evaluation of parked `norn.question@1` flow steps
 //! through [`QuestionRuntime`] under the run starter's authority, with
-//! `STEP-PIN-1` definition pinning, `PRIVACY-1`/`PRIVACY-3`/`PRIVACY-4`
+//! `STEP-PIN-1` dependency-closure pinning, `PRIVACY-1`/`PRIVACY-3`/`PRIVACY-4`
 //! disclosure guards, and `#1905` `RequiredSources` freshness enforcement.
 //!
 //! A `norn.question@1` step never mutates business state: it reads a bounded
 //! snapshot through the shared read authority, refuses unauthorized readers or
 //! restricted markings with `Denied` (never leaking values), refuses stale or
 //! incomplete required sources with typed `StaleSource`, and refuses pin
-//! mismatches or other deterministic errors with `Refused { code }`.
+//! mismatches, undeclared/predicate-replacing params, or other deterministic
+//! errors with `Refused { code }`.
+
+mod freshness;
+mod pin;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use http::StatusCode;
-use norn_cell::compute::{Engine, Freshness, QueryResult};
+use norn_cell::compute::{ALL_MEMBERS, QueryResult};
 use norn_cell::engine::SqlEngine;
-use norn_cell::flow_run::{QuestionFreshnessGuard, QuestionStep, QuestionStepPin, RunStarter};
-use norn_cell::retained::RetainedLifecycle;
-use norn_cell::{CellStore, MAIN_WORLD};
+use norn_cell::flow_run::{QuestionStep, RunStarter};
+use norn_cell::{ObjectRecord, StoreReader};
 use norn_checker::metric::compute::QuestionPlan;
-use norn_ir::metric::{DimensionPath, FilterOperator, MetricFilter};
-use norn_ir::{PropertyId, QuestionIR, RuntimeObject, RuntimeValue, UtcTimestamp};
+use norn_ir::{QuestionIR, RuntimeValue, UtcTimestamp};
 use norn_kernel::flow_turn::StepOutcome;
 
 use crate::authz::{ReadCapability, ReadRequest, read_denied};
 use crate::flow_driver::AsStarter;
 use crate::host::DevHost;
-use crate::privacy::DisclosedAnswer;
 use crate::question_routes::{
-    MARKED_HISTORY, QuestionAnswer, QuestionRuntime, admit_named_question, answer_plan,
-    check_ad_hoc, handle_key, mapped,
+    MARKED_HISTORY, QuestionAnswer, QuestionRuntime, admit_named_question, allowed,
+    answer_plan_inner, check_ad_hoc, handle_key, mapped,
 };
 use crate::refusal::{Refusal, RefusalCategory};
 use crate::scope::ScopeQuery;
 
+use self::freshness::{
+    build_answered_output, denied_failure, evaluate_freshness_guard, refused_failure, stale_failure,
+};
+use self::pin::{verify_named_pin, verify_retained_pin};
+
 /// Stable `question_step.*` refusal codes for parked `norn.question@1` steps.
 pub mod question_step_codes {
-    /// The question definition or underlying model changed or was retired after
-    /// the flow run started (`STEP-PIN-1`).
+    /// The question definition or any artifact in its dependency closure
+    /// changed or was retired after the flow run started (`STEP-PIN-1`).
     pub const DEFINITION_CHANGED: &str = "question_step.definition_changed";
     /// The active question definition or installed definitions version does not
     /// match the explicit `pin` carried by the `norn.question@1` step (`STEP-PIN-1`).
@@ -46,10 +52,11 @@ pub mod question_step_codes {
     pub const PIN_UNAVAILABLE: &str = "question_step.pin_unavailable";
     /// This cell's question runtime does not publish ad-hoc/retained questions.
     pub const UNAVAILABLE: &str = "question_step.unavailable";
-    /// Dynamic `params` were supplied for a pre-admitted named question that
-    /// does not support parameter bindings.
+    /// Dynamic `params` were supplied for a question that declares no parameter
+    /// bindings.
     pub const UNSUPPORTED_PARAMS: &str = "question_step.unsupported_params";
-    /// A `params` entry has a non-scalar value or invalid property name.
+    /// A `params` entry has a non-scalar value, invalid name, or attempts to
+    /// replace an admitted question predicate.
     pub const INVALID_PARAM: &str = "question_step.invalid_param";
     /// The step's `asOf` timestamp is invalid or disagrees with a pre-admitted
     /// named question's effective cutoff.
@@ -60,6 +67,16 @@ pub mod question_step_codes {
     pub const STALE_SOURCE: &str = "core.compute.stale_input";
 }
 
+/// Authenticated evaluation bundle for one parked `norn.question@1` step,
+/// captured under one cell lock and verified against one snapshot.
+pub(crate) struct QuestionStepEval {
+    pub(crate) disclosed: crate::privacy::DisclosedAnswer,
+    pub(crate) all_values_authorized: bool,
+    pub(crate) sources_authorized: bool,
+    pub(crate) required_sources: norn_cell::compute::RequiredSources,
+    pub(crate) has_marked_evidence: bool,
+}
+
 /// Coordinates and inputs for one parked `norn.question@1` step.
 pub(crate) struct QuestionStepContext<'a> {
     pub(crate) input: &'a RuntimeValue,
@@ -67,7 +84,25 @@ pub(crate) struct QuestionStepContext<'a> {
     pub(crate) run_definitions_version: Option<u64>,
 }
 
-fn pin_mismatch() -> Refusal {
+/// Result of dispatching one parked `norn.question@1` step: the typed outcome
+/// to settle, plus the source object types read when `outcome` is `Output`
+/// (persisted into `_norn_flow_run_source` so Run object readers must also hold
+/// read clearance on the question's sources).
+pub(crate) struct QuestionDispatch {
+    pub(crate) outcome: StepOutcome,
+    pub(crate) source_types: Vec<String>,
+}
+
+impl QuestionDispatch {
+    const fn failure(outcome: StepOutcome) -> Self {
+        Self {
+            outcome,
+            source_types: Vec::new(),
+        }
+    }
+}
+
+pub(crate) fn pin_mismatch() -> Refusal {
     Refusal::new(
         StatusCode::CONFLICT,
         question_step_codes::PIN_MISMATCH,
@@ -76,7 +111,7 @@ fn pin_mismatch() -> Refusal {
     )
 }
 
-fn definition_changed() -> Refusal {
+pub(crate) fn definition_changed() -> Refusal {
     Refusal::new(
         StatusCode::CONFLICT,
         question_step_codes::DEFINITION_CHANGED,
@@ -85,7 +120,7 @@ fn definition_changed() -> Refusal {
     )
 }
 
-fn pin_unavailable() -> Refusal {
+pub(crate) fn pin_unavailable() -> Refusal {
     Refusal::new(
         StatusCode::CONFLICT,
         question_step_codes::PIN_UNAVAILABLE,
@@ -103,7 +138,7 @@ fn question_unavailable() -> Refusal {
     )
 }
 
-fn question_not_found() -> Refusal {
+pub(crate) fn question_not_found() -> Refusal {
     Refusal::new(
         StatusCode::NOT_FOUND,
         "question.not_found",
@@ -125,8 +160,8 @@ fn unsupported_params() -> Refusal {
     Refusal::new(
         StatusCode::UNPROCESSABLE_ENTITY,
         question_step_codes::UNSUPPORTED_PARAMS,
-        "named questions do not accept dynamic parameter bindings",
-        "omit params or target a retained question definition",
+        "this question declares no dynamic parameter bindings",
+        "omit params or declare an explicit parameterized question contract",
     )
 }
 
@@ -139,7 +174,7 @@ fn as_of_mismatch() -> Refusal {
     )
 }
 
-fn output_too_large() -> Refusal {
+pub(crate) fn output_too_large() -> Refusal {
     Refusal::new(
         StatusCode::PAYLOAD_TOO_LARGE,
         question_step_codes::OUTPUT_TOO_LARGE,
@@ -148,47 +183,8 @@ fn output_too_large() -> Refusal {
     )
 }
 
-fn refused_failure(code: &str) -> StepOutcome {
-    StepOutcome::Failure(BTreeMap::from([
-        (
-            "_tag".to_owned(),
-            RuntimeValue::String("Refused".to_owned()),
-        ),
-        ("code".to_owned(), RuntimeValue::String(code.to_owned())),
-    ]))
-}
-
-fn denied_failure() -> StepOutcome {
-    StepOutcome::Failure(BTreeMap::from([(
-        "_tag".to_owned(),
-        RuntimeValue::String("Denied".to_owned()),
-    )]))
-}
-
-fn stale_failure(freshness: &str, complete: bool, sources: Vec<String>) -> StepOutcome {
-    StepOutcome::Failure(BTreeMap::from([
-        (
-            "_tag".to_owned(),
-            RuntimeValue::String("StaleSource".to_owned()),
-        ),
-        (
-            "code".to_owned(),
-            RuntimeValue::String(question_step_codes::STALE_SOURCE.to_owned()),
-        ),
-        (
-            "freshness".to_owned(),
-            RuntimeValue::String(freshness.to_owned()),
-        ),
-        ("complete".to_owned(), RuntimeValue::Bool(complete)),
-        (
-            "sources".to_owned(),
-            RuntimeValue::Array(sources.into_iter().map(RuntimeValue::String).collect()),
-        ),
-    ]))
-}
-
 /// Evaluate one parked `norn.question@1` step read-only under `starter`'s
-/// authority (`as_starter`) and return the typed [`StepOutcome`] to settle.
+/// authority (`as_starter`) and return the typed [`QuestionDispatch`] to settle.
 ///
 /// # Errors
 /// Only internal host failures (the step stays pending for the next drive).
@@ -199,17 +195,17 @@ pub(crate) fn dispatch_question_step<E: SqlEngine>(
     ctx: &QuestionStepContext<'_>,
     as_starter: AsStarter<'_>,
     disclosure: &dyn QuestionRuntime<E>,
-) -> Result<StepOutcome, Refusal> {
+) -> Result<QuestionDispatch, Refusal> {
     let parsed = match norn_cell::flow_run::parse_question_step(ctx.input) {
         Ok(step) => step,
-        Err(refused) => return Ok(refused_failure(refused.code())),
+        Err(refused) => return Ok(QuestionDispatch::failure(refused_failure(refused.code()))),
     };
     let Some(starter) = ctx.starter else {
-        return Ok(denied_failure());
+        return Ok(QuestionDispatch::failure(denied_failure()));
     };
-    let mut outcome: Option<StepOutcome> = None;
+    let mut dispatch: Option<QuestionDispatch> = None;
     let mut run_read_only = || -> Result<(), Refusal> {
-        outcome = Some(evaluate_as_starter(
+        dispatch = Some(evaluate_as_starter(
             host,
             &parsed,
             starter,
@@ -219,9 +215,9 @@ pub(crate) fn dispatch_question_step<E: SqlEngine>(
         Ok(())
     };
     match as_starter(starter, &mut run_read_only) {
-        None => Ok(denied_failure()),
-        Some(Ok(())) => outcome.ok_or_else(|| Refusal::host("question step produced no outcome")),
-        Some(Err(refused)) => classify_refusal(refused),
+        None => Ok(QuestionDispatch::failure(denied_failure())),
+        Some(Ok(())) => dispatch.ok_or_else(|| Refusal::host("question step produced no outcome")),
+        Some(Err(refused)) => classify_refusal(refused).map(QuestionDispatch::failure),
     }
 }
 
@@ -230,7 +226,7 @@ fn classify_refusal(refused: Refusal) -> Result<StepOutcome, Refusal> {
         return Ok(denied_failure());
     }
     if refused.code == question_step_codes::STALE_SOURCE {
-        return Ok(stale_failure("incomplete", false, Vec::new()));
+        return Ok(stale_failure("incomplete", false, Vec::new(), false));
     }
     match refused.category {
         RefusalCategory::Internal => Err(refused),
@@ -251,13 +247,164 @@ fn is_marking_or_disclosure_refusal(refused: &Refusal) -> bool {
             .any(|diag| diag.code == norn_checker::metric::codes::MARKED_FIELD)
 }
 
+/// Collect same-snapshot `Sources` authorization, `RequiredSources`, and
+/// marking evidence inside `question_routes::answer_plan_for_step`'s held cell
+/// lock (no second store read).
+pub(crate) fn collect_step_evidence<E: SqlEngine>(
+    (host, runtime, store): (
+        &DevHost<E>,
+        &dyn QuestionRuntime<E>,
+        &norn_cell::CellStore<E>,
+    ),
+    (actor, question, world, plan): (&str, &str, &str, &QuestionPlan),
+    (cutoff, now_ms): (Option<norn_cell::KnowledgeCutoff>, u64),
+    disclosed: &crate::privacy::DisclosedAnswer,
+) -> Result<(bool, norn_cell::compute::RequiredSources, bool), Refusal> {
+    let required = store
+        .required_sources_for_plan_at(world, plan, cutoff, now_ms, &BTreeMap::new())
+        .map_err(Refusal::from_compute)?;
+    let (result, hist_at) = match disclosed.as_answer() {
+        QuestionAnswer::Live(res) => (res, None),
+        QuestionAnswer::Historical(hist) => (
+            &hist.result,
+            Some((hist.result.known_as_of, hist.result.context.now_ms)),
+        ),
+    };
+    let sources_ok = crate::privacy::source_grants::result_sources_granted(
+        host,
+        runtime,
+        store,
+        (actor, question, plan),
+        (result, hist_at),
+    )?;
+    let marked = has_step_marked_evidence(host, &store.read(), world, plan, result)?;
+    Ok((sources_ok, required, marked))
+}
+
+/// One parked, unsettled `norn.question@1` step queued for timer/alarm wake
+/// dispatch (`QUESTION-STEP-1`).
+pub(crate) struct PendingQuestionStep {
+    pub(crate) command_id: String,
+    pub(crate) generation: u64,
+    pub(crate) run_id: String,
+    pub(crate) due_at_ms: u64,
+}
+
+/// Every parked `norn.question@1` command whose result has not yet been
+/// recorded, for durable timer/alarm wake scheduling and dispatch.
+pub(crate) fn pending_question_steps<E: SqlEngine>(
+    cell: &crate::host::ActionCell<E>,
+) -> Result<Vec<PendingQuestionStep>, Refusal> {
+    let reader = cell.store().read();
+    let mut found = Vec::new();
+    for pending in reader.parked_commands().map_err(Refusal::host)? {
+        if pending.result.is_some() {
+            continue;
+        }
+        let Some(payload) = pending.command.command.get("payload") else {
+            continue;
+        };
+        if payload.get("function").and_then(RuntimeValue::as_str)
+            != Some(norn_cell::flow_run::QUESTION_FUNCTION)
+        {
+            continue;
+        }
+        let Some(run_id) = payload.get("runId").and_then(RuntimeValue::as_str) else {
+            continue;
+        };
+        let due_at_ms = reader
+            .flow_run(norn_cell::MAIN_WORLD, run_id)
+            .map_err(Refusal::host)?
+            .map_or(0, |row| row.updated_at_ms);
+        found.push(PendingQuestionStep {
+            command_id: pending.command.command_id,
+            generation: pending.command.generation,
+            run_id: run_id.to_owned(),
+            due_at_ms,
+        });
+    }
+    Ok(found)
+}
+
+/// PRIVACY-1 / PRIVACY-3 / PRIVACY-4: inspect contributing rows and datasets
+/// inside the evaluation snapshot for occurrence markings, missing marking
+/// snapshots, dataset manifest markings, or marked mirror state on compact
+/// analytics buckets. Any restricted or unproven marking fails closed (`true`
+/// -> `Denied`) so marked values are never persisted into unmarked Run slots.
+pub(crate) fn has_step_marked_evidence<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    world: &str,
+    plan: &QuestionPlan,
+    result: &QueryResult,
+) -> Result<bool, Refusal> {
+    let catalog = host.marking_catalog(reader)?;
+    let has_any_markings =
+        !catalog.is_empty() || reader.stores_markings().map_err(Refusal::host)?;
+    if !has_any_markings {
+        return Ok(false);
+    }
+    let grain = plan.grain().as_str();
+    let mut source_types = BTreeSet::from([grain]);
+    for sum in plan.sums() {
+        if let Some(link) = &sum.time_link {
+            source_types.insert(link.target_type.as_str());
+        }
+    }
+    for ty in &source_types {
+        if let Some(current) = reader.dataset_manifest(world, ty).map_err(Refusal::host)?
+            && !reader
+                .effective_dataset_markings(&current.manifest)
+                .map_err(Refusal::host)?
+                .is_empty()
+        {
+            return Ok(true);
+        }
+    }
+    for row in result.rows.values() {
+        if row.member_count.is_some() && row.members.is_empty() {
+            // Compact analytics bucket: require every touched source type to be
+            // provably unlabeled when any marking catalog/label exists.
+            if source_types
+                .iter()
+                .any(|ty| !crate::privacy::disclosure::mirror_unlabeled(reader, ty))
+            {
+                return Ok(true);
+            }
+            continue;
+        }
+        for (id, member) in &row.members {
+            let current =
+                reader.version(world, grain, id).map_err(Refusal::host)? == member.version;
+            let version = (!current).then_some(member.version);
+            let Some(occurrence) = reader
+                .fact_occurrence_markings(world, grain, id, version)
+                .map_err(Refusal::host)?
+            else {
+                return Ok(true);
+            };
+            if !occurrence.is_empty() {
+                return Ok(true);
+            }
+            if reader
+                .effective_markings(world, grain, id, version)
+                .map_err(Refusal::host)?
+                .is_none()
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn evaluate_as_starter<E: SqlEngine>(
     host: &DevHost<E>,
     step: &QuestionStep,
     starter: &RunStarter,
     run_definitions_version: Option<u64>,
     disclosure: &dyn QuestionRuntime<E>,
-) -> Result<StepOutcome, Refusal> {
+) -> Result<QuestionDispatch, Refusal> {
     let scope = ScopeQuery {
         org_id: Some(host.scope().org_id.clone()),
         environment_id: Some(host.scope().environment_id.clone()),
@@ -276,7 +423,7 @@ fn evaluate_as_starter<E: SqlEngine>(
             .is_some_and(|rec| rec.definition.kind == "question")
     };
 
-    let (plan, disclosed) = if has_retained_question {
+    let (plan, eval) = if has_retained_question {
         evaluate_retained_question(
             host,
             &scope,
@@ -297,33 +444,109 @@ fn evaluate_as_starter<E: SqlEngine>(
         )?
     };
 
-    let result = match disclosed.as_answer() {
+    let result = match eval.disclosed.as_answer() {
         QuestionAnswer::Live(res) => res,
         QuestionAnswer::Historical(hist) => &hist.result,
     };
 
-    // PRIVACY-1 / PRIVACY-3 / DATA-VALUES-1: any restricted member or suppressed
-    // bucket denies the flow step rather than leaking partial/withheld aggregates.
-    if result
-        .rows
-        .values()
-        .any(|row| row.suppressed || row.members.values().any(|member| member.restricted))
+    // PRIVACY-1 / PRIVACY-3 / PRIVACY-4 / DATA-VALUES-1:
+    // Require explicit Values authorization evidence across ALL members (and
+    // `ALL_MEMBERS` for compact analytics buckets even when bucket count >=
+    // min_disclosed), zero suppressed/restricted/withheld buckets, and zero
+    // restricted markings on contributing rows or datasets.
+    if !eval.all_values_authorized
+        || eval.has_marked_evidence
+        || has_restricted_or_unproven_bucket(
+            host,
+            disclosure,
+            &starter.subject,
+            &step.question,
+            plan.grain().as_str(),
+            result,
+        )?
     {
-        return Ok(denied_failure());
+        return Ok(QuestionDispatch::failure(denied_failure()));
     }
 
-    // QUERY-FRESH-1 (#1905): enforce model-derived RequiredSources freshness guard.
-    let stale_sources = {
-        let cell = host.cell()?;
-        collect_stale_sources(cell.store(), &plan, result, step.freshness.as_ref())?
-    };
-    if let Some((freshness_label, complete, sources)) =
-        check_freshness_guard(result, step.freshness.as_ref(), stale_sources)
-    {
-        return Ok(stale_failure(freshness_label, complete, sources));
+    // QUERY-FRESH-1 (#1905): enforce model-derived RequiredSources freshness
+    // strictly from the SAME authenticated answer snapshot (no second store read).
+    if let Some(stale) = evaluate_freshness_guard(
+        &plan.question().freshness,
+        result,
+        &eval.required_sources,
+        step.freshness.as_ref(),
+        eval.sources_authorized,
+    ) {
+        return Ok(QuestionDispatch::failure(stale));
     }
 
-    build_answered_output(&step.question, result)
+    let outcome = build_answered_output(&step.question, result)?;
+    let source_types = plan_source_types(&plan);
+    Ok(QuestionDispatch {
+        outcome,
+        source_types,
+    })
+}
+
+fn has_restricted_or_unproven_bucket<E: SqlEngine>(
+    host: &DevHost<E>,
+    disclosure: &dyn QuestionRuntime<E>,
+    actor: &str,
+    question: &str,
+    grain: &str,
+    result: &QueryResult,
+) -> Result<bool, Refusal> {
+    let mut has_compact = false;
+    for row in result.rows.values() {
+        if row.suppressed
+            || row
+                .members
+                .values()
+                .any(|member| member.restricted || member.amounts.is_none())
+        {
+            return Ok(true);
+        }
+        if row.member_count.is_some() && row.members.is_empty() {
+            has_compact = true;
+        }
+    }
+    if has_compact {
+        let all_members = ObjectRecord {
+            object_type: grain.to_owned(),
+            id: ALL_MEMBERS.to_owned(),
+            scope: host.scope().key(),
+            version: 0,
+            values: BTreeMap::new(),
+        };
+        let permitted = allowed(
+            host,
+            disclosure,
+            actor,
+            question,
+            &all_members,
+            ReadCapability::Values,
+        )
+        .map_err(Refusal::from_compute)?;
+        if !permitted {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn plan_source_types(plan: &QuestionPlan) -> Vec<String> {
+    let mut types = BTreeSet::from([plan.grain().as_str().to_owned()]);
+    for sum in plan.sums() {
+        if let Some(link) = &sum.time_link {
+            types.insert(link.target_type.as_str().to_owned());
+        }
+    }
+    for def in plan.definitions() {
+        if let Some(agg) = &def.type_params.metric_aggregation_params {
+            types.insert(agg.semantic_model.0.clone());
+        }
+    }
+    types.into_iter().collect()
 }
 
 fn evaluate_retained_question<E: SqlEngine>(
@@ -334,20 +557,22 @@ fn evaluate_retained_question<E: SqlEngine>(
     run_definitions_version: Option<u64>,
     disclosure: &dyn QuestionRuntime<E>,
     key: &[u8],
-) -> Result<(QuestionPlan, DisclosedAnswer), Refusal> {
+) -> Result<(QuestionPlan, QuestionStepEval), Refusal> {
     let ad_hoc = disclosure
         .as_ad_hoc()
         .filter(|runtime| runtime.publishes_questions())
         .ok_or_else(question_unavailable)?;
-    let initial_record = {
+    let (initial_record, initial_version) = {
         let _epoch = host.definition_read()?;
         let cell = host.cell()?;
-        cell.store()
-            .read()
+        let reader = cell.store().read();
+        let record = reader
             .retained_definition(&step.question, None)
             .map_err(Refusal::host)?
             .filter(|rec| rec.definition.kind == "question")
-            .ok_or_else(question_not_found)?
+            .ok_or_else(question_not_found)?;
+        let version = reader.active_definitions_version().map_err(Refusal::host)?;
+        (record, version)
     };
     let mut question_ir: QuestionIR =
         serde_json::from_str(&initial_record.definition.payload).map_err(Refusal::host)?;
@@ -365,7 +590,7 @@ fn evaluate_retained_question<E: SqlEngine>(
 
     // Hold one definition_read epoch across STEP-PIN-1 re-verification and evaluation.
     let _epoch = host.definition_read()?;
-    let (record, installed_version, active_model_hash) = {
+    let (record, installed_version, active_set) = {
         let cell = host.cell()?;
         let reader = cell.store().read();
         let record = reader
@@ -374,38 +599,37 @@ fn evaluate_retained_question<E: SqlEngine>(
             .filter(|rec| rec.definition.kind == "question")
             .ok_or_else(question_not_found)?;
         let installed_version = reader.active_definitions_version().map_err(Refusal::host)?;
-        let active_model_hash = reader
-            .installed_definitions(None)
-            .map_err(Refusal::host)?
-            .map(|set| set.model_hash);
-        (record, installed_version, active_model_hash)
+        let active_set = reader.installed_definitions(None).map_err(Refusal::host)?;
+        (record, installed_version, active_set)
     };
-    if record.definition.revision != initial_record.definition.revision
+    if installed_version != initial_version
+        || record.definition.revision != initial_record.definition.revision
         || record.definition.payload_sha256 != initial_record.definition.payload_sha256
     {
         return Err(definition_changed());
     }
+    let plan = admit_plan_or_refuse(admitted)?;
     verify_retained_pin(
         host,
         &record,
+        &plan,
         installed_version,
-        active_model_hash.as_deref(),
+        active_set.as_ref(),
         run_definitions_version,
         step.pin.as_ref(),
     )?;
-
-    let plan = admit_plan_or_refuse(admitted)?;
     require_values_access(host, disclosure, &starter.subject, plan.grain().as_str())?;
 
-    let disclosed = answer_plan(
+    let eval = answer_plan_inner(
         host,
         disclosure,
         &starter.subject,
         &step.question,
         &plan,
         key,
+        true,
     )?;
-    let buckets = match disclosed.as_answer() {
+    let buckets = match eval.disclosed.as_answer() {
         QuestionAnswer::Live(res) => res.rows.len(),
         QuestionAnswer::Historical(hist) => hist.result.rows.len(),
     };
@@ -417,7 +641,7 @@ fn evaluate_retained_question<E: SqlEngine>(
             "narrow the question: a shorter time window, a coarser grain or fewer groups",
         ));
     }
-    Ok((plan, disclosed))
+    Ok((plan, eval))
 }
 
 fn admit_plan_or_refuse(
@@ -450,7 +674,7 @@ fn evaluate_named_question<E: SqlEngine>(
     step: &QuestionStep,
     run_definitions_version: Option<u64>,
     disclosure: &dyn QuestionRuntime<E>,
-) -> Result<(QuestionPlan, DisclosedAnswer), Refusal> {
+) -> Result<(QuestionPlan, QuestionStepEval), Refusal> {
     // `admit_named_question` authorizes Population and acquires one definition_read epoch.
     let (_epoch, actor, key, plan) = admit_named_question(
         host,
@@ -461,22 +685,19 @@ fn evaluate_named_question<E: SqlEngine>(
     )?;
     require_values_access(host, disclosure, actor, &step.question)?;
 
-    let (installed_version, active_model_hash) = {
+    let (installed_version, active_set) = {
         let cell = host.cell()?;
         let reader = cell.store().read();
         let installed_version = reader.active_definitions_version().map_err(Refusal::host)?;
-        let active_model_hash = reader
-            .installed_definitions(None)
-            .map_err(Refusal::host)?
-            .map(|set| set.model_hash);
-        (installed_version, active_model_hash)
+        let active_set = reader.installed_definitions(None).map_err(Refusal::host)?;
+        (installed_version, active_set)
     };
     verify_named_pin(
         host,
         &step.question,
         &plan,
         installed_version,
-        active_model_hash.as_deref(),
+        active_set.as_ref(),
         run_definitions_version,
         step.pin.as_ref(),
     )?;
@@ -495,8 +716,8 @@ fn evaluate_named_question<E: SqlEngine>(
         return Err(unsupported_params());
     }
 
-    let disclosed = answer_plan(host, disclosure, actor, &step.question, &plan, key)?;
-    Ok((plan, disclosed))
+    let eval = answer_plan_inner(host, disclosure, actor, &step.question, &plan, key, true)?;
+    Ok((plan, eval))
 }
 
 fn require_values_access<E: SqlEngine>(
@@ -515,6 +736,11 @@ fn require_values_access<E: SqlEngine>(
     Ok(())
 }
 
+/// Strictly enforce declared parameter bindings and `asOf` cutoffs on retained
+/// `QuestionIR` definitions:
+/// - Never overwrite or replace an admitted `QuestionIR` filter predicate.
+/// - Refuse any undeclared parameter binding fail-closed (`QuestionIR` carries
+///   no declared parameter slots).
 fn apply_step_overrides(question_ir: &mut QuestionIR, step: &QuestionStep) -> Result<(), Refusal> {
     if let Some(as_of) = step.as_of.as_deref() {
         if norn_checker::transform::instant(as_of).is_none() {
@@ -522,7 +748,9 @@ fn apply_step_overrides(question_ir: &mut QuestionIR, step: &QuestionStep) -> Re
         }
         question_ir.time_window.end = UtcTimestamp(as_of.to_owned());
     }
-    if let Some(params) = &step.params {
+    if let Some(params) = &step.params
+        && !params.is_empty()
+    {
         for (key, value) in params {
             if key.trim().is_empty() || key.chars().any(char::is_control) {
                 return Err(invalid_param(
@@ -540,386 +768,217 @@ fn apply_step_overrides(question_ir: &mut QuestionIR, step: &QuestionStep) -> Re
                     ));
                 }
             }
-            question_ir.filters.retain(|existing| {
-                !(existing.path.links.is_empty() && existing.path.property.as_str() == key)
-            });
-            question_ir.filters.push(MetricFilter {
-                path: DimensionPath {
-                    links: Vec::new(),
-                    property: PropertyId(key.clone()),
-                },
-                operator: FilterOperator::Eq,
-                value: value.clone(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn verify_retained_pin<E: SqlEngine>(
-    host: &DevHost<E>,
-    record: &norn_cell::retained::RetainedDefinitionRecord,
-    installed_version: Option<u64>,
-    active_model_hash: Option<&str>,
-    run_definitions_version: Option<u64>,
-    explicit: Option<&QuestionStepPin>,
-) -> Result<(), Refusal> {
-    let active_ver = installed_version.ok_or_else(pin_unavailable)?;
-    if record.definition.lifecycle != RetainedLifecycle::Active {
-        if explicit.is_some() {
-            return Err(pin_mismatch());
-        }
-        let started = run_definitions_version.ok_or_else(pin_unavailable)?;
-        let cell = host.cell()?;
-        let was_active = cell
-            .store()
-            .read()
-            .retained_definition_at_version(&record.definition.id, started)
-            .map_err(Refusal::host)?
-            .is_some_and(|prior| {
-                prior.definition.kind == "question"
-                    && prior.definition.lifecycle == RetainedLifecycle::Active
-            });
-        return Err(if was_active {
-            definition_changed()
-        } else {
-            question_not_found()
-        });
-    }
-    if let Some(pin) = explicit {
-        let rev_str = record.definition.revision.to_string();
-        if pin
-            .definitions_version
-            .is_some_and(|expected| expected != active_ver)
-            || pin
-                .artifact_id
-                .as_deref()
-                .is_some_and(|expected| expected != record.definition.id)
-            || pin
-                .version
-                .as_deref()
-                .is_some_and(|expected| expected != rev_str)
-            || pin
-                .digest
-                .as_deref()
-                .is_some_and(|expected| expected != record.definition.payload_sha256)
-        {
-            return Err(pin_mismatch());
-        }
-    }
-    let started_version = run_definitions_version.ok_or_else(pin_unavailable)?;
-    if started_version == active_ver {
-        return Ok(());
-    }
-    let cell = host.cell()?;
-    let reader = cell.store().read();
-    let start_set = reader
-        .installed_definitions(Some(started_version))
-        .map_err(Refusal::host)?
-        .ok_or_else(pin_unavailable)?;
-    let active_hash = active_model_hash.ok_or_else(pin_unavailable)?;
-    let start_retained = reader
-        .retained_definition_at_version(&record.definition.id, started_version)
-        .map_err(Refusal::host)?
-        .ok_or_else(definition_changed)?;
-    if start_retained.definition.kind != "question"
-        || start_retained.definition.lifecycle != RetainedLifecycle::Active
-        || start_retained.definition.revision != record.definition.revision
-        || start_retained.definition.payload_sha256 != record.definition.payload_sha256
-        || start_set.model_hash != active_hash
-    {
-        return Err(definition_changed());
-    }
-    Ok(())
-}
-
-fn verify_named_pin<E: SqlEngine>(
-    host: &DevHost<E>,
-    question_id: &str,
-    plan: &QuestionPlan,
-    installed_version: Option<u64>,
-    active_model_hash: Option<&str>,
-    run_definitions_version: Option<u64>,
-    explicit: Option<&QuestionStepPin>,
-) -> Result<(), Refusal> {
-    if let Some(pin) = explicit
-        && (pin
-            .definitions_version
-            .is_some_and(|expected| Some(expected) != installed_version)
-            || pin.artifact_id.as_deref().is_some_and(|expected| {
-                expected != question_id && expected != plan.question().name
-            })
-            || pin.version.as_deref().is_some_and(|expected| {
-                installed_version.map(|v| v.to_string()).as_deref() != Some(expected)
-            })
-            || pin.digest.as_deref().is_some_and(|expected| {
-                active_model_hash.map(|h| h.strip_prefix("sha256:").unwrap_or(h)) != Some(expected)
-            }))
-    {
-        return Err(pin_mismatch());
-    }
-    let Some(active_ver) = installed_version else {
-        return Ok(());
-    };
-    let started_version = run_definitions_version.ok_or_else(pin_unavailable)?;
-    if started_version == active_ver {
-        return Ok(());
-    }
-    let cell = host.cell()?;
-    let start_set = cell
-        .store()
-        .read()
-        .installed_definitions(Some(started_version))
-        .map_err(Refusal::host)?
-        .ok_or_else(pin_unavailable)?;
-    let active_hash = active_model_hash.ok_or_else(pin_unavailable)?;
-    if start_set.model_hash != active_hash {
-        return Err(definition_changed());
-    }
-    Ok(())
-}
-
-/// Inspect required sources and watermarks to identify every stale, lagging,
-/// missing, or incomplete `(source, dataset)` pair without disclosing cursor
-/// tokens.
-fn collect_stale_sources<E: SqlEngine>(
-    store: &CellStore<E>,
-    plan: &QuestionPlan,
-    result: &QueryResult,
-    guard: Option<&QuestionFreshnessGuard>,
-) -> Result<Vec<String>, Refusal> {
-    let required = store
-        .required_sources_for_plan(MAIN_WORLD, plan)
-        .map_err(Refusal::from_compute)?;
-    let require_exact = guard.and_then(|g| g.require_exact).unwrap_or(false);
-    let plan_age = match &plan.question().freshness {
-        norn_ir::metric::FreshnessPolicy::Live { max_age_ms }
-        | norn_ir::metric::FreshnessPolicy::Delayed { max_age_ms } => Some(max_age_ms.0),
-        norn_ir::metric::FreshnessPolicy::AsOf { .. } => None,
-    };
-    let effective_age = match (plan_age, guard.and_then(|g| g.max_age_ms)) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    };
-    let mut bad = BTreeSet::new();
-    for (source, datasets) in &required.0 {
-        if datasets.is_empty() {
-            bad.insert(source.clone());
-            continue;
-        }
-        let provided = result.context.source_cursors.get(source);
-        for dataset in datasets {
-            let has_cursor = provided.is_some_and(|parts| parts.contains_key(dataset));
-            if !has_cursor {
-                bad.insert(format!("{source}/{dataset}"));
+            if question_ir.filters.iter().any(|existing| {
+                existing.path.links.is_empty() && existing.path.property.as_str() == key
+            }) {
+                return Err(invalid_param(
+                    "parameter bindings cannot replace or override admitted question predicates",
+                ));
             }
         }
+        return Err(unsupported_params());
     }
-    for (source, partitions) in &result.context.source_cursors {
-        if partitions.is_empty() {
-            bad.insert(source.clone());
-            continue;
+    Ok(())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "compact-bucket privacy unit tests"
+)]
+mod tests {
+    use super::*;
+    use crate::authz::{AccessRequest, Authorizer};
+    use crate::question_routes::QuestionSnapshot;
+    use crate::scope::CellScope;
+    use norn_cell::compute::{Engine, Freshness, QueryContext, QueryRow};
+    use norn_cell::engine::NativeEngine;
+    use norn_cell::{CellStore, LedgerHead, Model};
+    use norn_ir::{Decimal, ObjectTypeName};
+    use norn_kernel::authz::{
+        self, ActorKind, Binding, ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal,
+    };
+
+    struct CompactAuthz {
+        allow_all_members_values: bool,
+    }
+
+    impl Authorizer for CompactAuthz {
+        fn authorize(&self, _request: &AccessRequest<'_>) -> Result<(), Refusal> {
+            Ok(())
         }
-        for (partition, consumed) in partitions {
-            let wm = result
-                .context
-                .watermarks
-                .get(source)
-                .and_then(|map| map.get(partition));
-            let stale_or_incomplete = match wm {
-                None => true,
-                Some(w) => {
-                    if !w.complete || &w.observed != consumed {
-                        true
-                    } else if let Some(at) = w.heartbeat_ms {
-                        match result.context.now_ms.checked_sub(at) {
-                            None => true,
-                            Some(lag) => {
-                                (require_exact && lag > 0)
-                                    || effective_age.is_some_and(|max_age| lag > max_age)
-                            }
-                        }
-                    } else {
-                        true
-                    }
-                }
+
+        fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
+            if request.capability == ReadCapability::Values
+                && request.access.resource().id == ALL_MEMBERS
+                && !self.allow_all_members_values
+            {
+                return Err(read_denied());
+            }
+            Ok(())
+        }
+    }
+
+    struct StubRuntime;
+
+    impl QuestionRuntime<NativeEngine> for StubRuntime {
+        fn plan(&self, _question: &str) -> Result<QuestionPlan, Refusal> {
+            Err(question_not_found())
+        }
+
+        fn snapshot(
+            &self,
+            _store: &CellStore<NativeEngine>,
+            _plan: &QuestionPlan,
+            _actor: &str,
+        ) -> Result<QuestionSnapshot, Refusal> {
+            Err(read_denied())
+        }
+
+        fn access(
+            &self,
+            scope: &CellScope,
+            actor: &str,
+            question: &str,
+            capability: ReadCapability,
+            row: Option<&ObjectRecord>,
+        ) -> Result<authz::AccessRequest, Refusal> {
+            let (object_type, id) = row.map_or_else(
+                || ("canon.OrderLine".to_owned(), question.to_owned()),
+                |rec| (rec.object_type.clone(), rec.id.clone()),
+            );
+            let scope_key = ScopeKey {
+                org: scope.org_id.clone(),
+                environment: Some(scope.environment_id.clone()),
+                tenant: None,
+                workspace: None,
+                business_unit: None,
             };
-            if stale_or_incomplete {
-                bad.insert(format!("{source}/{partition}"));
-            }
+            let action = match capability {
+                ReadCapability::Population => "norn.read.population",
+                ReadCapability::Values => "norn.read.values",
+                ReadCapability::Sources => "norn.read.sources",
+            };
+            Ok(authz::AccessRequest::new(
+                &VerifiedPrincipal::new(
+                    actor.to_owned(),
+                    ActorKind::User,
+                    None,
+                    vec!["member".to_owned()],
+                    BTreeMap::new(),
+                ),
+                Some(scope_key.clone()),
+                action,
+                action,
+                ResourceInput {
+                    object_type,
+                    id,
+                    scope: scope_key,
+                    attributes: BTreeMap::new(),
+                },
+                BTreeMap::new(),
+                Binding::Unbound(UnboundProfile::HostedAction),
+            ))
+        }
+
+        fn min_disclosed_bucket(&self) -> usize {
+            3
+        }
+
+        fn handle_key(&self) -> &[u8] {
+            &[7_u8; 32]
         }
     }
-    Ok(bad.into_iter().collect())
-}
 
-fn check_freshness_guard(
-    result: &QueryResult,
-    guard: Option<&QuestionFreshnessGuard>,
-    stale_sources: Vec<String>,
-) -> Option<(&'static str, bool, Vec<String>)> {
-    let require_exact = guard.and_then(|g| g.require_exact).unwrap_or(false);
-    let step_max_age = guard.and_then(|g| g.max_age_ms);
-    let age_exceeded = step_max_age.is_some_and(|max_age| {
-        result
-            .context
-            .watermarks
-            .values()
-            .flat_map(BTreeMap::values)
-            .any(|wm| {
-                wm.heartbeat_ms
-                    .and_then(|at| result.context.now_ms.checked_sub(at))
-                    .is_none_or(|lag| lag > max_age)
-            })
-    });
-    if !result.complete || matches!(result.freshness, Freshness::Incomplete) {
-        return Some(("incomplete", result.complete, stale_sources));
+    fn compact_result() -> QueryResult {
+        QueryResult {
+            query_pin: "qp".to_owned(),
+            definition_pin: "dp".to_owned(),
+            engine: Engine::DataFusion,
+            revision: LedgerHead::genesis(),
+            effective_as_of: UtcTimestamp("2026-08-06T12:00:00Z".to_owned()),
+            known_as_of: 1,
+            grain: ObjectTypeName("canon.OrderLine".to_owned()),
+            lineage_ref: "lr".to_owned(),
+            rows: BTreeMap::from([(
+                "2026-08-06".to_owned(),
+                QueryRow {
+                    bucket: RuntimeValue::String("2026-08-06".to_owned()),
+                    totals: vec!["100".parse::<Decimal>().unwrap()],
+                    value: Some("100".parse::<Decimal>().unwrap()),
+                    members: BTreeMap::new(),
+                    suppressed: false,
+                    null_counts: Vec::new(),
+                    member_count: Some(10),
+                    membership_digest: Some("digest".to_owned()),
+                },
+            )]),
+            freshness: Freshness::Exact,
+            complete: true,
+            context: QueryContext {
+                world: "main".to_owned(),
+                scope: "org_demo/dev".to_owned(),
+                population_pin: "pop".to_owned(),
+                authorization_epoch: 1,
+                mapping_pin: "mp".to_owned(),
+                now_ms: 10_000,
+                source_cursors: BTreeMap::new(),
+                watermarks: BTreeMap::new(),
+            },
+            exclusions: BTreeMap::new(),
+            unlinked: 0,
+            source_disagreements: None,
+        }
     }
-    if matches!(result.freshness, Freshness::Stale) || age_exceeded {
-        return Some(("stale", result.complete, stale_sources));
-    }
-    if require_exact && result.freshness != Freshness::Exact {
-        return Some(("fresh", result.complete, stale_sources));
-    }
-    None
-}
 
-fn engine_str(engine: Engine) -> &'static str {
-    match engine {
-        Engine::Cell => "cell",
-        Engine::Ivm => "ivm",
-        Engine::Duckdb => "duckdb",
-        Engine::DataFusion => "datafusion",
-    }
-}
+    #[test]
+    fn compact_analytics_bucket_requires_all_members_values_authorization() {
+        let scope = CellScope {
+            org_id: "org_demo".to_owned(),
+            environment_id: "dev".to_owned(),
+        };
+        let result = compact_result();
+        let runtime = StubRuntime;
 
-fn freshness_str(freshness: Freshness) -> &'static str {
-    match freshness {
-        Freshness::Exact => "exact",
-        Freshness::Fresh => "fresh",
-        Freshness::Stale => "stale",
-        Freshness::Incomplete => "incomplete",
-    }
-}
+        let denied_store =
+            CellStore::open_in_memory(Model::from_definitions(&[], &[]).unwrap()).unwrap();
+        let denied_host =
+            DevHost::from_store(denied_store, scope.clone(), |cmd| cmd.payload.clone())
+                .unwrap()
+                .with_authorizer(CompactAuthz {
+                    allow_all_members_values: false,
+                });
+        assert!(
+            has_restricted_or_unproven_bucket(
+                &denied_host,
+                &runtime,
+                "viewer@demo",
+                "q.compact",
+                "canon.OrderLine",
+                &result,
+            )
+            .unwrap(),
+            "compact bucket with member_count >= min_disclosed must still deny when ALL_MEMBERS Values is unauthorized"
+        );
 
-fn encode_u64(n: u64) -> Result<RuntimeValue, Refusal> {
-    norn_ir::runtime::encode(&n).map_err(Refusal::host)
-}
-
-fn encode_query_row(
-    bucket_key: &str,
-    row: &norn_cell::compute::QueryRow,
-) -> Result<RuntimeValue, Refusal> {
-    let member_count = row
-        .member_count
-        .unwrap_or_else(|| u64::try_from(row.members.len()).unwrap_or(u64::MAX));
-    let totals = row
-        .totals
-        .iter()
-        .map(|d| RuntimeValue::String(d.to_string()))
-        .collect();
-    let value = row
-        .value
-        .as_ref()
-        .map_or(RuntimeValue::Null, |d| RuntimeValue::String(d.to_string()));
-    Ok(RuntimeValue::Object(BTreeMap::from([
-        (
-            "bucketKey".to_owned(),
-            RuntimeValue::String(bucket_key.to_owned()),
-        ),
-        ("value".to_owned(), value),
-        ("totals".to_owned(), RuntimeValue::Array(totals)),
-        ("memberCount".to_owned(), encode_u64(member_count)?),
-        ("suppressed".to_owned(), RuntimeValue::Bool(row.suppressed)),
-    ])))
-}
-
-fn build_answered_output(question_id: &str, result: &QueryResult) -> Result<StepOutcome, Refusal> {
-    let mut rows = Vec::with_capacity(result.rows.len());
-    for (bucket_key, row) in &result.rows {
-        rows.push(encode_query_row(bucket_key, row)?);
+        let allowed_store =
+            CellStore::open_in_memory(Model::from_definitions(&[], &[]).unwrap()).unwrap();
+        let allowed_host = DevHost::from_store(allowed_store, scope, |cmd| cmd.payload.clone())
+            .unwrap()
+            .with_authorizer(CompactAuthz {
+                allow_all_members_values: true,
+            });
+        assert!(
+            !has_restricted_or_unproven_bucket(
+                &allowed_host,
+                &runtime,
+                "admin@demo",
+                "q.compact",
+                "canon.OrderLine",
+                &result,
+            )
+            .unwrap()
+        );
     }
-    let scalar_value = if result.rows.len() == 1 {
-        result
-            .rows
-            .values()
-            .next()
-            .and_then(|row| row.value.as_ref())
-            .map_or(RuntimeValue::Null, |d| RuntimeValue::String(d.to_string()))
-    } else {
-        RuntimeValue::Null
-    };
-    let revision = RuntimeValue::Object(BTreeMap::from([
-        ("seq".to_owned(), encode_u64(result.revision.seq)?),
-        (
-            "hash".to_owned(),
-            RuntimeValue::String(result.revision.hash.clone()),
-        ),
-        ("commits".to_owned(), encode_u64(result.revision.commits)?),
-    ]));
-    let row_count = u64::try_from(result.rows.len()).unwrap_or(u64::MAX);
-    let authority_pin = format!(
-        "{}@{}",
-        result.context.population_pin, result.context.authorization_epoch
-    );
-    let output: RuntimeObject = BTreeMap::from([
-        (
-            "status".to_owned(),
-            RuntimeValue::String("Answered".to_owned()),
-        ),
-        (
-            "question".to_owned(),
-            RuntimeValue::String(question_id.to_owned()),
-        ),
-        (
-            "grain".to_owned(),
-            RuntimeValue::String(result.grain.0.clone()),
-        ),
-        (
-            "engine".to_owned(),
-            RuntimeValue::String(engine_str(result.engine).to_owned()),
-        ),
-        (
-            "freshness".to_owned(),
-            RuntimeValue::String(freshness_str(result.freshness).to_owned()),
-        ),
-        ("complete".to_owned(), RuntimeValue::Bool(result.complete)),
-        (
-            "queryPin".to_owned(),
-            RuntimeValue::String(result.query_pin.clone()),
-        ),
-        (
-            "definitionPin".to_owned(),
-            RuntimeValue::String(result.definition_pin.clone()),
-        ),
-        (
-            "authorityPin".to_owned(),
-            RuntimeValue::String(authority_pin),
-        ),
-        (
-            "readToken".to_owned(),
-            RuntimeValue::String(result.lineage_ref.clone()),
-        ),
-        ("revision".to_owned(), revision),
-        (
-            "effectiveAsOf".to_owned(),
-            RuntimeValue::String(result.effective_as_of.0.clone()),
-        ),
-        ("knownAsOf".to_owned(), encode_u64(result.known_as_of)?),
-        ("nowMs".to_owned(), encode_u64(result.context.now_ms)?),
-        ("rowCount".to_owned(), encode_u64(row_count)?),
-        ("value".to_owned(), scalar_value),
-        ("rows".to_owned(), RuntimeValue::Array(rows)),
-    ]);
-    let encoded_size = RuntimeValue::Object(output.clone())
-        .canonical_json()
-        .map_err(Refusal::host)?
-        .len();
-    if !u64::try_from(encoded_size)
-        .is_ok_and(|size| size <= norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES)
-    {
-        return Err(output_too_large());
-    }
-    Ok(StepOutcome::Output(output))
 }

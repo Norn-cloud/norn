@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use governed::GovernedCommit as _;
-use norn_api::authz::{AccessRequest, Authorizer, Operation, ReadRequest};
+use norn_api::authz::{AccessRequest, Authorizer, Operation, ReadCapability, ReadRequest};
 use norn_api::definition_routes::DefinitionKinds;
 use norn_api::flow_question::question_step_codes;
 use norn_api::host::DevHost;
@@ -26,13 +26,14 @@ use norn_api::pull::PullProfile;
 use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 use norn_api::sources::{Sources, Step, Trigger};
+use norn_api::timers::{DueWork, StepWake, next_due, run_due_with};
 use norn_cell::engine::NativeEngine;
 use norn_cell::flow_run::RunStarter;
 use norn_cell::{
     CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, LinkChange, MAIN_WORLD,
 };
-use norn_cell_do::policy::{CallerSlot, DEMO_GRANTS, ReadPolicy};
-use norn_cell_do::principal::FixturePrincipals;
+use norn_cell_do::policy::{Caller, CallerSlot, DEMO_GRANTS, ReadPolicy};
+use norn_cell_do::principal::{FIXTURE_ROLES, FixturePrincipals};
 use norn_cell_do::questions::DerivedQuestions;
 use norn_cell_do::server::{self, Response};
 use norn_checker::EntityArtifactSetContext;
@@ -43,6 +44,7 @@ use norn_kernel::authz::{
 };
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest, FactKey,
+    LogicalTime,
 };
 use norn_ui_checker::check_artifact_set_with_receipt;
 use serde_json::{Value, json};
@@ -53,11 +55,15 @@ const MEMBER: Option<&str> = Some("Bearer fixture:member@demo");
 /// Starts runs and reads its own run object, but is denied read access on
 /// `canon.OrderLine` (the question's grain).
 const BLIND: Option<&str> = Some("Bearer fixture:blind@demo");
+/// Holds Population (not Values) on `canon.OrderLine`, and Population+Values on
+/// Run objects.
+const PARTIAL: Option<&str> = Some("Bearer fixture:partial@demo");
 
 const TEST_FIXTURES: &[(&str, &[&str])] = &[
     ("admin@demo", &["admin"]),
     ("member@demo", &["member"]),
     ("blind@demo", &["member"]),
+    ("partial@demo", &["member"]),
 ];
 
 const T0: u64 = 1_794_484_800_000;
@@ -66,6 +72,7 @@ const SANDBOX_HOSTS: &str = "erpnext-rest";
 const QUESTION_ID: &str = "freshness.order_line_qty";
 const GUARD_FLOW_ID: &str = "ops.question_guard";
 const DECIDE_FLOW_ID: &str = "ops.decide_then_question";
+const TIMER_FLOW_ID: &str = "ops.timer_question_guard";
 const MELT: &str = "constitution.Melt";
 const MELT_ACTION: &str = "constitution.melt.convert";
 
@@ -73,6 +80,8 @@ const QUESTION_GUARD_IR: &str =
     include_str!("../../../tools/norn-ts/fixtures/flows/question-guard.ir.json");
 const DECIDE_THEN_QUESTION_IR: &str =
     include_str!("../../../tools/norn-ts/fixtures/flows/decide-then-question.ir.json");
+const TIMER_QUESTION_GUARD_IR: &str =
+    include_str!("../../../tools/norn-ts/fixtures/flows/timer-question-guard.ir.json");
 
 const ERPNEXT_CONFIG: &str = r#"[
   {"id": "erpnext.rest", "system": "erpnext", "label": "ERPNext REST",
@@ -256,11 +265,11 @@ impl Authorizer for QuestionTestPolicy {
     }
 
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        if self
-            .caller
-            .current()
-            .is_some_and(|c| c.subject_id == "blind@demo")
+        if let Some(current) = self.caller.current()
             && request.access.resource().object_type == "canon.OrderLine"
+            && (current.subject_id == "blind@demo"
+                || (current.subject_id == "partial@demo"
+                    && request.capability == ReadCapability::Values))
         {
             return Err(norn_api::authz::read_denied());
         }
@@ -511,8 +520,17 @@ impl QuestionCell {
     }
 
     fn install_order_line_question(&self, max_age_ms: u64, expected_version: Option<u64>) -> Value {
+        self.install_order_line_question_with_filter(max_age_ms, expected_version, None)
+    }
+
+    fn install_order_line_question_with_filter(
+        &self,
+        max_age_ms: u64,
+        expected_version: Option<u64>,
+        filter: Option<Value>,
+    ) -> Value {
         let metric = self.order_line_metric();
-        let payload = json!({
+        let mut payload = json!({
             "irVersion": "0.1",
             "name": QUESTION_ID,
             "objectSet": "canon.OrderLine",
@@ -526,6 +544,9 @@ impl QuestionCell {
             "window": {"start": "2026-01-01T00:00:00Z", "end": "2027-01-01T00:00:00Z"},
             "freshness": {"kind": "live", "maxAgeMs": max_age_ms}
         });
+        if let Some(filters) = filter {
+            payload["filter"] = filters;
+        }
         let mut body = json!({
             "kind": "question",
             "id": QUESTION_ID,
@@ -591,6 +612,152 @@ impl QuestionCell {
     fn install_decide_then_question_flow(&self) {
         let artifacts: Vec<Value> = serde_json::from_str(DECIDE_THEN_QUESTION_IR).unwrap();
         self.install_flow(DECIDE_FLOW_ID, "Decide then read a question", artifacts);
+    }
+
+    fn install_timer_question_guard_flow(&self) {
+        let artifacts: Vec<Value> = serde_json::from_str(TIMER_QUESTION_GUARD_IR).unwrap();
+        self.install_flow(
+            TIMER_FLOW_ID,
+            "Sleep then guard a melt with a question",
+            artifacts,
+        );
+    }
+
+    fn install_guard_flow_with_params(&self, params_expr: &str, param_schema: Value) {
+        let mut artifacts: Vec<Value> = serde_json::from_str(QUESTION_GUARD_IR).unwrap();
+        let rule = &mut artifacts[1]["payload"];
+        let rules = rule["graph"]["nodes"][1]["content"]["rules"]
+            .as_array_mut()
+            .unwrap();
+        let start_row = rules
+            .iter_mut()
+            .find(|entry| entry["_id"] == "started/start/1")
+            .unwrap();
+        start_row["o_commands"] = json!(format!(
+            "[{{kind: 'perform', runId: event.runId, step: 'check_question', function: 'norn.question', functionVersion: '1', idempotencyKey: event.runId + ':check_question', attempt: 1, input: {{check_question: {{question: '{QUESTION_ID}', params: {params_expr}}}}}}}]"
+        ));
+        rule["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]["properties"]
+            ["check_question"]["properties"]["params"] = param_schema;
+        self.install_flow(GUARD_FLOW_ID, "Guard a melt with a question", artifacts);
+    }
+
+    /// Install a new definitions revision that modifies only `erpnext.rest.mapping`
+    /// (bump version `0.2.0` -> `0.2.1`), leaving the retained question and
+    /// entity `model_hash` completely unchanged.
+    fn upgrade_erpnext_mapping(&self) {
+        let active = {
+            let cell = self.host.cell().expect("cell");
+            cell.store()
+                .read()
+                .installed_definitions(None)
+                .expect("active")
+                .expect("installed")
+        };
+        let mut artifacts =
+            norn_api::kernel_set::retained_artifacts(&active.canonical_set).expect("retained");
+        let mapping = artifacts
+            .iter_mut()
+            .find(|artifact| artifact.artifact_id == "erpnext.rest.mapping")
+            .expect("erpnext.rest.mapping");
+        mapping.version = "0.2.1".to_owned();
+
+        let (base, candidate): (Vec<_>, Vec<_>) = artifacts
+            .iter()
+            .cloned()
+            .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+        let to_rv = |items: &[ArtifactEnvelope]| -> Vec<RuntimeValue> {
+            items
+                .iter()
+                .map(|a| {
+                    RuntimeValue::from_json(serde_json::to_value(a).expect("wire")).expect("rv")
+                })
+                .collect()
+        };
+        let sources = ReceiptSources::new(&to_rv(&candidate), &to_rv(&base)).expect("sources");
+        let checked = check_artifact_set_with_receipt(
+            &sources,
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            },
+            &ResourceLimitProfile::norn_limits_v1(),
+        )
+        .expect("checked");
+        assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
+        let base_model = norn_api::kernel_set::serving_model(&artifacts).expect("serving model");
+        let model =
+            norn_api::action_admission::prepare_action_model(&base_model).expect("action model");
+        let input = InstalledDefinitionInput {
+            canonical_set: String::from_utf8(
+                RuntimeValue::from_json(serde_json::to_value(&artifacts).expect("set"))
+                    .expect("rv")
+                    .canonical_json()
+                    .expect("canonical"),
+            )
+            .expect("utf8"),
+            registry: vec![],
+            receipt_sha256: checked.receipt.content_sha256().expect("digest"),
+            admission_receipt: Some(
+                String::from_utf8(checked.receipt.canonical_json().expect("receipt"))
+                    .expect("utf8"),
+            ),
+            readmission: None,
+            diff: json!({}),
+            installed_at: active.version.saturating_add(1),
+            layout: None,
+        };
+        let upgraded = self
+            .host
+            .install_definitions(model, input, Some(active.version))
+            .expect("upgrade mapping");
+        assert_eq!(
+            upgraded.model_hash, active.model_hash,
+            "dependency-only mapping upgrade must keep model_hash unchanged"
+        );
+    }
+
+    /// Run due work on the background alarm wake path with NO active HTTP
+    /// request in `self.caller`, mirroring `Tenant::run_due` / `runs::run_due_with_runtime`.
+    fn run_due(&self, now_ms: u64) -> DueWork {
+        assert_eq!(self.caller.current(), None);
+        let runtime = self
+            .derived
+            .questions_at(&self.host, now_ms)
+            .expect("runtime");
+        let caller_slot = &self.caller;
+        let as_starter = |principal: &RunStarter, call: &mut dyn FnMut() -> Result<(), Refusal>| {
+            let actor_kind = match principal.actor_kind.as_str() {
+                "user" => "user",
+                "service" => "service",
+                _ => return None,
+            };
+            let role_table = if principal.role_table == FIXTURE_ROLES {
+                FIXTURE_ROLES
+            } else {
+                return None;
+            };
+            let acting = Caller {
+                subject_id: principal.subject.clone(),
+                roles: principal.roles.clone(),
+                actor_kind,
+                role_table,
+                accountable_person: principal.accountable_person.clone(),
+            };
+            let prev = caller_slot.replace(Some(acting), true);
+            let result = call();
+            caller_slot.replace(prev.0, prev.1);
+            Some(result)
+        };
+        run_due_with(
+            &self.host,
+            LogicalTime::from_millis(now_ms),
+            Some(StepWake {
+                as_starter: &as_starter,
+                disclosure: &runtime,
+            }),
+        )
+        .expect("run_due_with")
     }
 
     fn sync_erpnext(&self, now_ms: u64) {
@@ -1010,4 +1177,323 @@ fn prior_decider_cannot_escalate_subsequent_question_step() {
         "{run_obj}"
     );
     assert_eq!(cell.caller.current(), None);
+}
+
+/// Negative 5 (Finding 3 — Run-binding privacy preservation): once a run
+/// persists `Answered` outputs from `norn.question@1` into `run.slots.bindings`,
+/// an ordinary Run reader who lacks source clearance on `canon.OrderLine`
+/// cannot read those question outputs through object get, list, or history.
+#[test]
+fn ordinary_run_reader_without_source_clearance_cannot_read_question_bindings() {
+    let cell = QuestionCell::open(true, false);
+    cell.install_order_line_question(60_000, None);
+    cell.install_guard_flow(None);
+    cell.sync_erpnext(T0);
+
+    let (status, run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": GUARD_FLOW_ID, "runId": "q-priv-1" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{run}");
+    assert_eq!(run["state"], json!("completed"), "{run}");
+
+    // Authorized reader (ADMIN) sees the completed run and its bindings.
+    let (status, admin_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.QuestionGuardRun/q-priv-1",
+        ADMIN,
+        "",
+    );
+    assert_eq!(status, 200, "{admin_obj}");
+    assert_eq!(
+        admin_obj["values"]["slots"]["result"]["outcome"],
+        json!("converted"),
+        "{admin_obj}"
+    );
+
+    // BLIND holds Population+Values on ops.QuestionGuardRun, but is denied
+    // Population+Values on canon.OrderLine -> opaque 404 on get & history,
+    // omitted from list.
+    let (status, blind_get) = cell.call(
+        "GET",
+        "/v1/objects/ops.QuestionGuardRun/q-priv-1",
+        BLIND,
+        "",
+    );
+    assert_eq!(status, 404, "BLIND must not read Run bindings: {blind_get}");
+    let (status, blind_list) = cell.call("GET", "/v1/objects/ops.QuestionGuardRun", BLIND, "");
+    assert_eq!(status, 200, "{blind_list}");
+    assert!(
+        !blind_list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == "q-priv-1"),
+        "BLIND must not see question-bearing run in list: {blind_list}"
+    );
+    let (status, blind_hist) = cell.call(
+        "GET",
+        "/v1/objects/ops.QuestionGuardRun/q-priv-1/history",
+        BLIND,
+        "",
+    );
+    assert_eq!(status, 404, "BLIND must not read Run history: {blind_hist}");
+
+    // PARTIAL holds Population on canon.OrderLine (denied Values) and
+    // Population+Values on ops.QuestionGuardRun -> values withheld on get,
+    // opaque 404 on history.
+    let (status, partial_get) = cell.call(
+        "GET",
+        "/v1/objects/ops.QuestionGuardRun/q-priv-1",
+        PARTIAL,
+        "",
+    );
+    assert_eq!(status, 200, "{partial_get}");
+    assert_eq!(
+        partial_get["withheld"],
+        json!(true),
+        "PARTIAL must have Run values withheld: {partial_get}"
+    );
+    assert!(
+        partial_get["values"].is_null(),
+        "PARTIAL must not receive Run bindings: {partial_get}"
+    );
+    let (status, partial_hist) = cell.call(
+        "GET",
+        "/v1/objects/ops.QuestionGuardRun/q-priv-1/history",
+        PARTIAL,
+        "",
+    );
+    assert_eq!(
+        status, 404,
+        "PARTIAL must not read Run history: {partial_hist}"
+    );
+}
+
+/// Negative 6 (Finding 4 — STEP-PIN-1 dependency-only drift): modifying a
+/// mapping in the question's dependency closure (`erpnext.rest.mapping`) while
+/// keeping both the retained question and `model_hash` unchanged causes an
+/// in-flight parked `norn.question@1` step to settle `Refused` with
+/// `question_step.definition_changed`.
+#[test]
+fn dependency_only_mapping_upgrade_drifts_in_flight_question_step() {
+    let cell = QuestionCell::open(true, false);
+    cell.install_order_line_question(60_000, None);
+    cell.install_decide_then_question_flow();
+    cell.sync_erpnext(T0);
+
+    let (status, opened) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        MEMBER,
+        &json!({ "flow": DECIDE_FLOW_ID, "runId": "q-dep-drift-1" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{opened}");
+    assert_eq!(opened["state"], json!("awaiting_perform_ask_review"));
+
+    // Upgrade only `erpnext.rest.mapping` while the run is parked on `ask_review`.
+    cell.upgrade_erpnext_mapping();
+
+    let pending = format!("{SCOPE}&state=pending");
+    let (_, page) = cell.call_at(
+        "GET",
+        "/v1/decisions",
+        &pending,
+        ADMIN,
+        "",
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(page["total"], json!(1), "{page}");
+    let decision_id = page["items"][0]["id"].as_str().unwrap().to_owned();
+
+    let (status, decided) = cell.call_at(
+        "POST",
+        &format!("/v1/decisions/{decision_id}:decide"),
+        SCOPE,
+        ADMIN,
+        &json!({ "choice": "approve", "idempotencyKey": "k-dep-drift" }).to_string(),
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["run"]["state"],
+        json!("failed_refused"),
+        "{decided}"
+    );
+    assert_eq!(cell.melt_status(), 404);
+    let (_, run_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.DecideThenQuestionRun/q-dep-drift-1",
+        ADMIN,
+        "",
+    );
+    assert_eq!(
+        run_obj["values"]["slots"]["failure"],
+        json!({ "_tag": "Refused", "code": question_step_codes::DEFINITION_CHANGED }),
+        "{run_obj}"
+    );
+}
+
+/// Negative 7 (Finding 4 — parameter binding enforcement): dynamic `params`
+/// that attempt to replace an admitted question filter predicate settle
+/// `Refused { code: "question_step.invalid_param" }`, and undeclared `params`
+/// settle `Refused { code: "question_step.unsupported_params" }` fail-closed.
+#[test]
+fn unauthorized_or_predicate_replacing_params_refuse_fail_closed() {
+    // 7a: Predicate-replacing param (`status` already filtered by the question).
+    let pred_cell = QuestionCell::open(true, false);
+    pred_cell.install_order_line_question_with_filter(
+        60_000,
+        None,
+        Some(json!([{
+            "path": { "property": "status" },
+            "operator": "eq",
+            "value": "promised"
+        }])),
+    );
+    pred_cell.install_guard_flow_with_params(
+        "{status: 'cancelled'}",
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status"],
+            "properties": { "status": { "type": "string" } }
+        }),
+    );
+    pred_cell.sync_erpnext(T0);
+
+    let (status, run) = pred_cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": GUARD_FLOW_ID, "runId": "q-param-pred-1" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{run}");
+    assert_eq!(run["state"], json!("failed_refused"), "{run}");
+    assert_eq!(pred_cell.melt_status(), 404);
+    let (_, obj) = pred_cell.call(
+        "GET",
+        "/v1/objects/ops.QuestionGuardRun/q-param-pred-1",
+        ADMIN,
+        "",
+    );
+    assert_eq!(
+        obj["values"]["slots"]["failure"],
+        json!({ "_tag": "Refused", "code": question_step_codes::INVALID_PARAM }),
+        "{obj}"
+    );
+
+    // 7b: Undeclared param (`unit`) on a question with no declared parameter bindings.
+    let undecl_cell = QuestionCell::open(true, false);
+    undecl_cell.install_order_line_question(60_000, None);
+    undecl_cell.install_guard_flow_with_params(
+        "{unit: 'g'}",
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["unit"],
+            "properties": { "unit": { "type": "string" } }
+        }),
+    );
+    undecl_cell.sync_erpnext(T0);
+
+    let (status, run) = undecl_cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": GUARD_FLOW_ID, "runId": "q-param-undecl-1" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{run}");
+    assert_eq!(run["state"], json!("failed_refused"), "{run}");
+    assert_eq!(undecl_cell.melt_status(), 404);
+    let (_, obj) = undecl_cell.call(
+        "GET",
+        "/v1/objects/ops.QuestionGuardRun/q-param-undecl-1",
+        ADMIN,
+        "",
+    );
+    assert_eq!(
+        obj["values"]["slots"]["failure"],
+        json!({ "_tag": "Refused", "code": question_step_codes::UNSUPPORTED_PARAMS }),
+        "{obj}"
+    );
+}
+
+/// Positive (Finding 6 — durable timer wake path): a flow that sleeps on a
+/// durable timer and then performs `norn.question@1` -> routes -> commits
+/// `constitution.melt.convert` completes purely from the timer/alarm wake
+/// (`run_due_with` under the recorded starter) with ZERO HTTP retry.
+#[test]
+fn timer_driven_question_to_action_flow_completes_on_wake_without_http_retry() {
+    let cell = QuestionCell::open(true, false);
+    cell.install_order_line_question(60_000, None);
+    cell.install_timer_question_guard_flow();
+    cell.sync_erpnext(T0);
+
+    let start_s = T0_SECS.saturating_add(5);
+    let (status, started) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": TIMER_FLOW_ID, "runId": "q-timer-1" }).to_string(),
+        start_s,
+    );
+    assert_eq!(status, 201, "{started}");
+    assert_eq!(started["state"], json!("sleeping_wait_sync"), "{started}");
+    assert_eq!(started["terminal"], json!(false));
+    assert_eq!(cell.melt_status(), 404);
+    assert_eq!(cell.caller.current(), None);
+
+    let due = next_due(&cell.host).expect("next_due").expect("timer due");
+    assert_eq!(due, start_s.saturating_mul(1_000).saturating_add(10_000));
+
+    // Advance clock to the timer deadline and run ONLY the background alarm
+    // wake path (zero HTTP retry!).
+    let work = cell.run_due(due);
+    assert_eq!(work.timers, 1, "{work:#?}");
+    assert!(
+        work.steps >= 1,
+        "question step must dispatch on wake: {work:#?}"
+    );
+    assert!(work.failed.is_empty(), "{work:#?}");
+    assert_eq!(work.next, None, "{work:#?}");
+    assert_eq!(cell.caller.current(), None);
+
+    // Downstream action committed and run completed purely from alarm wake.
+    assert_eq!(cell.melt_status(), 200);
+    let (status, run_doc) = cell.call("GET", "/v1/runs/q-timer-1", ADMIN, "");
+    assert_eq!(status, 200, "{run_doc}");
+    assert_eq!(run_doc["state"], json!("completed"), "{run_doc}");
+    assert_eq!(run_doc["terminal"], json!(true));
+
+    let (status, run_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.TimerQuestionGuardRun/q-timer-1",
+        ADMIN,
+        "",
+    );
+    assert_eq!(status, 200, "{run_obj}");
+    assert_eq!(
+        run_obj["values"]["slots"]["result"]["outcome"],
+        json!("converted"),
+        "{run_obj}"
+    );
+    assert!(
+        !run_obj["values"]["slots"]["result"]["queryPin"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty(),
+        "Answered queryPin must be populated after timer wake: {run_obj}"
+    );
 }

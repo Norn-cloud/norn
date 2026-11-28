@@ -213,13 +213,29 @@ export interface QuestionFnOptions {
  * visibility, or markings disclosure refusal), and `Refused` (pin mismatch or other deterministic
  * refusal with `code`).
  */
+function isQuestionParamScalar(schema: S.ValueSchema): boolean {
+  const isScalarType = (t: string): boolean =>
+    t === "string" || t === "integer" || t === "number" || t === "boolean" || t === "null"
+  if (typeof schema.type === "string") return isScalarType(schema.type)
+  return schema.type.length > 0 && schema.type.every(isScalarType)
+}
+
+function validateQuestionParamsSchema(params: S.ObjectSchema): S.ObjectSchema {
+  for (const [name, field] of Object.entries(params.properties)) {
+    if (!isQuestionParamScalar(field)) {
+      throw new Error(`questionFn params field ${JSON.stringify(name)} must have a scalar schema`)
+    }
+  }
+  return params
+}
+
 export function questionFn(question: string, options?: QuestionFnOptions): FnRef {
   const properties: Record<string, S.ValueSchema> = {
     question: S.text([question]),
   }
   const optional: string[] = []
   if (options?.params !== undefined) {
-    properties.params = options.params
+    properties.params = validateQuestionParamsSchema(options.params)
     optional.push("params")
   }
   if (options?.asOf === true) {

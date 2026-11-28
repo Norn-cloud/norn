@@ -436,6 +436,100 @@ fn acting_caller(starter: &RunStarter, current: Option<&Caller>) -> Option<Calle
     })
 }
 
+/// Resolve the active [`AdHocQuestions`] runtime for `host` (demo questions,
+/// derived metrics at `clock_ms`, or receipt handles, optionally wrapped in
+/// the analytics engine) and invoke `run` with it.
+#[allow(clippy::too_many_arguments, reason = "shared tenant runtime selection")]
+pub(crate) fn with_question_runtime<E: SqlEngine, R>(
+    host: &DevHost<E>,
+    scope: &norn_api::scope::CellScope,
+    serving_questions: Option<&crate::analytics::DemoQuestions>,
+    derived: Option<&crate::questions::DerivedQuestions>,
+    handles: Option<&dyn AdHocQuestions<E>>,
+    engine: Option<&crate::olap::Exchange>,
+    clock_ms: u64,
+    configured: Option<BTreeMap<String, String>>,
+    run: impl FnOnce(Option<&dyn AdHocQuestions<E>>) -> R,
+) -> R {
+    let derived_rt = derived
+        .filter(|_| serving_questions.is_none())
+        .and_then(|d| d.questions_at(host, clock_ms).ok())
+        .map(|rt| rt.with_configured(configured))
+        .filter(|r| !AdHocQuestions::<E>::definitions(r).is_empty());
+    let questions = serving_questions
+        .map(|questions| -> &dyn AdHocQuestions<E> { questions })
+        .or_else(|| {
+            derived_rt
+                .as_ref()
+                .map(|runtime| -> &dyn AdHocQuestions<E> { runtime })
+        })
+        .or(handles);
+    let on_engine = match (questions, engine) {
+        (Some(inner), Some(engine)) => Some(norn_api::analytics_routes::EngineQuestions::new(
+            inner, engine, scope,
+        )),
+        (Some(_) | None, _) => None,
+    };
+    run(on_engine
+        .as_ref()
+        .map(|wrapped| -> &dyn AdHocQuestions<E> { wrapped })
+        .or(questions))
+}
+
+/// Run the cell's due work on the alarm/timer wake path with parked
+/// `norn.question@1` step dispatch under each run's recorded starter
+/// (`QUESTION-STEP-1`).
+pub(crate) fn run_due_with_runtime<E: SqlEngine>(
+    host: &DevHost<E>,
+    caller: &CallerSlot,
+    table_version: &'static str,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    now_ms: u64,
+) -> Result<norn_api::timers::DueWork, Refusal> {
+    let now = norn_kernel::LogicalTime::from_millis(now_ms);
+    let as_starter = |principal: &RunStarter, call: &mut dyn FnMut() -> Result<(), Refusal>| {
+        let acting = acting_caller_for_wake(principal, table_version)?;
+        let _restore = Restore {
+            slot: caller,
+            previous: caller.replace(Some(acting), true),
+        };
+        Some(call())
+    };
+    let wake = questions.map(|runtime| norn_api::timers::StepWake {
+        as_starter: &as_starter,
+        disclosure: runtime,
+    });
+    norn_api::timers::run_due_with(host, now, wake)
+}
+
+/// Reconstruct a run's recorded starter as an acting [`Caller`] on a
+/// background alarm wake (no live HTTP request in [`CallerSlot`]). Only actor
+/// kinds and declared role tables this host issues are accepted; anything else
+/// fails closed (`None` -> `Denied`).
+fn acting_caller_for_wake(starter: &RunStarter, table_version: &'static str) -> Option<Caller> {
+    let actor_kind = match starter.actor_kind.as_str() {
+        "user" => "user",
+        "service" => "service",
+        _other => return None,
+    };
+    let role_table = if starter.role_table == norn_api::principal::STUDIO_ROLES.version {
+        norn_api::principal::STUDIO_ROLES.version
+    } else if starter.role_table == crate::principal::FIXTURE_ROLES {
+        crate::principal::FIXTURE_ROLES
+    } else if starter.role_table == table_version {
+        table_version
+    } else {
+        return None;
+    };
+    Some(Caller {
+        subject_id: starter.subject.clone(),
+        roles: starter.roles.clone(),
+        actor_kind,
+        role_table,
+        accountable_person: starter.accountable_person.clone(),
+    })
+}
+
 /// Puts the request's own verified caller back into the slot when dropped,
 /// on every path, including unwinding.
 struct Restore<'a> {
@@ -447,5 +541,45 @@ struct Restore<'a> {
 impl Drop for Restore<'_> {
     fn drop(&mut self) {
         self.slot.replace(self.previous.0.take(), self.previous.1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn starter(actor_kind: &str, role_table: &str) -> RunStarter {
+        RunStarter {
+            subject: "admin@demo".to_owned(),
+            roles: vec!["admin".to_owned()],
+            actor_kind: actor_kind.to_owned(),
+            role_table: role_table.to_owned(),
+            accountable_person: None,
+        }
+    }
+
+    #[test]
+    fn acting_caller_for_wake_accepts_known_tables_and_fails_closed_otherwise() {
+        let table = crate::policy::DEMO_GRANTS.version;
+        assert!(
+            acting_caller_for_wake(
+                &starter("user", norn_api::principal::STUDIO_ROLES.version),
+                table,
+            )
+            .is_some()
+        );
+        assert!(
+            acting_caller_for_wake(&starter("service", crate::principal::FIXTURE_ROLES), table)
+                .is_some()
+        );
+        assert!(acting_caller_for_wake(&starter("user", table), table).is_some());
+        assert!(
+            acting_caller_for_wake(&starter("user", "forged-table/99"), table).is_none(),
+            "unknown role table must fail closed"
+        );
+        assert!(
+            acting_caller_for_wake(&starter("agent", table), table).is_none(),
+            "unknown actor kind must fail closed"
+        );
     }
 }

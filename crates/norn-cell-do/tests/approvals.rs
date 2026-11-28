@@ -906,22 +906,20 @@ fn a_revision_racing_the_approved_dispatch_is_fenced() {
         )
     };
     let raced = std::cell::Cell::new(false);
-    let as_requester = |requester: &norn_cell::flow_run::RunStarter,
-                        dispatch: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| {
-        // The concurrent revision lands here: after the approval is
-        // recorded, before its call is dispatched.
-        revise_at(&cell, step_cell::action_cell::OMITS_LOSS, NOW * 1000 + 10);
-        raced.set(true);
-        cell.caller.record(Some(as_caller(
-            &requester.subject,
-            &requester.roles,
-            &requester.role_table,
-        )));
-        Some(dispatch())
-    };
+    let as_requester =
+        |requester: &norn_cell::flow_run::RunStarter,
+         dispatch: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| {
+            // The concurrent revision lands here: after the approval is
+            // recorded, before its call is dispatched.
+            revise_at(&cell, step_cell::action_cell::OMITS_LOSS, NOW * 1000 + 10);
+            raced.set(true);
+            cell.caller.record(Some(as_caller(
+                &requester.subject,
+                &requester.roles,
+                &requester.role_table,
+            )));
+            Some(dispatch())
+        };
     let decided = norn_api::decisions::decide(
         &cell.host,
         &norn_api::decisions::DecideCall {
@@ -997,24 +995,22 @@ fn a_refusal_racing_an_exact_commit_never_masks_it() {
         )
     };
     let raced = std::cell::Cell::new(None);
-    let as_requester = |requester: &norn_cell::flow_run::RunStarter,
-                        dispatch: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| {
-        // Between the dispatch's read and its own hold: the requester's
-        // retry commits the exact call, and a revision changes the action.
-        let (status, committed) = convert(&cell, OPERATOR, &body);
-        assert_eq!(status, 200, "{committed}");
-        revise_at(&cell, step_cell::action_cell::OMITS_LOSS, NOW * 1000 + 10);
-        raced.set(Some(cell.host.verified_head().unwrap().commits));
-        cell.caller.record(Some(as_caller(
-            &requester.subject,
-            &requester.roles,
-            &requester.role_table,
-        )));
-        Some(dispatch())
-    };
+    let as_requester =
+        |requester: &norn_cell::flow_run::RunStarter,
+         dispatch: &mut dyn FnMut() -> Result<(), norn_api::refusal::Refusal>| {
+            // Between the dispatch's read and its own hold: the requester's
+            // retry commits the exact call, and a revision changes the action.
+            let (status, committed) = convert(&cell, OPERATOR, &body);
+            assert_eq!(status, 200, "{committed}");
+            revise_at(&cell, step_cell::action_cell::OMITS_LOSS, NOW * 1000 + 10);
+            raced.set(Some(cell.host.verified_head().unwrap().commits));
+            cell.caller.record(Some(as_caller(
+                &requester.subject,
+                &requester.roles,
+                &requester.role_table,
+            )));
+            Some(dispatch())
+        };
     let decided = norn_api::decisions::decide(
         &cell.host,
         &norn_api::decisions::DecideCall {

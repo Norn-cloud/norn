@@ -136,7 +136,22 @@ pub fn parse_step(input: &RuntimeValue) -> Result<QuestionStep, StepRefusal> {
     }
     let params = match members.get("params") {
         None => None,
-        Some(RuntimeValue::Object(map)) => Some(map.clone()),
+        Some(RuntimeValue::Object(map)) => {
+            if !map.iter().all(|(key, val)| {
+                !key.trim().is_empty()
+                    && !key.chars().any(char::is_control)
+                    && matches!(
+                        val,
+                        RuntimeValue::String(_)
+                            | RuntimeValue::Number(_)
+                            | RuntimeValue::Bool(_)
+                            | RuntimeValue::Null
+                    )
+            }) {
+                return Err(StepRefusal::Shape);
+            }
+            Some(map.clone())
+        }
         Some(
             RuntimeValue::Null
             | RuntimeValue::Bool(_)
@@ -330,6 +345,9 @@ mod tests {
             r#"{"question":"   "}"#,
             r#"{"question":"q","extra":1}"#,
             r#"{"question":"q","params":[]}"#,
+            r#"{"question":"q","params":{"nested":{"a":1}}}"#,
+            r#"{"question":"q","params":{"list":[1,2]}}"#,
+            r#"{"question":"q","params":{"":"bad"}}"#,
             r#"{"question":"q","asOf":""}"#,
             r#"{"question":"q","asOf":123}"#,
             r#"{"question":"q","freshness":null}"#,

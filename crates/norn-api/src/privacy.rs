@@ -22,7 +22,7 @@
 //! ledger receipt ([`reveal`](crate::privacy::reveal)). Nothing here trusts the client.
 
 pub mod disclosure;
-mod source_grants;
+pub(crate) mod source_grants;
 
 pub use disclosure::{
     DisclosedAnswer, DisclosedDocument, DisclosedForkAnswer, DisclosedObject,
