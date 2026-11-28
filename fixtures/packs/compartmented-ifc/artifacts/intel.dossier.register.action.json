@@ -1,0 +1,96 @@
+{
+  "artifactId": "intel.dossier.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register compartmented dossier",
+  "namespace": "intel",
+  "payload": {
+    "access": {
+      "artifactId": "intel.compartment.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "intel.dossier.register",
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "created_by",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "intel.Dossier.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "intel.Dossier",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha_brief": {
+          "type": "string"
+        },
+        "beta_brief": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "joint_brief": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "created_by",
+        "alpha_brief",
+        "beta_brief",
+        "joint_brief"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Register compartmented dossier",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "intel.Dossier"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/compartmented-ifc/artifacts/intel.dossier.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

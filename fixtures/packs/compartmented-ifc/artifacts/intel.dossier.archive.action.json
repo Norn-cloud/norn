@@ -1,0 +1,71 @@
+{
+  "artifactId": "intel.dossier.archive.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Archive dossier",
+  "namespace": "intel",
+  "payload": {
+    "access": {
+      "artifactId": "intel.compartment.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "intel.dossier.archive",
+    "effectProgram": {
+      "entityArtifactId": "intel.Dossier.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "intel.Dossier",
+      "transition": "archive"
+    },
+    "idempotent": true,
+    "independentOf": [
+      "created_by"
+    ],
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Archive dossier",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "intel.Dossier"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/compartmented-ifc/artifacts/intel.dossier.archive.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

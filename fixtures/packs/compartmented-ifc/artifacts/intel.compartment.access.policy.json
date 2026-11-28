@@ -1,0 +1,259 @@
+{
+  "artifactId": "intel.compartment.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Compartmented disclosure access policy",
+  "namespace": "intel",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "intel.compartment.access",
+    "rules": [
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "viewer",
+                "clear_alpha",
+                "clear_beta",
+                "clear_ab"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "code",
+              "op": "ne",
+              "value": "RESTRICTED"
+            }
+          }
+        ],
+        "resourceType": "intel.Dossier",
+        "ruleId": "dossier_readers_public",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "clear_alpha",
+                "clear_beta",
+                "clear_ab"
+              ]
+            }
+          }
+        ],
+        "resourceType": "intel.Dossier",
+        "ruleId": "dossier_readers_cleared",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "viewer",
+                "clear_alpha",
+                "clear_beta",
+                "clear_ab"
+              ]
+            }
+          }
+        ],
+        "resourceType": "intel.Dispatch",
+        "ruleId": "dispatch_readers",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.reveal"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "clear_alpha",
+                "clear_ab"
+              ]
+            }
+          },
+          {
+            "marking": {
+              "anyOf": [
+                "compartment.alpha"
+              ]
+            }
+          }
+        ],
+        "resourceType": "norn.Marking",
+        "ruleId": "reveal_alpha",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.reveal"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "clear_beta",
+                "clear_ab"
+              ]
+            }
+          },
+          {
+            "marking": {
+              "anyOf": [
+                "compartment.beta"
+              ]
+            }
+          }
+        ],
+        "resourceType": "norn.Marking",
+        "ruleId": "reveal_beta",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "intel.dossier.register",
+          "intel.dossier.activate",
+          "intel.dossier.archive"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "operator",
+                "clear_ab"
+              ]
+            }
+          }
+        ],
+        "resourceType": "intel.Dossier",
+        "ruleId": "dossier_operators",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "intel.dispatch.create_unmarked",
+          "intel.dispatch.close"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "viewer",
+                "operator",
+                "clear_alpha",
+                "clear_beta",
+                "clear_ab"
+              ]
+            }
+          }
+        ],
+        "resourceType": "intel.Dispatch",
+        "ruleId": "dispatch_unmarked_writers",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "intel.dispatch.create_alpha_influenced"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "clear_alpha",
+                "clear_ab"
+              ]
+            }
+          }
+        ],
+        "resourceType": "intel.Dispatch",
+        "ruleId": "dispatch_alpha_writers",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "intel.dispatch.create_joint_influenced"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "clear_ab"
+              ]
+            }
+          }
+        ],
+        "resourceType": "intel.Dispatch",
+        "ruleId": "dispatch_joint_writers",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/compartmented-ifc/artifacts/intel.compartment.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,142 @@
+{
+  "artifactId": "intel.Dossier.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Compartmented Dossier",
+  "namespace": "intel",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "resting",
+              "state": "active"
+            },
+            {
+              "outcome": "completed",
+              "state": "archived"
+            }
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "archived"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "activate",
+              "to": "active"
+            },
+            {
+              "from": [
+                "draft",
+                "active"
+              ],
+              "id": "archive",
+              "to": "archived"
+            }
+          ]
+        }
+      ],
+      "name": "intel.Dossier",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "code",
+          "immutableAfterCreate": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "active"
+              },
+              {
+                "value": "archived"
+              }
+            ]
+          }
+        },
+        {
+          "id": "created_by",
+          "origin": "actor",
+          "protected": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "alpha_brief",
+          "immutableAfterCreate": true,
+          "markings": [
+            "compartment.alpha"
+          ],
+          "origin": "caller",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "beta_brief",
+          "immutableAfterCreate": true,
+          "markings": [
+            "compartment.beta"
+          ],
+          "origin": "caller",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "joint_brief",
+          "immutableAfterCreate": true,
+          "markings": [
+            "compartment.alpha",
+            "compartment.beta"
+          ],
+          "origin": "caller",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/compartmented-ifc/artifacts/intel.Dossier.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

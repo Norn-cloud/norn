@@ -1,0 +1,19 @@
+{
+  "analyzed_sources": [],
+  "category": "generated",
+  "connector": null,
+  "license": "Apache-2.0",
+  "notices": [],
+  "origin": "derived",
+  "parents": [
+    "fixtures/packs/compartmented-ifc/compartmented.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "sha256": "4e8b42e1329ce12e478bf6aa4700a74c259747bb6268dabadd2cb85b983f73e3",
+  "sources": []
+}

@@ -1,0 +1,68 @@
+{
+  "artifactId": "intel.dispatch.close.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Close dispatch",
+  "namespace": "intel",
+  "payload": {
+    "access": {
+      "artifactId": "intel.compartment.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "intel.dispatch.close",
+    "effectProgram": {
+      "entityArtifactId": "intel.Dispatch.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "intel.Dispatch",
+      "transition": "close"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Close dispatch",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "intel.Dispatch"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/compartmented-ifc/artifacts/intel.dispatch.close.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

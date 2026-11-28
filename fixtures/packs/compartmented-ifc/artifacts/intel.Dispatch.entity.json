@@ -1,0 +1,140 @@
+{
+  "artifactId": "intel.Dispatch.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Operational Dispatch",
+  "namespace": "intel",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "closed"
+            }
+          ],
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "closed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "guards": [
+                "self.summary != ''"
+              ],
+              "id": "close",
+              "to": "closed"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "dossier",
+          "target": "intel.Dossier"
+        }
+      ],
+      "name": "intel.Dispatch",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "dossier_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "summary",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "closed"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "alpha_note",
+          "markings": [
+            "compartment.alpha"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "beta_note",
+          "markings": [
+            "compartment.beta"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "joint_note",
+          "markings": [
+            "compartment.alpha",
+            "compartment.beta"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/compartmented-ifc/artifacts/intel.Dispatch.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -20,6 +20,8 @@ mod answer_contract;
 mod catalog_counts;
 #[path = "clock.rs"]
 mod clock;
+#[path = "compartmented_disclosure.rs"]
+mod compartmented_disclosure;
 #[path = "disclosure_noninterference.rs"]
 mod disclosure_noninterference;
 #[path = "explorer_objects.rs"]
