@@ -535,8 +535,13 @@ fn policy_fixture() -> Fixture {
     );
     fixture.add("crates/norn-skeleton-guard/baseline.json", b"{}", "code");
     fixture.add(
+        "crates/norn-ir/src/lib.rs",
+        b"mod artifact_governance;\n",
+        "code",
+    );
+    fixture.add(
         "crates/norn-ir/src/artifact_governance.rs",
-        b"pub enum ArtifactKind { Entity, Law }\nverus! {\n    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool {\n        match kind {\n            ArtifactKind::Entity | ArtifactKind::Law => true,\n        }\n    }\n}\n",
+        b"pub enum ArtifactKind { Entity, Law }\n#[cfg(verus_keep_ghost)]\nverus! {\n    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool {\n        match kind {\n            ArtifactKind::Entity | ArtifactKind::Law => true,\n        }\n    }\n}\n",
         "code",
     );
     fixture.add(
@@ -1127,7 +1132,7 @@ fn trusted_policy_rejects_artifact_promotion_drift() {
         .expect("proof record");
     fixture.write(
         path,
-        b"pub enum ArtifactKind { Entity, Law }\nverus! {\n    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool {\n        match kind {\n            ArtifactKind::Entity => true,\n        }\n    }\n}\n",
+        b"pub enum ArtifactKind { Entity, Law }\n#[cfg(verus_keep_ghost)]\nverus! {\n    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool {\n        match kind {\n            ArtifactKind::Entity => true,\n        }\n    }\n}\n",
     );
     fixture.records[record]["sha256"] = fixture.reference(path)["sha256"].clone();
     fixture.save();
