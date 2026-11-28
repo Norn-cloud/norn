@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "stopGap": {
+    "status": "stop-gap",
+    "retirementTrigger": "Retire once TARGET Norn authoring (concept({ ... }), pinned packs) hosts the feature ontology natively in a Norn cell (#2005)."
+  },
+  "domain": "verification",
+  "title": "Verification Integrity & Formal Assurance",
+  "summary": "Promoted formal assurance certificate proofs (Lean, Kani, correspondence harnesses) and verification-integrity enforcement (exact source enrollment, coverage manifest, negative canaries, proof-hole audits, and executed test selectors).",
+  "features": [
+    {
+      "id": "verification-assurance-certificates",
+      "title": "Formal assurance certificates, OWL-Time Allen algebra, bi-additivity, and semantics proofs",
+      "domain": "verification",
+      "specContracts": [
+        "docs/spec/core/README.md",
+        "docs/spec/core/03-query-compute.md",
+        "docs/spec/core/05-laws-authority.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "checked-proof",
+      "surfaces": [
+        "gate:assurance-ivm-composition-lean",
+        "gate:assurance-linear-conservation-lean",
+        "gate:assurance-specialisation-lean",
+        "gate:bi-additivity-lean",
+        "gate:checker-certificates-correspondence",
+        "gate:data-lineage-lean",
+        "gate:owl-time-allen-kani",
+        "gate:owl-time-allen-lean",
+        "gate:semantics-v1-lean"
+      ],
+      "sourcePaths": [
+        "verification/coverage-v1/assurance-certificate-obligations.json",
+        "verification/coverage-v1/promoted-gates.json",
+        "verification/coverage-v1/trusted-assumptions.json"
+      ],
+      "invariants": [
+        "assurance-ivm-composition-lean",
+        "assurance-linear-conservation-lean",
+        "assurance-specialisation-lean",
+        "bi-additivity-lean",
+        "checker-certificates-correspondence",
+        "data-lineage-lean",
+        "owl-time-allen-kani",
+        "owl-time-allen-lean",
+        "semantics-v1-lean"
+      ],
+      "probe": {
+        "drive": "Inspect `verification/coverage-v1/assurance-certificate-obligations.json` and `verification/coverage-v1/promoted-gates.json` locally; execute the Lean/Kani formal gates in CI or a disposable Boat sandbox (`bash scripts/verify-promoted-subsystems.sh`), never via local `cargo`/`rustc` on shared hosts.",
+        "observableEndState": "Every assurance-certificates gate records zero proof holes (`sorry`/`axiom` outside `trusted-assumptions.json`) and passes its correspondence harness on exact HEAD.",
+        "gotchas": [
+          "Reference proofs over a model do not constitute an implementation proof without the corresponding translation/evaluator correspondence gate."
+        ]
+      }
+    },
+    {
+      "id": "verification-integrity-and-enrollment",
+      "title": "Exact executable source enrollment, proof-hole audits, and negative canaries",
+      "domain": "verification",
+      "specContracts": [
+        "docs/spec/core/README.md",
+        "AGENTS.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "gate:coverage-manifest",
+        "gate:extraction-tool-versions",
+        "gate:source-enrollment-regressions",
+        "gate:tool-versions",
+        "gate:verification-attestation-negative-canaries",
+        "gate:verification-executed-test-selectors",
+        "gate:verification-executed-test-selectors-fast",
+        "gate:verification-proof-hole-audit-fast"
+      ],
+      "sourcePaths": [
+        "scripts/proof_enrollment.py",
+        "scripts/coverage_manifest.py",
+        "scripts/record_new_files.py",
+        "scripts/feature_map.py",
+        "verification/coverage-v1/validate.py",
+        "verification/coverage-v1/negative_canaries.py",
+        "scripts/ci/check_test_wiring.py"
+      ],
+      "invariants": [
+        "coverage-manifest",
+        "extraction-tool-versions",
+        "source-enrollment-regressions",
+        "tool-versions",
+        "verification-attestation-negative-canaries",
+        "verification-executed-test-selectors",
+        "verification-executed-test-selectors-fast",
+        "verification-proof-hole-audit-fast"
+      ],
+      "probe": {
+        "drive": "Run `python3 scripts/proof_enrollment.py`, `python3 scripts/test_proof_enrollment.py`, `python3 scripts/feature_map.py check`, `python3 scripts/ci/check_test_wiring.py`, `python3 verification/coverage-v1/negative_canaries.py --workflow-contract`, and `python3 scripts/record_new_files.py --check`.",
+        "observableEndState": "All checks exit 0: every executable source has exactly one coverage owner, every tracked test is wired in CI, every provenance SHA-256 matches disk, and all 3 feature-map laws hold.",
+        "gotchas": [
+          "Never bypass or weaken a gate or grow an allowlist to get green; enroll new sources via `python3 scripts/record_new_files.py`."
+        ]
+      }
+    }
+  ]
+}

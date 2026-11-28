@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "stopGap": {
+    "status": "stop-gap",
+    "retirementTrigger": "Retire once TARGET Norn authoring (concept({ ... }), pinned packs) hosts the feature ontology natively in a Norn cell (#2005)."
+  },
+  "domain": "authoring-and-cli",
+  "title": "Native Authoring & CLI Surface",
+  "summary": "All native Rust `norn` CLI subcommands (`crates/norn-cli/src/`) and TypeScript authoring CLI subcommands (`tools/norn-ts/src/cli.ts`): in-process TypeScript/Python authoring compilation, formatting, profiling, checker admission, explain, dev/init/seed/setup/codegen, offline eval, OpenAPI/source-digest contracts, hosted cell plan/apply, source pull, and MCP.",
+  "features": [
+    {
+      "id": "cli-authoring-compile-and-format",
+      "title": "Native TypeScript/Python authoring compile, format, profile, question, and dashboard CLI",
+      "domain": "authoring-and-cli",
+      "specContracts": [
+        "docs/authoring/README.md",
+        "docs/spec/core/06-composition-config.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "cli:norn compile",
+        "cli:norn dashboard",
+        "cli:norn fmt",
+        "cli:norn profile",
+        "cli:norn question",
+        "cli:norn-ts compile",
+        "cli:norn-ts dashboard",
+        "cli:norn-ts fmt",
+        "cli:norn-ts profile",
+        "cli:norn-ts question"
+      ],
+      "sourcePaths": [
+        "crates/norn-cli/src/main.rs",
+        "crates/norn-cli/src/authoring/mod.rs",
+        "crates/norn-cli/src/authoring/ts.rs",
+        "crates/norn-cli/src/authoring/py.rs",
+        "crates/norn-cli/src/authoring/fmt.rs",
+        "crates/norn-authoring/src/lib.rs",
+        "crates/norn-authoring-py/src/lib.rs",
+        "tools/norn-ts/src"
+      ],
+      "invariants": [
+        "checker:crates/norn-authoring/src/profile.rs"
+      ],
+      "probe": {
+        "drive": "Exercise both CLIs explicitly against the same fixtures: (1) Rust `norn`: run `norn compile tools/norn-ts/fixtures/quickstart --org example --env local --out <tmp>/rust-task.json`, `norn fmt --check <file>`, `norn profile <file>`, and `norn question <file>` / `norn dashboard <file>`; (2) TypeScript `norn-ts`: run `bun run tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out <tmp>/ts-task.json`, `bun run tools/norn-ts/src/cli.ts fmt --check <file>`, `bun run tools/norn-ts/src/cli.ts profile <file>`, and `bun run tools/norn-ts/src/cli.ts question <file>` / `bun run tools/norn-ts/src/cli.ts dashboard <file>`.",
+        "observableEndState": "Both native Rust `norn` and TypeScript `norn-ts` (`tools/norn-ts/src/cli.ts`) emit identical canonical JSON IR deterministically; both `fmt --check` and `profile` exit 0 on conformant files and refuse non-serializable callbacks or restricted imports.",
+        "gotchas": [
+          "Downstream Norn apps run with zero CI: `norn check --source` refuses `.github/workflows/` inside `norn.json` app directories."
+        ]
+      }
+    },
+    {
+      "id": "cli-cell-and-source-ops",
+      "title": "Governed hosted cell plan/apply and sealed source pull CLI",
+      "domain": "authoring-and-cli",
+      "specContracts": [
+        "docs/spec/core/06-composition-config.md",
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "cli:norn cell apply",
+        "cli:norn cell plan",
+        "cli:norn source pull",
+        "cli:norn-ts apply",
+        "cli:norn-ts plan"
+      ],
+      "sourcePaths": [
+        "crates/norn-cli/src/cell.rs",
+        "crates/norn-cli/src/source.rs",
+        "crates/norn-cell-do/src/dev/http.rs",
+        "crates/norn-cell-do/tests/hosted_install.rs",
+        "tools/norn-ts/src"
+      ],
+      "invariants": [
+        "artifact-governance-lean",
+        "ontology-mapping-provenance-lean"
+      ],
+      "probe": {
+        "drive": "Target a provisioned hosted cell / Rivet endpoint with two fresh cell baselines and a scope-matched bearer token per org/env so neither CLI replays an already-installed pack: (1) Rust `norn` (each input file is one artifact envelope): run `norn compile tools/norn-ts/fixtures/quickstart --org <org-rust> --env <env-rust> --out <tmp>/artifacts.json`, split that JSON array into one artifact-envelope JSON file per element under `<tmp>/rust-pack/`, then run `norn cell plan --url <hosted-url> --org <org-rust> --env <env-rust> --token-env NORN_HOST_TOKEN_RUST <tmp>/rust-pack` followed by `norn cell apply --url <hosted-url> --org <org-rust> --env <env-rust> --token-env NORN_HOST_TOKEN_RUST <tmp>/rust-pack`; (2) TypeScript `norn-ts` (compiles typed sources directly via `worker.ts`): run `bun run tools/norn-ts/src/cli.ts plan tools/norn-ts/fixtures/quickstart --url <hosted-url> --org <org-ts> --env <env-ts> --token-env NORN_HOST_TOKEN_TS` followed by `bun run tools/norn-ts/src/cli.ts apply tools/norn-ts/fixtures/quickstart --url <hosted-url> --org <org-ts> --env <env-ts> --token-env NORN_HOST_TOKEN_TS`; (3) test `norn source pull --crosswalk-env <VAR> --connector <connector.json> --extracted-at-ms <ms>` against a loopback mock/ERPNext endpoint.",
+        "observableEndState": "Against each fresh hosted cell baseline, both Rust `norn cell plan` and TS `norn-ts plan` print a non-empty diff proposing `plan.nextVersion` over the observed provisioned baseline without mutating cell state, and `norn cell apply` / `norn-ts apply` atomically install `plan.nextVersion` (replaying the same pack reports `unchanged`); against `norn dev`, both fail closed with `409 defs.dev_sources_only`; `norn source pull` issues GET-only reads (`SRC-READ-1`), binds identity solely via the reviewed crosswalk (`SRC-IDENT-1`), and fails closed on read errors (`SRC-LIVE-1`).",
+        "gotchas": [
+          "`norn compile` emits a JSON array, whereas `norn cell plan|apply` wraps each input `.json` file as one element of the request `artifacts` array — split compiled output into one artifact-envelope file per element before passing the directory to `norn cell`; `norn-ts plan|apply` compiles typed `.ts` pack/project sources directly.",
+          "Provisioning already installs baseline revision 1, so assert `plan.nextVersion` over the observed baseline; use a distinct org/env baseline and scope-matched bearer token (`NORN_HOST_TOKEN_RUST` vs `NORN_HOST_TOKEN_TS`) per CLI so the second run does not return `unchanged` or fail org-scope auth.",
+          "`norn dev` explicitly rejects `/v1/cell/definitions:plan` and `/v1/cell/definitions:apply` with `409 defs.dev_sources_only` (`DEV-ONE-AUTHORITY-1`, `crates/norn-cell-do/src/dev/http.rs`); never target `norn dev` to prove hosted plan/apply.",
+          "Never pass bearer tokens or passwords directly as CLI arguments; `cell` and `source` intentionally accept `--token-env` / `--crosswalk-env` only."
+        ]
+      }
+    },
+    {
+      "id": "cli-check-and-explain",
+      "title": "Shared checker admission (`norn check`) and explanation (`norn explain`) CLI",
+      "domain": "authoring-and-cli",
+      "specContracts": [
+        "docs/spec/core/05-laws-authority.md",
+        "docs/spec/core/06-composition-config.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "cli:norn check",
+        "cli:norn explain",
+        "cli:norn-ts check",
+        "cli:norn-ts explain"
+      ],
+      "sourcePaths": [
+        "crates/norn-cli/src/main.rs",
+        "crates/norn-cli/src/explain.rs",
+        "crates/norn-checker/src/artifact_set.rs",
+        "crates/norn-checker/src/explain.rs",
+        "tools/norn-ts/src"
+      ],
+      "invariants": [
+        "checker-certificates-correspondence",
+        "artifact-governance-checker-receipt-lean"
+      ],
+      "probe": {
+        "drive": "Exercise both CLIs explicitly: (1) Rust `norn`: run `norn check --source tools/norn-ts/fixtures/quickstart --org example --env local` (and `--artifacts <json> --context <ctx>`), then `norn explain concept <id> --defs <json> --format json`; (2) TypeScript `norn-ts`: with `NORN_CHECKER_WASM_PKG` set, run `bun run tools/norn-ts/src/cli.ts check tools/norn-ts/fixtures/quickstart --org example --env local`, and inside a `norn.json` project run `bun run tools/norn-ts/src/cli.ts explain concept <id> --json`.",
+        "observableEndState": "Both Rust `norn check` and TS `norn-ts check` print a canonical report with `admitted`, diagnostics, and `receiptSha256` without installing definitions; both Rust `norn explain` and TS `norn-ts explain` render the shared `norn/explain@2` JSON/text explanation with honest proof status.",
+        "gotchas": [
+          "`--artifacts` and `--source` are mutually exclusive in Rust `norn check`; `--org` and `--env` must be passed together or both omitted for `norn.json` projects; TS `norn-ts check` and `norn-ts explain` load the checker ABI via `NORN_CHECKER_WASM_PKG`."
+        ]
+      }
+    },
+    {
+      "id": "cli-dev-and-project-lifecycle",
+      "title": "Authoring CLI project init, local dev host, seed, setup, and TypeScript codegen",
+      "domain": "authoring-and-cli",
+      "specContracts": [
+        "docs/authoring/README.md",
+        "docs/spec/core/06-composition-config.md",
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "cli:norn-ts codegen",
+        "cli:norn-ts dev",
+        "cli:norn-ts init",
+        "cli:norn-ts seed",
+        "cli:norn-ts setup"
+      ],
+      "sourcePaths": [
+        "tools/norn-ts/src",
+        "crates/norn-cell-do/src/dev/http.rs"
+      ],
+      "invariants": [
+        "authorization-scope-exactness-lean"
+      ],
+      "probe": {
+        "drive": "In a disposable temp directory, run `bun run tools/norn-ts/src/cli.ts init <tmp-dir>`, start `norn dev --port <free-port>` (verifying `.norn/dev.json` with `format: \"norn-dev/1\"` and `GET /v1/definitions?orgId=<orgId>&environmentId=<environmentId>`), run `norn seed --json`, run `norn codegen --ts <pack-dir> --check`, and verify `norn setup` against a local/cached runtime release.",
+        "observableEndState": "`init` scaffolds a zero-CI `norn.json` project (no `.github/workflows/`); `dev` serves admitted project sources on loopback with scoped bearer tokens and refuses `/v1/cell/definitions:plan|apply` with `409 defs.dev_sources_only`; `seed` commits fixture data idempotently; `codegen` emits deterministic `.d.ts` bindings.",
+        "gotchas": [
+          "`norn dev` installs definitions exclusively from project sources (`DEV-ONE-AUTHORITY-1`); never share a running user dev cell during verification."
+        ]
+      }
+    },
+    {
+      "id": "cli-mcp-and-remote",
+      "title": "Local stdio MCP server, capabilities paging, and remote MCP client CLI",
+      "domain": "authoring-and-cli",
+      "specContracts": [
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "cli:norn capabilities",
+        "cli:norn mcp",
+        "cli:norn remote call",
+        "cli:norn remote list"
+      ],
+      "sourcePaths": [
+        "crates/norn-cli/src/mcp.rs",
+        "crates/norn-cli/src/remote.rs"
+      ],
+      "invariants": [
+        "authorization-scope-exactness-lean"
+      ],
+      "probe": {
+        "drive": "Run `norn capabilities`, send a bounded JSON-RPC `tools/list` line over stdio to `norn mcp`, and drive `norn remote list --url <mcp-url> --org <org> --env <env> --token-env <VAR>` plus `norn remote call <tool> --idempotency-key <key>`.",
+        "observableEndState": "`capabilities` returns paginated tool definitions (`<= 32` per page) and `catalogDigest`; `mcp` serves bounded stdio JSON-RPC; `remote list/call` mirrors the live server catalog and forwards trace/idempotency metadata.",
+        "gotchas": [
+          "A `capabilities` cursor is bound to the working directory and catalog digest; restart pagination without `--cursor` after revisions."
+        ]
+      }
+    },
+    {
+      "id": "cli-offline-eval-and-contracts",
+      "title": "Offline decision evaluation, OpenAPI contract emission, and HOST-TREE-1 source digest CLI",
+      "domain": "authoring-and-cli",
+      "specContracts": [
+        "docs/spec/core/03-query-compute.md",
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "cli:norn eval",
+        "cli:norn openapi",
+        "cli:norn source-digest"
+      ],
+      "sourcePaths": [
+        "crates/norn-cli/src/main.rs",
+        "crates/norn-cli/src/eval.rs",
+        "crates/norn-api/src/openapi.rs",
+        "crates/norn-ir/src/source_tree.rs"
+      ],
+      "invariants": [
+        "kernel-decider-correspondence"
+      ],
+      "probe": {
+        "drive": "Run `norn openapi` and diff against `sdks/openapi/norn-api.openapi.json`, run `norn source-digest crates/norn-ir`, and run `norn eval --defs <dir> --org <org> --env <env> --rule <id>` over sample JSON-lines stdin.",
+        "observableEndState": "`norn openapi` matches the checked-in OpenAPI document byte-for-byte; `norn source-digest` returns deterministic `{digest, files}` skipping hidden entries and `target/` while refusing symlinks; `norn eval` evaluates admitted closures within `--units` budget.",
+        "gotchas": [
+          "`norn source-digest` refuses visible symlinks, sockets/FIFOs, and non-UTF-8 filenames by contract (`HOST-TREE-1`)."
+        ]
+      }
+    }
+  ]
+}

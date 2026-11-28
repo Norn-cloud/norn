@@ -1,0 +1,315 @@
+{
+  "schemaVersion": 1,
+  "stopGap": {
+    "status": "stop-gap",
+    "retirementTrigger": "Retire once TARGET Norn authoring (concept({ ... }), pinned packs) hosts the feature ontology natively in a Norn cell (#2005)."
+  },
+  "domain": "api-and-hosts",
+  "title": "HTTP API & Cell Host Surface",
+  "summary": "All OpenAPI v1 HTTP routes served by norn-api / norn-cell hosts: provisioning, governed definitions, objects, actions, runs, decisions, inbox, questions, transforms, datasets, privacy guard, and MCP.",
+  "features": [
+    {
+      "id": "api-actions-and-runs",
+      "title": "Action invocation and multi-step flow runs API",
+      "domain": "api-and-hosts",
+      "specContracts": [
+        "docs/spec/core/04-transactions-effects.md",
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "http:GET /v1/actions",
+        "http:GET /v1/runs/{id}",
+        "http:POST /v1/actions/{actionId}",
+        "http:POST /v1/runs"
+      ],
+      "sourcePaths": [
+        "crates/norn-api/src/actions.rs",
+        "crates/norn-api/src/action_catalog.rs",
+        "crates/norn-api/src/action_admission.rs",
+        "crates/norn-api/src/run_routes.rs",
+        "crates/norn-api/src/flow_driver.rs",
+        "sdks/openapi/norn-api.openapi.json"
+      ],
+      "invariants": [
+        "kernel-commit-order-correspondence",
+        "kernel-binding-correspondence"
+      ],
+      "probe": {
+        "drive": "Against a running `norn dev` cell (bearer token from `.norn/dev.json`), call `GET /v1/actions?orgId=<orgId>&environmentId=<environmentId>`, invoke an admitted action via `POST /v1/actions/{actionId}?orgId=<orgId>&environmentId=<environmentId>` with `{\"input\": {...}, \"idempotencyKey\": \"...\"}` in the JSON request body, and start/inspect a flow via `POST /v1/runs?orgId=<orgId>&environmentId=<environmentId>` + `GET /v1/runs/{id}?orgId=<orgId>&environmentId=<environmentId>`.",
+        "observableEndState": "`GET /v1/actions` lists admitted actions with schemas; `POST /v1/actions/{actionId}` returns receipt/pending/refused envelope; `GET /v1/runs/{id}` reflects durable run state.",
+        "gotchas": [
+          "Explicit scope travels in the query string (`?orgId=<orgId>&environmentId=<environmentId>`), and mutating action calls require a non-blank `idempotencyKey` field in the JSON request body (never custom scope or `Idempotency-Key` headers)."
+        ]
+      }
+    },
+    {
+      "id": "api-cell-definitions-and-provision",
+      "title": "Cell provisioning and governed definition plan/apply/install API",
+      "domain": "api-and-hosts",
+      "specContracts": [
+        "docs/spec/core/06-composition-config.md",
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "http:GET /v1/definitions",
+        "http:GET /v1/definitions/{id}",
+        "http:GET /v1/definitions:list",
+        "http:POST /v1/cell/definitions:apply",
+        "http:POST /v1/cell/definitions:plan",
+        "http:POST /v1/cell:provision",
+        "http:POST /v1/definitions/{id}:retire",
+        "http:POST /v1/definitions:admit",
+        "http:POST /v1/definitions:install"
+      ],
+      "sourcePaths": [
+        "crates/norn-api/src/provision.rs",
+        "crates/norn-api/src/cell_definitions.rs",
+        "crates/norn-api/src/definition_routes.rs",
+        "crates/norn-api/src/routes.rs",
+        "crates/norn-cell/src/provision.rs",
+        "crates/norn-cell-do/src/dev/http.rs",
+        "crates/norn-cell-do/tests/hosted_install.rs",
+        "sdks/openapi/norn-api.openapi.json"
+      ],
+      "invariants": [
+        "artifact-governance-lean",
+        "artifact-governance-active-pointer-lean",
+        "artifact-governance-checker-receipt-lean"
+      ],
+      "probe": {
+        "drive": "Target a provisioned hosted cell / Rivet instance (or run the hosted tenant integration suite `crates/norn-cell-do/tests/hosted_install.rs` in CI or a Boat sandbox) for `POST /v1/cell:provision`, `POST /v1/cell/definitions:plan`, `POST /v1/cell/definitions:apply` (with `expectedVersion`), `POST /v1/definitions:install`, and `POST /v1/definitions/{id}:retire`; read back via `GET /v1/definitions?orgId=<orgId>&environmentId=<environmentId>`, `GET /v1/definitions:list`, and `GET /v1/definitions/{id}` (read and `:admit` routes are also served on `norn dev`).",
+        "observableEndState": "On a hosted cell, plan reports exact diff without mutating cell state, apply advances definition revision atomically via CAS on `expectedVersion`, and catalog endpoints return the newly active definitions with matching digest; on `norn dev`, definition-mutating routes fail closed with `409 defs.dev_sources_only`.",
+        "gotchas": [
+          "`norn dev` intentionally rejects `POST /v1/cell/definitions:plan`, `POST /v1/cell/definitions:apply`, `POST /v1/definitions:install`, and `POST /v1/definitions/{id}:retire` with `409 defs.dev_sources_only` (`DEV-ONE-AUTHORITY-1` in `crates/norn-cell-do/src/dev/http.rs`); never target `norn dev` to prove hosted plan/apply.",
+          "Applying against a stale `expectedVersion` or as a non-admin/non-owner principal must fail closed."
+        ]
+      }
+    },
+    {
+      "id": "api-decisions-and-inbox",
+      "title": "Human approvals, decision queue, and inbox API",
+      "domain": "api-and-hosts",
+      "specContracts": [
+        "docs/spec/core/04-transactions-effects.md",
+        "docs/spec/core/05-laws-authority.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "http:GET /v1/decisions",
+        "http:GET /v1/decisions:requested",
+        "http:GET /v1/inbox",
+        "http:POST /v1/decisions/{id}:decide"
+      ],
+      "sourcePaths": [
+        "crates/norn-api/src/decisions.rs",
+        "crates/norn-api/src/approvals.rs",
+        "crates/norn-api/src/approval_identity.rs",
+        "crates/norn-api/src/inbox.rs",
+        "crates/norn-cell/src/decision_ledger.rs",
+        "sdks/openapi/norn-api.openapi.json"
+      ],
+      "invariants": [
+        "approval-fencing-quint",
+        "approval-fencing-quint-typecheck"
+      ],
+      "probe": {
+        "drive": "Trigger an approval-gated action as developer (`POST /v1/actions/{actionId}?orgId=<orgId>&environmentId=<environmentId>` with `{\"input\": {...}, \"idempotencyKey\": \"...\"}` returning `202` pending), inspect `GET /v1/decisions:requested` and `GET /v1/inbox`, attempt self-approval (must refuse `404`), approve via `POST /v1/decisions/{id}:decide?orgId=<orgId>&environmentId=<environmentId>` using the reviewer token from `.norn/dev.json` (`{\"choice\":\"approve\",\"idempotencyKey\":\"...\"}`), verify the action has not executed yet (`call: {committed: false, state: \"not_executed\"}`), and then retry the exact original `POST /v1/actions/{actionId}` call as developer to execute it; test flow-step `norn.decision@1` decisions separately.",
+        "observableEndState": "Self-approval fails closed; for a parked action, reviewer approval records the decision in `DECISION-LEDGER-1` and returns `call: {committed: false, state: \"not_executed\"}` without mutating target state, and only the requester's retry of the exact call commits the approved action under the requester's own authority (`APPROVAL-RECOVERY-1`). (Separately, deciding a flow-step decision records the resolution and commits the flow run's result turn.)",
+        "gotchas": [
+          "The requester principal can never decide their own pending approval; always read `reviewer.tokenFile` from `.norn/dev.json`.",
+          "Keep parked-action approvals distinct from flow decisions: reviewer approval of a parked action runs nothing (`not_executed`) and waits for the requester to retry the exact call."
+        ]
+      }
+    },
+    {
+      "id": "api-mcp-endpoint",
+      "title": "Hosted HTTP MCP JSON-RPC endpoint",
+      "domain": "api-and-hosts",
+      "specContracts": [
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "http:POST /v1/mcp"
+      ],
+      "sourcePaths": [
+        "crates/norn-api/src/mcp.rs",
+        "crates/norn-api/src/tool_catalog.rs",
+        "crates/norn-projections/src/mcp.rs",
+        "sdks/openapi/norn-api.openapi.json"
+      ],
+      "invariants": [
+        "authorization-scope-exactness-lean"
+      ],
+      "probe": {
+        "drive": "Send a JSON-RPC 2.0 `tools/list` request to `POST /v1/mcp?orgId=<orgId>&environmentId=<environmentId>` on a running `norn dev` cell with bearer auth, then invoke a returned tool via `tools/call`.",
+        "observableEndState": "`tools/list` returns the cell's live admitted tools with JSON Schemas and catalog digest; `tools/call` routes through the same cell authority and returns a receipt or typed refusal.",
+        "gotchas": [
+          "Discovery never installs definitions; unauthenticated or out-of-scope MCP calls refuse closed."
+        ]
+      }
+    },
+    {
+      "id": "api-objects-and-review",
+      "title": "Object query, detail, facets, profile, links, lineage, history, quarantine, and export API",
+      "domain": "api-and-hosts",
+      "specContracts": [
+        "docs/spec/core/02-concept-graph.md",
+        "docs/spec/core/07-world-boundary.md",
+        "docs/spec/core/08-worlds-projections.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "http:GET /v1/objects/{type}",
+        "http:GET /v1/objects/{type}/{id}",
+        "http:GET /v1/objects/{type}/{id}/findings",
+        "http:GET /v1/objects/{type}/{id}/history",
+        "http:GET /v1/objects/{type}/{id}/lineage",
+        "http:GET /v1/objects/{type}/{id}/links",
+        "http:GET /v1/objects/{type}:export",
+        "http:GET /v1/objects/{type}:facets",
+        "http:GET /v1/objects/{type}:profile",
+        "http:GET /v1/objects/{type}:quarantined"
+      ],
+      "sourcePaths": [
+        "crates/norn-api/src/object_routes.rs",
+        "crates/norn-api/src/object_query.rs",
+        "crates/norn-api/src/object_facets.rs",
+        "crates/norn-api/src/object_profile.rs",
+        "crates/norn-api/src/object_links.rs",
+        "crates/norn-api/src/object_review.rs",
+        "crates/norn-api/src/analytics_routes.rs",
+        "sdks/openapi/norn-api.openapi.json"
+      ],
+      "invariants": [
+        "ontology-runtime-rust",
+        "data-lineage-lean"
+      ],
+      "probe": {
+        "drive": "Create or load objects in a local `norn dev` cell, then query `GET /v1/objects/{type}`, `GET /v1/objects/{type}/{id}`, `/links`, `/lineage`, `/history`, `/findings`, `:facets`, `:profile`, `:quarantined`, and `:export`.",
+        "observableEndState": "All read routes enforce caller scope/markings, return exact canonical fields and deterministic pagination, and surface quarantined findings with provenance.",
+        "gotchas": [
+          "Unauthorized object reads or unknown types must return typed refusals rather than empty success lists."
+        ]
+      }
+    },
+    {
+      "id": "api-privacy-guard-and-reveal",
+      "title": "Marked property reveal and LLM privacy guard prompt/restore API",
+      "domain": "api-and-hosts",
+      "specContracts": [
+        "docs/spec/core/05-laws-authority.md",
+        "docs/spec/core/08-worlds-projections.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "http:POST /v1/guard/{id}:restore",
+        "http:POST /v1/guard:prompt",
+        "http:POST /v1/objects/{type}/{id}/reveal"
+      ],
+      "sourcePaths": [
+        "crates/norn-api/src/privacy.rs",
+        "crates/norn-api/src/privacy_guard.rs",
+        "crates/norn-ir/src/marking.rs",
+        "crates/norn-checker/src/markings.rs",
+        "sdks/openapi/norn-api.openapi.json"
+      ],
+      "invariants": [
+        "authorization-scope-exactness-lean",
+        "authorization-lean"
+      ],
+      "probe": {
+        "drive": "On a cell with marked PII properties, confirm default object reads redact marked fields, call `POST /v1/objects/{type}/{id}/reveal` with an authorized role (and verify denial without it), then run `POST /v1/guard:prompt` followed by `POST /v1/guard/{id}:restore`.",
+        "observableEndState": "Marked values stay redacted on standard reads; authorized reveal records audit receipt; guard pseudonymizes prompt text and restores original tokens only for the matching session/scope.",
+        "gotchas": [
+          "Never log revealed secrets or unredacted prompt bodies into verification evidence artifacts."
+        ]
+      }
+    },
+    {
+      "id": "api-questions-and-metrics",
+      "title": "Questions, metrics catalog, evaluation, and numeric trace API",
+      "domain": "api-and-hosts",
+      "specContracts": [
+        "docs/spec/core/03-query-compute.md",
+        "docs/spec/core/08-worlds-projections.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "http:GET /v1/questions/{question}/answer",
+        "http:GET /v1/questions/{question}/trace",
+        "http:GET /v1/questions:catalog",
+        "http:GET /v1/questions:metrics",
+        "http:POST /v1/questions:evaluate",
+        "http:POST /v1/questions:trace"
+      ],
+      "sourcePaths": [
+        "crates/norn-api/src/question_routes.rs",
+        "crates/norn-api/src/answers.rs",
+        "crates/norn-cell/src/compute.rs",
+        "crates/norn-checker/src/metric.rs",
+        "sdks/openapi/norn-api.openapi.json"
+      ],
+      "invariants": [
+        "assurance-ivm-composition-lean",
+        "bi-additivity-lean"
+      ],
+      "probe": {
+        "drive": "Query `GET /v1/questions:catalog` and `GET /v1/questions:metrics` on a `norn dev` cell, fetch `GET /v1/questions/{question}/answer` and `/trace`, and execute an ad-hoc `POST /v1/questions:evaluate` + `POST /v1/questions:trace`.",
+        "observableEndState": "Answers return exact decimal values, frontier/revision pins, and contribution trace rows matching the underlying authorized object snapshot.",
+        "gotchas": [
+          "As-of-knowledge and as-of-effective cutoffs must agree on canonical totals at the same revision frontier."
+        ]
+      }
+    },
+    {
+      "id": "api-transforms-and-datasets",
+      "title": "Declarative transforms, dataset loads, and row lineage API",
+      "domain": "api-and-hosts",
+      "specContracts": [
+        "docs/spec/core/03-query-compute.md",
+        "docs/spec/core/07-world-boundary.md",
+        "docs/spec/core/08-worlds-projections.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "runtime-enforced",
+      "surfaces": [
+        "http:GET /v1/datasets/{type}/rows/{row}:lineage",
+        "http:GET /v1/transforms/{transform}/plan",
+        "http:GET /v1/transforms/{transform}/rows",
+        "http:GET /v1/transforms/{transform}/rows/{row}/lineage",
+        "http:POST /v1/datasets:load",
+        "http:POST /v1/transforms/{transform}:refresh",
+        "http:POST /v1/transforms:compile"
+      ],
+      "sourcePaths": [
+        "crates/norn-api/src/transform_routes.rs",
+        "crates/norn-api/src/analytics_routes.rs",
+        "crates/norn-cell/src/dataset_laws.rs",
+        "crates/norn-cell/src/dataset_manifest.rs",
+        "crates/norn-checker/src/transform.rs",
+        "sdks/openapi/norn-api.openapi.json"
+      ],
+      "invariants": [
+        "data-lineage-lean",
+        "assurance-linear-conservation-lean"
+      ],
+      "probe": {
+        "drive": "Load dataset rows via `POST /v1/datasets:load`, compile/inspect a transform via `POST /v1/transforms:compile` and `GET /v1/transforms/{transform}/plan`, refresh via `POST /v1/transforms/{transform}:refresh`, and read `GET /v1/transforms/{transform}/rows` plus both dataset and transform row `:lineage` endpoints.",
+        "observableEndState": "Transform rows materialize deterministically over the authorized snapshot and every row lineage response traces back to exact contributing source rows and revisions.",
+        "gotchas": [
+          "Optional DuckDB/DataFusion analytical backends must match the exact cell evaluator over the same snapshot."
+        ]
+      }
+    }
+  ]
+}

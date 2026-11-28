@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://norn.cloud/schema/feature-map/1",
+  "title": "Norn stop-gap auto-extracted feature map: one domain file",
+  "description": "STOP-GAP registry (retirement tracked in #2005): each registry/features/<domain>.json maps auto-extracted live surfaces (HTTP routes, CLI subcommands, IR artifact kinds, Studio routes, promoted gates) to verifiable features with spec contracts, source paths, invariants, and 1-by-1 probes. To be retired once TARGET Norn authoring (concept({ ... }), pinned packs) hosts this ontology natively in a Norn cell.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "stopGap", "domain", "title", "summary", "features"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stopGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "retirementTrigger"],
+      "properties": {
+        "status": { "const": "stop-gap" },
+        "retirementTrigger": { "$ref": "#/$defs/text" }
+      }
+    },
+    "domain": { "$ref": "#/$defs/domain" },
+    "title": { "$ref": "#/$defs/text" },
+    "summary": { "$ref": "#/$defs/text" },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/feature" }
+    }
+  },
+  "$defs": {
+    "domain": {
+      "enum": [
+        "core-engine",
+        "api-and-hosts",
+        "authoring-and-cli",
+        "studio-ui",
+        "verification"
+      ]
+    },
+    "text": { "type": "string", "minLength": 1 },
+    "repoPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.][A-Za-z0-9_./-]*$"
+    },
+    "surfaceKey": {
+      "type": "string",
+      "pattern": "^(http:(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) /[^\\s]+|cli:norn(-ts)? [a-z0-9-]+( [a-z0-9-]+)*|ir:[A-Za-z][A-Za-z0-9_-]*|studio:/[^\\s]*|gate:[a-z0-9][a-z0-9-]*)$"
+    },
+    "invariantRef": {
+      "type": "string",
+      "pattern": "^([a-z0-9][a-z0-9-]*|(theorem|checker|law):[A-Za-z0-9_.][A-Za-z0-9_./-]*(::[A-Za-z0-9_.:-]+|#[A-Za-z0-9_.-]+)?)$"
+    },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "domain",
+        "specContracts",
+        "status",
+        "evidenceTier",
+        "surfaces",
+        "sourcePaths",
+        "invariants",
+        "probe"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+        },
+        "title": { "$ref": "#/$defs/text" },
+        "domain": { "$ref": "#/$defs/domain" },
+        "specContracts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repoPath" }
+        },
+        "status": {
+          "enum": ["implemented", "partial", "planned"]
+        },
+        "evidenceTier": {
+          "enum": [
+            "checked-proof",
+            "exhaustive-finite",
+            "bounded",
+            "runtime-enforced",
+            "e2e-driven",
+            "unverified"
+          ]
+        },
+        "surfaces": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/surfaceKey" }
+        },
+        "sourcePaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repoPath" }
+        },
+        "invariants": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/invariantRef" }
+        },
+        "probe": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["drive", "observableEndState"],
+          "properties": {
+            "drive": { "type": "string" },
+            "observableEndState": { "type": "string" },
+            "gotchas": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/text" }
+            }
+          }
+        },
+        "lastVerified": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["commitSha", "sourceDigest"],
+              "properties": {
+                "commitSha": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{7,40}$"
+                },
+                "sourceDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
