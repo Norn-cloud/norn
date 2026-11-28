@@ -472,7 +472,7 @@ pub(crate) fn read_files_in_pinned_subdirs(
     Ok(files)
 }
 
-type OnWalkFile = dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String);
+type OnWalkFile<'a> = dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String) + 'a;
 
 fn walk_dir_shared(
     root: &Arc<TrustedDir>,
@@ -480,7 +480,7 @@ fn walk_dir_shared(
     depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
-    on_file: &mut OnWalkFile,
+    on_file: &mut OnWalkFile<'_>,
 ) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -563,7 +563,7 @@ fn walk_unix_dir(
     depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
-    on_file: &mut OnWalkFile,
+    on_file: &mut OnWalkFile<'_>,
 ) -> Result<(), String> {
     let dir_display = dir.display_path();
     if depth > MAX_WALK_DEPTH {
@@ -635,7 +635,7 @@ fn walk_non_unix_dir(
     depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
-    on_file: &mut OnWalkFile,
+    on_file: &mut OnWalkFile<'_>,
 ) -> Result<(), String> {
     let dir_path = dir.display_path();
     if depth > MAX_WALK_DEPTH {
