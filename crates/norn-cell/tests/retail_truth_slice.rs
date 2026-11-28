@@ -5427,15 +5427,39 @@ fn verify_nonempty_pending_bundle_row_privacy(book: &mut EntityBook) -> Result<(
     Ok(())
 }
 
-fn verify_conflict_related_evidence_failure_and_filter_order(
-    book: &mut EntityBook,
-) -> Result<(), String> {
-    // Inject a corrupted related `mapping-bundle:` sharing the exact 5 source-event keys
-    // of the genuine pending `mapping-conflict:` (`POS-CONFLICT-1`).
-    // 1. An authorized reader MUST fail closed (`MappingBundleMismatch`), never silently
-    //    drop the genuine conflict.
-    // 2. A reader denied `PosSaleEvidence` MUST filter by evidence type BEFORE rechecking
-    //    and return `Ok` with `pending_observations == 0`.
+fn eval_pending_only_cut(
+    book: &EntityBook,
+    evidence_access: norn_cell::combined_view::RowAccessDecider<'_>,
+) -> Result<norn_cell::combined_view::CellCutSnapshot, CellError> {
+    let (anchor_key, authority) = legal_entity_read_authority(book, "LE-SOLE");
+    let live_frontier = || Ok((book.source_cursors.clone(), book.watermarks.clone()));
+    let store = book.cell().map_err(CellError::Engine)?.store();
+    let input = CellViewInput {
+        store,
+        anchor_key: &anchor_key,
+        authority: &authority,
+        context: book.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
+        member_access: evidence_access,
+        min_disclosed_bucket: 2,
+        required_feeds: &REQUIRED_FEEDS,
+        read_frontier: &live_frontier,
+        min_fresh_ms: book.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &["supply.PosSaleEvidence"],
+        feed_mappings: &[("supply.pos_sales.mapping", "supply.PosSaleEvidence")],
+        evidence_access,
+        coverage_transforms: &[],
+        reconciliation_gates: &[],
+        expected_grain_gates: &[],
+        questions: &[],
+    };
+    evaluate_cell_cut(&input, &mut |_, _, _| {
+        Err(CellError::Engine("no questions requested".to_owned()))
+    })
+}
+
+fn inject_corrupted_related_pos_bundle(book: &mut EntityBook) -> Result<(), String> {
     let corrupted_id = "mapping-bundle:corrupted-related-001";
     let corrupted_bundle = MappingBundle {
         digest: "corrupted-related-001".to_owned(),
@@ -5472,52 +5496,68 @@ fn verify_conflict_related_evidence_failure_and_filter_order(
         .inject(corrupted_id, &encoded)
         .map_err(|e| format!("inject corrupted related bundle: {e}"))?;
     assert!(inserted, "corrupted related bundle must be inserted");
+    Ok(())
+}
 
-    let rev_plan = book
-        .pack
-        .retail_question("supply.retail.store_revenue_weekly")?;
-    let (anchor_key, authority) = legal_entity_read_authority(book, "LE-SOLE");
-    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
-    let live_frontier = || Ok((book.source_cursors.clone(), book.watermarks.clone()));
-    let auth_input = CellViewInput {
-        store: book.cell()?.store(),
-        anchor_key: &anchor_key,
-        authority: &authority,
-        context: book.query_context(),
-        handle_key: &TEST_HANDLE_KEY,
-        whole_world_values: false,
-        member_access: &allow_all,
-        min_disclosed_bucket: 2,
-        required_feeds: &REQUIRED_FEEDS,
-        read_frontier: &live_frontier,
-        min_fresh_ms: book.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
-        evidence_types: &EVIDENCE_TYPES,
-        feed_mappings: &FEED_MAPPINGS,
-        evidence_access: &allow_all,
-        coverage_transforms: &[],
-        reconciliation_gates: &[],
-        expected_grain_gates: &[],
-        questions: &[("supply.retail.store_revenue_weekly", &rev_plan)],
-    };
-    let auth_res = evaluate_cell_cut(&auth_input, &mut |_, plan, ctx| {
-        book.cell()
-            .map_err(CellError::Engine)?
-            .store()
-            .evaluate_question(plan, ctx, |_| Ok(true))
-    });
-    assert!(
-        matches!(auth_res, Err(CellError::MappingBundleMismatch)),
-        "corrupted related bundle must fail closed instead of dropping genuine conflict: {auth_res:?}"
-    );
+fn verify_conflict_related_evidence_failure_and_filter_order(
+    book: &mut EntityBook,
+) -> Result<(), String> {
+    // Inject a corrupted related `mapping-bundle:` sharing the exact 5 source-event keys
+    // of the genuine pending `mapping-conflict:` (`POS-CONFLICT-1`, incoming net_revenue=200).
+    // All policies below deny live committed POS rows (net_revenue != 200) so `count_open_findings`
+    // never invokes `observation_findings`, exercising `count_scoped_pending_observations` directly.
+    inject_corrupted_related_pos_bundle(book)?;
 
-    let hide_pos_only = |obj: &norn_cell::ObjectRecord| {
-        if obj.object_type == "supply.PosSaleEvidence" {
-            Ok(RowAccess::None)
-        } else {
+    // 1. Authorized for the incoming conflict row (`net_revenue == 200`): MUST fail closed
+    //    with `MappingBundleMismatch` from `verify_visible_pending_candidate`.
+    let read_incoming_only = |obj: &norn_cell::ObjectRecord| {
+        if obj.id == norn_cell::compute::ALL_MEMBERS
+            || (obj.id == "POS-CONFLICT-1"
+                && obj.values.get("net_revenue").map(scalar).as_deref() == Some("200"))
+        {
             Ok(RowAccess::Read)
+        } else {
+            Ok(RowAccess::None)
         }
     };
-    let denied_cut = evaluate_single_library_cut_with_access(book, "LE-SOLE", &hide_pos_only)?;
+    let auth_res = eval_pending_only_cut(book, &read_incoming_only);
+    assert!(
+        matches!(auth_res, Err(CellError::MappingBundleMismatch)),
+        "visible genuine conflict with corrupted related bundle must fail closed: {auth_res:?}"
+    );
+
+    // 2. Collection `Read` on `ALL_MEMBERS` with `None` or `Count` on the incoming row:
+    //    row visibility runs BEFORE related-evidence lookup, so excluded conflicts return `0`.
+    let row_hidden = |obj: &norn_cell::ObjectRecord| {
+        if obj.id == norn_cell::compute::ALL_MEMBERS {
+            Ok(RowAccess::Read)
+        } else {
+            Ok(RowAccess::None)
+        }
+    };
+    let hidden_cut = eval_pending_only_cut(book, &row_hidden)
+        .map_err(|e| format!("row_hidden must succeed: {e}"))?;
+    assert_eq!(hidden_cut.pending_observations, 0);
+
+    let row_count_only = |obj: &norn_cell::ObjectRecord| {
+        if obj.id == norn_cell::compute::ALL_MEMBERS {
+            Ok(RowAccess::Read)
+        } else if obj.id == "POS-CONFLICT-1"
+            && obj.values.get("net_revenue").map(scalar).as_deref() == Some("200")
+        {
+            Ok(RowAccess::Count)
+        } else {
+            Ok(RowAccess::None)
+        }
+    };
+    let count_cut = eval_pending_only_cut(book, &row_count_only)
+        .map_err(|e| format!("row_count_only must succeed: {e}"))?;
+    assert_eq!(count_cut.pending_observations, 0);
+
+    // 3. Collection-denied reader (`None` on `ALL_MEMBERS`): filtered BEFORE recheck.
+    let deny_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::None);
+    let denied_cut = eval_pending_only_cut(book, &deny_all)
+        .map_err(|e| format!("deny_all must succeed: {e}"))?;
     assert_eq!(denied_cut.pending_observations, 0);
     Ok(())
 }

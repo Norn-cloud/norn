@@ -431,27 +431,56 @@ fn decode_pending_candidate(obs: &PendingObservation) -> Option<PendingCandidate
     }
 }
 
-fn verify_pending_candidate<E: SqlEngine>(
+fn bundle_records_visible<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
+    allowed_evidence: &BTreeSet<String>,
+    bundle: &MappingBundle,
+) -> Result<bool, CellError> {
+    if bundle.records.is_empty() {
+        return Ok(true);
+    }
+    for rec in &bundle.records {
+        if pending_record_readable(input, allowed_evidence, rec)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn verify_visible_pending_candidate<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
     reader: &StoreReader<'_, E>,
+    allowed_evidence: &BTreeSet<String>,
     candidate: PendingCandidate,
-) -> Result<Option<MappingBundle>, CellError> {
+) -> Result<bool, CellError> {
     match candidate {
         PendingCandidate::Bundle(bundle) => {
-            Ok(verify_or_ignore(reader.recheck_mapping_bundle(&bundle))?.then_some(bundle))
+            if !verify_or_ignore(reader.recheck_mapping_bundle(&bundle))? {
+                return Ok(false);
+            }
+            bundle_records_visible(input, allowed_evidence, &bundle)
         }
         PendingCandidate::Conflict(conflict) => {
-            // Distinguish an invalid candidate (ignored) from a failure verifying
-            // the related retained source-event evidence it depends on (fail closed).
+            // 1. Verify the incoming bundle itself (ignore invalid/forged candidates).
             if !verify_or_ignore(reader.recheck_mapping_bundle(&conflict.incoming))? {
-                return Ok(None);
+                return Ok(false);
             }
+            // 2. Apply row visibility on the rederived incoming bundle BEFORE looking up
+            //    related retained evidence so excluded conflicts never leak refusals.
+            if !bundle_records_visible(input, allowed_evidence, &conflict.incoming)? {
+                return Ok(false);
+            }
+            // 3. Verify against related retained source-event evidence; propagate any
+            //    verification error so a corrupted related bundle fails closed.
             let expected = reader.mapping_conflict(&conflict.incoming)?;
-            Ok((expected.as_ref() == Some(&conflict)).then_some(conflict.incoming))
+            Ok(expected.as_ref() == Some(&conflict))
         }
-        PendingCandidate::Identity(evidence) => Ok(verify_or_ignore(
-            reader.recheck_identity_evidence(&evidence),
-        )?
-        .then_some(evidence.bundle)),
+        PendingCandidate::Identity(evidence) => {
+            if !verify_or_ignore(reader.recheck_identity_evidence(&evidence))? {
+                return Ok(false);
+            }
+            bundle_records_visible(input, allowed_evidence, &evidence.bundle)
+        }
     }
 }
 
@@ -479,8 +508,8 @@ fn pending_record_readable<E: SqlEngine>(
 /// Count unconsumed retained mapping bundles in the inbox scoped strictly to
 /// `input.feed_mappings` and each mapping's authorized evidence type
 /// (`HOST-READ-2`), filtering by configured mapping and readable type before
-/// rechecking retained evidence, then applying per-row `RowAccess::Read`
-/// visibility on nonempty bundles.
+/// rechecking retained evidence, and applying row visibility on rederived
+/// incoming conflict bundles before looking up related source-event evidence.
 fn count_scoped_pending_observations<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
 ) -> Result<usize, CellError> {
@@ -501,22 +530,7 @@ fn count_scoped_pending_observations<E: SqlEngine>(
         if !allowed_evidence.contains(expected_evidence) {
             continue;
         }
-        let Some(bundle) = verify_pending_candidate(&reader, candidate)? else {
-            continue;
-        };
-        let visible = if bundle.records.is_empty() {
-            true
-        } else {
-            let mut any_readable = false;
-            for rec in &bundle.records {
-                if pending_record_readable(input, &allowed_evidence, rec)? {
-                    any_readable = true;
-                    break;
-                }
-            }
-            any_readable
-        };
-        if visible {
+        if verify_visible_pending_candidate(input, &reader, &allowed_evidence, candidate)? {
             count = count.saturating_add(1);
         }
     }
