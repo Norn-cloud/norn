@@ -511,6 +511,51 @@ fn add_v13_link_claim_frontier_tables(image: &mut Value) {
             "sql": sql,
         }));
     }
+    add_v13_link_claim_frontier_indexes(schema);
+    let tables = image["tables"].as_object_mut().expect("tables");
+    tables.insert(
+        "_norn_link_claim_frontier".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "claim_id",
+                "contribution_id",
+                "source_scope",
+                "source_type",
+                "source_key",
+                "role",
+                "target_type",
+                "target_key",
+                "observation_id",
+                "commit_seq",
+                "claim_ordinal",
+                "source_version",
+                "version_kind",
+                "event_keys_json",
+                "active",
+                "claim_json"
+            ],
+            "rows": []
+        }),
+    );
+    tables.insert(
+        "_norn_dispute_resolution".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "dispute_id",
+                "decision",
+                "actor",
+                "reason",
+                "commit_seq",
+                "receipt_hash"
+            ],
+            "rows": []
+        }),
+    );
+}
+
+fn add_v13_link_claim_frontier_indexes(schema: &mut Vec<Value>) {
     for (table, name, sql) in [
         (
             "_norn_link_claim_frontier",
@@ -570,47 +615,6 @@ fn add_v13_link_claim_frontier_tables(image: &mut Value) {
             "sql": sql,
         }));
     }
-    let tables = image["tables"].as_object_mut().expect("tables");
-    tables.insert(
-        "_norn_link_claim_frontier".to_owned(),
-        serde_json::json!({
-            "columns": [
-                "rowid",
-                "claim_id",
-                "contribution_id",
-                "source_scope",
-                "source_type",
-                "source_key",
-                "role",
-                "target_type",
-                "target_key",
-                "observation_id",
-                "commit_seq",
-                "claim_ordinal",
-                "source_version",
-                "version_kind",
-                "event_keys_json",
-                "active",
-                "claim_json"
-            ],
-            "rows": []
-        }),
-    );
-    tables.insert(
-        "_norn_dispute_resolution".to_owned(),
-        serde_json::json!({
-            "columns": [
-                "rowid",
-                "dispute_id",
-                "decision",
-                "actor",
-                "reason",
-                "commit_seq",
-                "receipt_hash"
-            ],
-            "rows": []
-        }),
-    );
 }
 
 /// SOURCE-CAPTURE-1 adds the durable source lease and cursor tables, empty on
