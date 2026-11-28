@@ -580,19 +580,25 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let observed: norn_kernel::Observed<norn_ir::RuntimeValue> =
             norn_ir::runtime::decode(&observed_val)
                 .map_err(|err| corrupt(&format!("invalid dispute Observed: {err}")))?;
+        if observed.id.0 != rec.dispute_id {
+            return Err(corrupt("observed id mismatch"));
+        }
         if rec.dispute_id.starts_with("mapping-conflict:") {
             let conflict: crate::mapping_conflict::MappingConflict =
                 norn_ir::runtime::decode(&observed.input)
                     .map_err(|err| corrupt(&format!("invalid conflict evidence: {err}")))?;
-            self.recheck_mapping_bundle(&conflict.incoming)
-                .map_err(|_| corrupt("conflict bundle failed recheck"))?;
+            if rec.dispute_id != format!("mapping-conflict:{}", conflict.finding.id) {
+                return Err(corrupt("conflict finding id mismatch"));
+            }
+            self.recheck_mapping_conflict(&conflict)
+                .map_err(|err| corrupt(&format!("conflict evidence failed recheck: {err}")))?;
             Ok(conflict.incoming)
         } else if rec.dispute_id.starts_with("mapping-identity:") {
             let guard: crate::mapping_identity::IdentityEvidence =
                 norn_ir::runtime::decode(&observed.input)
                     .map_err(|err| corrupt(&format!("invalid identity evidence: {err}")))?;
             self.recheck_identity_evidence(&guard, &rec.dispute_id)
-                .map_err(|_| corrupt("identity evidence failed recheck"))?;
+                .map_err(|err| corrupt(&format!("identity evidence failed recheck: {err}")))?;
             Ok(guard.bundle)
         } else {
             Err(corrupt("unknown dispute observation prefix"))
@@ -624,16 +630,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(observed);
         }
         // Legacy pre-v13 generically-consumed dispute resolved at v13 without
-        // re-consuming: bind to the prior consuming commit's export journal
-        // when present, falling back to `_norn_inbox` only for pre-export cells
-        // (still cryptographically rechecked by the caller).
-        let Some((encoded, consumed_seq)) = self.conn.query_optional(
+        // re-consuming: require the prior consuming commit's export journal
+        // record and its hash-verified `consumed_input` (never trust raw
+        // `_norn_inbox.observed` bytes).
+        let Some(consumed_seq) = self.conn.query_optional(
             &format!(
-                "SELECT \"observed\", \"consumed_commit_seq\" FROM \"{}\" WHERE \"observation_id\" = ?1",
+                "SELECT \"consumed_commit_seq\" FROM \"{}\" WHERE \"observation_id\" = ?1",
                 crate::system::INBOX
             ),
             params![&rec.dispute_id],
-            |row| Ok((row.get::<String>(0)?, row.get::<Option<i64>>(1)?)),
+            |row| row.get::<Option<i64>>(0),
         )?
         else {
             return Err(corrupt("missing legacy dispute inbox row"));
@@ -643,28 +649,27 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 "unconsumed dispute resolution lacks consumed_input",
             ));
         };
-        let prev_seq =
-            u64::try_from(prev_i64).map_err(|_| corrupt("negative prior consumed_commit_seq"))?;
-        if let Some(prior_export) = crate::export_journal::read_record(self.conn, prev_seq)? {
-            let Some(prior_consumed) = prior_export.consumed_input.as_ref() else {
-                return Err(corrupt("prior consuming journal missing consumed_input"));
-            };
-            let crate::export_journal::ConsumedInput::Observation {
-                observation_id,
-                observed,
-                ..
-            } = crate::export_journal::decode_observation_input(prior_consumed)
-                .map_err(|err| corrupt(&format!("invalid prior consumed input: {err}")))?
-            else {
-                return Err(corrupt("prior consuming journal is not an observation"));
-            };
-            if observation_id != rec.dispute_id {
-                return Err(corrupt("prior consumed observation id mismatch"));
-            }
-            return Ok(observed);
+        let prev_seq = u64::try_from(prev_i64)
+            .map_err(|err| corrupt(&format!("negative prior consumed_commit_seq: {err}")))?;
+        let Some(prior_export) = crate::export_journal::read_record(self.conn, prev_seq)? else {
+            return Err(corrupt("missing prior consuming export journal record"));
+        };
+        let Some(prior_consumed) = prior_export.consumed_input.as_ref() else {
+            return Err(corrupt("prior consuming journal missing consumed_input"));
+        };
+        let crate::export_journal::ConsumedInput::Observation {
+            observation_id,
+            observed,
+            ..
+        } = crate::export_journal::decode_observation_input(prior_consumed)
+            .map_err(|err| corrupt(&format!("invalid prior consumed input: {err}")))?
+        else {
+            return Err(corrupt("prior consuming journal is not an observation"));
+        };
+        if observation_id != rec.dispute_id {
+            return Err(corrupt("prior consumed observation id mismatch"));
         }
-        norn_ir::RuntimeValue::from_json_text(&encoded)
-            .map_err(|err| corrupt(&format!("invalid legacy dispute JSON: {err}")))
+        Ok(observed)
     }
 
     /// Read and authenticate every ledger entry in `receipt`'s exact event span
@@ -775,6 +780,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             decode_dispute_resolution_row,
         )?
         else {
+            self.ensure_no_missing_dispute_resolution(dispute_id)?;
             return Ok(None);
         };
         self.verify_dispute_resolution_record(&rec)?;
@@ -784,6 +790,60 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(None);
         }
         Ok(Some(rec.commit_seq))
+    }
+
+    /// Fail closed if `_norn_ledger` already records a v13+ governed
+    /// `dispute_resolved` event for `dispute_id` whose `_norn_dispute_resolution`
+    /// index row disappeared while the cell was open.
+    pub(crate) fn ensure_no_missing_dispute_resolution(
+        &self,
+        dispute_id: &str,
+    ) -> Result<(), CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"commit_seq\" FROM \"{}\" \
+                 WHERE \"world\" = ?1 \
+                   AND json_extract(\"event\", '$.op') = 'dispute_resolved' \
+                   AND json_extract(\"event\", '$.disputeId') = ?2",
+                crate::system::LEDGER
+            ),
+            params![crate::MAIN_WORLD, dispute_id],
+        )?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let has_journal = self
+            .conn
+            .query_optional(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+                params![],
+                |_row| Ok(()),
+            )?
+            .is_some();
+        if !has_journal {
+            return Ok(());
+        }
+        for raw in rows {
+            let seq_i64: i64 = crate::engine::SqlRow(raw).get(0)?;
+            let commit_seq = u64::try_from(seq_i64).map_err(|err| CellError::LedgerCorrupt {
+                seq: 0,
+                reason: format!("invalid ledger commit_seq for {dispute_id}: {err}"),
+            })?;
+            let is_pre_v13 = crate::export_journal::read_record(self.conn, commit_seq)?
+                .is_some_and(|rec| {
+                    rec.storage_version.unwrap_or(1)
+                        < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+                });
+            if !is_pre_v13 {
+                return Err(CellError::LedgerCorrupt {
+                    seq: commit_seq,
+                    reason: format!(
+                        "missing _norn_dispute_resolution index row for resolved dispute {dispute_id}"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Whether `commit_seq` is a verified dispute-resolution commit (failing

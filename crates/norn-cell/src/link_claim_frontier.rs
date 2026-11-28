@@ -990,6 +990,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )?;
         if let Some(record) = &rec {
             self.verify_dispute_resolution_record(record)?;
+        } else {
+            self.ensure_no_missing_dispute_resolution(dispute_id)?;
         }
         Ok(rec)
     }

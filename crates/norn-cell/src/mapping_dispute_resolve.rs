@@ -269,6 +269,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             ),
             crate::engine::params![],
         )?;
+        let mut superseded = false;
         for values in rows {
             let row = crate::engine::SqlRow(values);
             let rec = crate::mapping_conflict_scoped::decode_dispute_resolution_row(&row)?;
@@ -280,14 +281,16 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 continue;
             }
             let resolved_bundle = self.verified_dispute_resolution_bundle(&rec)?;
-            let resolved_keys =
-                crate::mapping_identity::keys(&resolved_bundle.raw, &resolved_bundle.input)?
-                    .map(|k| norn_ir::canonical::nfc(&k));
-            if resolved_keys == target_keys {
-                return Ok(true);
+            if !superseded {
+                let resolved_keys =
+                    crate::mapping_identity::keys(&resolved_bundle.raw, &resolved_bundle.input)?
+                        .map(|k| norn_ir::canonical::nfc(&k));
+                if resolved_keys == target_keys {
+                    superseded = true;
+                }
             }
         }
-        Ok(false)
+        Ok(superseded)
     }
 
     /// Load and cryptographically recheck an unresolved dispute row from

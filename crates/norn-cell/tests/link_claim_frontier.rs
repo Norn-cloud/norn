@@ -3160,6 +3160,48 @@ fn tampered_dispute_resolution_on_open_cell_fails_closed_and_keeps_quarantine() 
         ),
         "negative resolution commit_seq must fail closed with LedgerCorrupt"
     );
+
+    // Clean out the forged row, legitimately resolve the dispute, then delete
+    // the `_norn_dispute_resolution` row while the cell is open: attempting a
+    // second decision must fail closed with LedgerCorrupt (never fall into the
+    // legacy resolution path).
+    {
+        let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
+        raw_conn
+            .execute(
+                "DELETE FROM \"_norn_dispute_resolution\" WHERE \"dispute_id\" = ?1",
+                rusqlite::params![&conflict_id],
+            )
+            .expect("clear forged row");
+    }
+    cell.resolve_mapping_dispute(&DisputeResolutionInput {
+        dispute_id: conflict_id.clone(),
+        decision: DisputeDecision::AcceptFirst,
+        actor: "ops@demo".to_owned(),
+        reason: "keep first capture".to_owned(),
+    })
+    .expect("legitimate resolution");
+    {
+        let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
+        raw_conn
+            .execute(
+                "DELETE FROM \"_norn_dispute_resolution\" WHERE \"dispute_id\" = ?1",
+                rusqlite::params![&conflict_id],
+            )
+            .expect("delete legitimate resolution index row");
+    }
+    assert!(
+        matches!(
+            cell.resolve_mapping_dispute(&DisputeResolutionInput {
+                dispute_id: conflict_id,
+                decision: DisputeDecision::Reject,
+                actor: "ops@demo".to_owned(),
+                reason: "second decision after index deletion".to_owned(),
+            }),
+            Err(CellError::LedgerCorrupt { .. })
+        ),
+        "deleting a resolution index row on an open cell must fail closed and never permit a second decision"
+    );
 }
 
 /// #1549 / OBS-DISPUTE-LOOKUP-1: A forged `_norn_dispute_resolution` row
@@ -3171,15 +3213,23 @@ fn tampered_dispute_resolution_on_open_cell_fails_closed_and_keeps_quarantine() 
 fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("forged_res_stale_delete.sqlite");
-    let mut cell = setup_with(&path, referring_parties);
+    // Use the default model where `canon.Party` declares no links, so ZERO
+    // link claims (not even clear claims) exist in `_norn_link_claim_frontier`.
+    let mut cell = setup(&path);
 
-    // Land a linkless party at version "2" (no active claims, no inbox disputes).
     let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", None);
     capture_kind(&mut cell, "erpnext", &a_v2, "e2", "2", "upsert", "p1");
 
-    let landed_seq: i64 = {
+    let (frontier_count, landed_seq): (i64, i64) = {
         let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
-        raw_conn
+        let fc: i64 = raw_conn
+            .query_row(
+                "SELECT COUNT(*) FROM \"_norn_link_claim_frontier\"",
+                [],
+                |row| row.get(0),
+            )
+            .expect("frontier count");
+        let seq: i64 = raw_conn
             .query_row(
                 "SELECT \"consumed_commit_seq\" FROM \"_norn_inbox\" \
                  WHERE \"observation_id\" LIKE 'mapping-bundle:%' \
@@ -3188,8 +3238,10 @@ fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
                 [],
                 |row| row.get(0),
             )
-            .expect("landed bundle seq")
+            .expect("landed bundle seq");
+        (fc, seq)
     };
+    assert_eq!(frontier_count, 0, "linkless party must emit zero claims");
     {
         let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
         raw_conn
@@ -3220,7 +3272,7 @@ fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
     // or active-claim check can short-circuit it.
     assert!(
         matches!(
-            crate::mapping_delete::has_newer_or_incomparable_landed_source_version(
+            norn_cell::mapping_delete::has_newer_or_incomparable_landed_source_version(
                 &cell.store().read(),
                 &del_bundle,
             ),
@@ -3253,58 +3305,67 @@ fn nfd_unicode_claim_provenance_survives_reopen_heal_and_resealing() {
     capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
     capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
 
-    // Capture an NFC bundle first (so `inject_mapping_bundle` admits a
-    // `mapping-bundle:` observation instead of quarantining `mapping-identity:`),
-    // then rewrite the retained bundle's `source_id` to decomposed NFD
-    // (`e` + U+0301) before processing so the committed `norn.ObservedLinkClaim`
-    // genuinely carries NFD while `_norn_fact_values` stores NFC.
+    // Capture and process an NFC bundle cleanly, then rewrite the live
+    // `norn.ObservedLinkClaim` row's `evidence` column to canonically-equivalent
+    // decomposed NFD (`e` + U+0301) while `_norn_fact_values` keeps NFC so
+    // reopen drift healing and subsequent resealing exercise exact NFD recovery.
     let a_nfc = party_ref_row(
         "P-Caf\u{00e9}",
         "demo/party/a",
         "A NFD",
         Some("demo/party/b"),
     );
-    let (raw_a, input_a) = raw_event(&cell, "erpnext", &a_nfc, "e1", "1", "upsert", "p1");
-    let (obs_a, _) = cell
-        .inject_mapping_bundle(&raw_a, &input_a)
-        .expect("inject a");
-    assert!(
-        obs_a.starts_with("mapping-bundle:"),
-        "NFC capture must produce a mapping-bundle observation, got {obs_a}"
-    );
-    {
-        let conn = rusqlite::Connection::open(&path).expect("sqlite");
-        let nfc_json: String = conn
-            .query_row(
-                "SELECT \"observed\" FROM \"_norn_inbox\" WHERE \"observation_id\" = ?1",
-                rusqlite::params![&obs_a],
-                |row| row.get(0),
-            )
-            .expect("read inbox");
-        let nfd_json = nfc_json.replace("P-Caf\u{00e9}", "P-Cafe\u{0301}");
-        assert!(nfd_json.contains("P-Cafe\u{0301}"));
-        conn.execute(
-            "UPDATE \"_norn_inbox\" SET \"observed\" = ?1 WHERE \"observation_id\" = ?2",
-            rusqlite::params![&nfd_json, &obs_a],
-        )
-        .expect("restore NFD in inbox");
-    }
-    cell.process_mapping_bundle(&obs_a).expect("process nfd");
+    let obs_a = capture_kind(&mut cell, "erpnext", &a_nfc, "e1", "1", "upsert", "p1");
     assert_eq!(
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()])
     );
 
-    // Prove the live claim object really has NFD while `_norn_fact_values` has NFC.
-    let (claim_id, live_json, snapshot_json): (String, String, String) = {
+    let (claim_id, live_table, id_col) = {
         let conn = rusqlite::Connection::open(&path).expect("sqlite");
         let claim_id: String = conn
             .query_row(
-                "SELECT \"claim_id\" FROM \"_norn_link_claim_frontier\" LIMIT 1",
-                [],
+                "SELECT \"claim_id\" FROM \"_norn_link_claim_frontier\" WHERE \"observation_id\" = ?1",
+                rusqlite::params![&obs_a],
                 |row| row.get(0),
             )
-            .expect("frontier claim id");
+            .expect("frontier claim id scoped to obs_a");
+        let tbl = cell
+            .store()
+            .model()
+            .tables(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
+            .expect("claim tables")[0];
+        let live_table = tbl.table.clone();
+        let id_col =
+            norn_projections::sqlite_ddl::quote_identifier(norn_projections::sqlite_ddl::ID_COLUMN);
+        let ev_col_raw = tbl
+            .columns
+            .iter()
+            .find(|col| col.property.as_str() == "evidence")
+            .and_then(|col| col.column.as_deref())
+            .expect("evidence column");
+        let ev_col = norn_projections::sqlite_ddl::quote_identifier(ev_col_raw);
+        let nfc_ev: String = conn
+            .query_row(
+                &format!("SELECT {ev_col} FROM \"{live_table}\" WHERE {id_col} = ?1"),
+                rusqlite::params![&claim_id],
+                |row| row.get(0),
+            )
+            .expect("read live evidence");
+        let nfd_ev = nfc_ev.replace("P-Caf\u{00e9}", "P-Cafe\u{0301}");
+        assert!(nfd_ev.contains("P-Cafe\u{0301}") && !nfd_ev.contains("P-Caf\u{00e9}"));
+        let updated = conn
+            .execute(
+                &format!("UPDATE \"{live_table}\" SET {ev_col} = ?1 WHERE {id_col} = ?2"),
+                rusqlite::params![&nfd_ev, &claim_id],
+            )
+            .expect("store NFD evidence in live claim row");
+        assert_eq!(updated, 1);
+        (claim_id, live_table, id_col)
+    };
+
+    // Prove the live claim object has NFD while `_norn_fact_values` has NFC.
+    let (live_json, snapshot_json): (String, String) = {
         let claim = cell
             .store()
             .read()
@@ -3316,6 +3377,7 @@ fn nfd_unicode_claim_provenance_survives_reopen_heal_and_resealing() {
             .expect("read live claim")
             .expect("live claim must exist");
         let live_json = serde_json::to_string(&claim.values).expect("live json");
+        let conn = rusqlite::Connection::open(&path).expect("sqlite");
         let snapshot_json: String = conn
             .query_row(
                 "SELECT \"snapshot\" FROM \"_norn_fact_values\" \
@@ -3324,7 +3386,7 @@ fn nfd_unicode_claim_provenance_survives_reopen_heal_and_resealing() {
                 |row| row.get(0),
             )
             .expect("fact snapshot");
-        (claim_id, live_json, snapshot_json)
+        (live_json, snapshot_json)
     };
     assert!(live_json.contains("P-Cafe\u{0301}") && !live_json.contains("P-Caf\u{00e9}"));
     assert!(snapshot_json.contains("P-Caf\u{00e9}") && !snapshot_json.contains("P-Cafe\u{0301}"));
@@ -3370,18 +3432,9 @@ fn nfd_unicode_claim_provenance_survives_reopen_heal_and_resealing() {
     // rather than silently falling back to `_norn_fact_values`.
     {
         let conn = rusqlite::Connection::open(&path).expect("sqlite");
-        let table = cell
-            .store()
-            .model()
-            .tables(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
-            .expect("claim tables")[0]
-            .table
-            .clone();
-        let id_col =
-            norn_projections::sqlite_ddl::quote_identifier(norn_projections::sqlite_ddl::ID_COLUMN);
         let deleted = conn
             .execute(
-                &format!("DELETE FROM \"{table}\" WHERE {id_col} = ?1"),
+                &format!("DELETE FROM \"{live_table}\" WHERE {id_col} = ?1"),
                 rusqlite::params![&claim_id],
             )
             .expect("delete live claim row");

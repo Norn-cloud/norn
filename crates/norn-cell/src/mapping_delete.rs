@@ -190,6 +190,7 @@ fn has_newer_landed_correction<E: SqlEngine>(
         ),
         crate::engine::params![],
     )?;
+    let mut matched = false;
     for raw in resolution_rows {
         let row = crate::engine::SqlRow(raw);
         let rec = crate::mapping_conflict_scoped::decode_dispute_resolution_row(&row)?;
@@ -198,20 +199,19 @@ fn has_newer_landed_correction<E: SqlEngine>(
             continue;
         }
         let landed = reader.verified_dispute_resolution_bundle(&rec)?;
-        if landed.input.mapping != bundle.input.mapping
-            || landed.input.dataset != bundle.input.dataset
-            || landed.input.connector_instance != bundle.input.connector_instance
-            || landed.input.partition != bundle.input.partition
-            || landed.raw.get("source").and_then(RuntimeValue::as_str) != Some(source)
-            || landed.raw.get("source_id").and_then(RuntimeValue::as_str) != Some(source_id)
+        if !matched
+            && landed.input.mapping == bundle.input.mapping
+            && landed.input.dataset == bundle.input.dataset
+            && landed.input.connector_instance == bundle.input.connector_instance
+            && landed.input.partition == bundle.input.partition
+            && landed.raw.get("source").and_then(RuntimeValue::as_str) == Some(source)
+            && landed.raw.get("source_id").and_then(RuntimeValue::as_str) == Some(source_id)
+            && landed_bundle_is_newer(reader, &landed, incoming_version)?
         {
-            continue;
-        }
-        if landed_bundle_is_newer(reader, &landed, incoming_version)? {
-            return Ok(true);
+            matched = true;
         }
     }
-    Ok(false)
+    Ok(matched)
 }
 
 /// Compare a landed bundle's source version parsed under its OWN declared
