@@ -1,0 +1,10 @@
+{
+  "name": "norn-authoring",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-canonical",
+    "norn-ir"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}
