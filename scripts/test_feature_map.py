@@ -417,6 +417,7 @@ impl ArtifactKind {
     pub const DEFAULT_KIND: Self = Self::Entity;
     pub fn as_str(&self) -> &'static str {
         let _ = SUPPORTED_IR_VERSION;
+        let _ = admit();
         "entity"
     }
 }
@@ -433,6 +434,16 @@ pub struct Envelope {
 ## Action Wire Contract
 
 Action requests carry `idempotencyKey` in the JSON body.
+
+<!-- # commented-inline-heading -->
+
+<!--
+## commented-multiline-heading
+-->
+
+\t## tab-indented-code-heading
+
+    ## space-indented-code-heading
 
 ```sh
 # fake-code-heading
@@ -497,6 +508,28 @@ Action requests carry `idempotencyKey` in the JSON body.
         )
         _write_domain(self.tmp, [feat_fenced_anchor])
         with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'fake-code-heading' not found"):
+            fm.load_registry(self.tmp)
+
+        # Headings inside HTML comments or indented code (tab or 4 spaces) MUST be refused.
+        for fake_slug in (
+            "commented-inline-heading",
+            "commented-multiline-heading",
+            "tab-indented-code-heading",
+            "space-indented-code-heading",
+        ):
+            feat_fake = _base_feature(
+                invariants=["demo-gate", f"law:docs/spec/core/01-values-identity.md#{fake_slug}"]
+            )
+            _write_domain(self.tmp, [feat_fake])
+            with self.assertRaisesRegex(fm.FeatureMapError, rf"cited symbol '{fake_slug}' not found"):
+                fm.load_registry(self.tmp)
+
+        # Calling `admit()` inside a function body MUST NOT satisfy `::admit` without an actual declaration.
+        feat_call_only = _base_feature(
+            invariants=["demo-gate", "checker:crates/norn-ir/src/lib.rs::admit"]
+        )
+        _write_domain(self.tmp, [feat_call_only])
+        with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'admit' not found"):
             fm.load_registry(self.tmp)
 
     def test_digest_tracks_gate_quint_models_invariant_files_and_ts_cli_sources(self):
@@ -582,8 +615,27 @@ Action requests carry `idempotencyKey` in the JSON body.
         d_ts = fm.compute_verification_digest(self.tmp, feat, use_git=False)
         self.assertNotEqual(d_inv, d_ts)
 
+        # Editing promoted-gates.json command flags (--max-steps 5 -> --max-steps 1) MUST change the digest.
+        (self.tmp / "verification/coverage-v1/promoted-gates.json").write_text(
+            json.dumps(
+                {
+                    "gates": [
+                        {
+                            "id": "demo-gate",
+                            "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --max-steps 1",
+                            "classifications": [{"subsystem": "transition-authority", "layer": "model"}],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        d_gate_flag = fm.compute_verification_digest(self.tmp, feat, use_git=False)
+        self.assertNotEqual(d_ts, d_gate_flag)
+
         # Also verify against the real repository registry that core-approval-fencing-and-timers
-        # includes hosted-timers.qnt and cli-authoring-compile-and-format includes tools/norn-ts/src/fmt.ts.
+        # includes hosted-timers.qnt, cli-authoring-compile-and-format includes tools/norn-ts/src/fmt.ts,
+        # and cli-cell-and-source-ops includes tools/norn-ts/src/worker.ts.
         domains, _, gate_meta = fm.load_registry(ROOT)
         coverage_subsystems = fm._load_coverage_subsystems(ROOT)
         approval_feat = next(
@@ -605,6 +657,18 @@ Action requests carry `idempotencyKey` in the JSON body.
             for p in fm._files_under_path(ROOT, sp, True)
         }
         self.assertIn("tools/norn-ts/src/fmt.ts", cli_files)
+
+        plan_apply_feat = next(
+            f for f in domains["authoring-and-cli"]["features"] if f["id"] == "cli-cell-and-source-ops"
+        )
+        plan_apply_files = {
+            p.relative_to(ROOT).as_posix()
+            for sp in fm._feature_digest_paths(
+                ROOT, plan_apply_feat, gate_meta=gate_meta, coverage_subsystems=coverage_subsystems
+            )
+            for p in fm._files_under_path(ROOT, sp, True)
+        }
+        self.assertIn("tools/norn-ts/src/worker.ts", plan_apply_files)
 
     def test_git_commit_verification_untracked_exclusion_and_symlink_rejection(self):
         def git(*args: str) -> str:

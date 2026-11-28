@@ -60,8 +60,8 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 
 ### Probe
 
-- **Drive:** Run `norn compile tools/norn-ts/fixtures/quickstart --org example --env local --out <tmp>/task.json`, `norn fmt --check <file>`, `norn profile <file>`, and standalone `norn question` / `norn dashboard` compilation against a fixture module.
-- **Observable end state:** Zero-Node/Bun native compilation emits canonical JSON IR deterministically; `fmt --check` and `profile` exit 0 on conformant files and refuse non-serializable callbacks or restricted imports.
+- **Drive:** Exercise both CLIs explicitly against the same fixtures: (1) Rust `norn`: run `norn compile tools/norn-ts/fixtures/quickstart --org example --env local --out <tmp>/rust-task.json`, `norn fmt --check <file>`, `norn profile <file>`, and `norn question <file>` / `norn dashboard <file>`; (2) TypeScript `norn-ts`: run `bun run tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out <tmp>/ts-task.json`, `bun run tools/norn-ts/src/cli.ts fmt --check <file>`, `bun run tools/norn-ts/src/cli.ts profile <file>`, and `bun run tools/norn-ts/src/cli.ts question <file>` / `bun run tools/norn-ts/src/cli.ts dashboard <file>`.
+- **Observable end state:** Both native Rust `norn` and TypeScript `norn-ts` (`tools/norn-ts/src/cli.ts`) emit identical canonical JSON IR deterministically; both `fmt --check` and `profile` exit 0 on conformant files and refuse non-serializable callbacks or restricted imports.
 - **Gotchas:**
   - Downstream Norn apps run with zero CI: `norn check --source` refuses `.github/workflows/` inside `norn.json` app directories.
 
@@ -95,13 +95,12 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 - `crates/norn-cli/src/source.rs`
 - `crates/norn-cell-do/src/dev/http.rs`
 - `crates/norn-cell-do/tests/hosted_install.rs`
-- `tools/norn-ts/src/cli.ts`
-- `tools/norn-ts/src/apply.ts`
+- `tools/norn-ts/src`
 
 ### Probe
 
-- **Drive:** Target a provisioned hosted cell / Rivet endpoint (or run the hosted tenant suite `crates/norn-cell-do/tests/hosted_install.rs` in CI or a Boat sandbox) with `norn cell plan --url <hosted-url> --org <org> --env <env> --token-env NORN_HOST_TOKEN <pack-dir>` followed by `norn cell apply` (or TS authoring CLI `norn plan` / `norn apply`), and test `norn source pull --crosswalk-env <VAR> --connector <connector.json> --extracted-at-ms <ms>` against a loopback mock/ERPNext endpoint.
-- **Observable end state:** Against a hosted cell, `cell plan` / `plan` prints diff without mutating cell state and `cell apply` / `apply` atomically installs the next revision; against `norn dev`, plan/apply fails closed with `409 defs.dev_sources_only`; `source pull` issues GET-only reads (`SRC-READ-1`), binds identity solely via the reviewed crosswalk (`SRC-IDENT-1`), and fails closed on read errors (`SRC-LIVE-1`).
+- **Drive:** Target a provisioned hosted cell / Rivet endpoint (or run the hosted tenant suite `crates/norn-cell-do/tests/hosted_install.rs` in CI or a Boat sandbox) exercising both CLIs explicitly: (1) Rust `norn`: `norn cell plan --url <hosted-url> --org <org> --env <env> --token-env NORN_HOST_TOKEN <pack-dir>` followed by `norn cell apply`; (2) TypeScript `norn-ts`: `bun run tools/norn-ts/src/cli.ts plan <pack-dir> --url <hosted-url> --org <org> --env <env> --token-env NORN_HOST_TOKEN` followed by `bun run tools/norn-ts/src/cli.ts apply ...`; and (3) `norn source pull --crosswalk-env <VAR> --connector <connector.json> --extracted-at-ms <ms>` against a loopback mock/ERPNext endpoint.
+- **Observable end state:** Against a hosted cell, both Rust `norn cell plan` and TS `norn-ts plan` print diff without mutating cell state and `norn cell apply` / `norn-ts apply` atomically install the next revision; against `norn dev`, both fail closed with `409 defs.dev_sources_only`; `norn source pull` issues GET-only reads (`SRC-READ-1`), binds identity solely via the reviewed crosswalk (`SRC-IDENT-1`), and fails closed on read errors (`SRC-LIVE-1`).
 - **Gotchas:**
   - `norn dev` explicitly rejects `/v1/cell/definitions:plan` and `/v1/cell/definitions:apply` with `409 defs.dev_sources_only` (`DEV-ONE-AUTHORITY-1`, `crates/norn-cell-do/src/dev/http.rs`); never target `norn dev` to prove hosted plan/apply.
   - Never pass bearer tokens or passwords directly as CLI arguments; `cell` and `source` intentionally accept `--token-env` / `--crosswalk-env` only.
@@ -139,10 +138,10 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 
 ### Probe
 
-- **Drive:** Run `norn check --source tools/norn-ts/fixtures/quickstart --org example --env local` (and `--artifacts <json> --context <ctx>`), then run `norn explain concept <id> --defs <json> --format json`.
-- **Observable end state:** `norn check` prints a canonical report with `admitted`, diagnostics, and `receiptSha256` without installing definitions; `norn explain` renders the shared JSON/text explanation with honest proof status.
+- **Drive:** Exercise both CLIs explicitly: (1) Rust `norn`: run `norn check --source tools/norn-ts/fixtures/quickstart --org example --env local` (and `--artifacts <json> --context <ctx>`), then `norn explain concept <id> --defs <json> --format json`; (2) TypeScript `norn-ts`: with `NORN_CHECKER_WASM_PKG` set, run `bun run tools/norn-ts/src/cli.ts check tools/norn-ts/fixtures/quickstart --org example --env local`, and inside a `norn.json` project run `bun run tools/norn-ts/src/cli.ts explain concept <id> --json`.
+- **Observable end state:** Both Rust `norn check` and TS `norn-ts check` print a canonical report with `admitted`, diagnostics, and `receiptSha256` without installing definitions; both Rust `norn explain` and TS `norn-ts explain` render the shared `norn/explain@2` JSON/text explanation with honest proof status.
 - **Gotchas:**
-  - `--artifacts` and `--source` are mutually exclusive; `--org` and `--env` must be passed together or both omitted for `norn.json` projects.
+  - `--artifacts` and `--source` are mutually exclusive in Rust `norn check`; `--org` and `--env` must be passed together or both omitted for `norn.json` projects; TS `norn-ts check` and `norn-ts explain` load the checker ABI via `NORN_CHECKER_WASM_PKG`.
 
 ---
 

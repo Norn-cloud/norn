@@ -1089,6 +1089,17 @@ def _gate_artifact_paths(
     return found
 
 
+def _feature_gate_ids(feature: dict) -> set[str]:
+    gate_ids: set[str] = set()
+    for surf in feature.get("surfaces", []):
+        if isinstance(surf, str) and surf.startswith("gate:"):
+            gate_ids.add(surf[len("gate:"):])
+    for inv in feature.get("invariants", []):
+        if isinstance(inv, str) and ":" not in inv:
+            gate_ids.add(inv)
+    return gate_ids
+
+
 def _feature_digest_paths(
     root: Path,
     feature: dict,
@@ -1097,18 +1108,13 @@ def _feature_digest_paths(
     coverage_subsystems: dict[str, dict] | None = None,
 ) -> list[str]:
     paths: set[str] = set(feature["sourcePaths"])
-    gate_ids: set[str] = set()
-    for surf in feature.get("surfaces", []):
-        if isinstance(surf, str) and surf.startswith("gate:"):
-            gate_ids.add(surf[len("gate:"):])
+    gate_ids = _feature_gate_ids(feature)
     for inv in feature.get("invariants", []):
         if not isinstance(inv, str):
             continue
         cited = _invariant_cited_path(inv)
         if cited is not None:
             paths.add(cited)
-        elif ":" not in inv:
-            gate_ids.add(inv)
     if gate_ids:
         if gate_meta is None:
             _, gate_meta = extract_gate_surfaces(root)
@@ -1126,7 +1132,13 @@ def compute_verification_digest(
     gate_meta: dict[str, dict] | None = None,
     coverage_subsystems: dict[str, dict] | None = None,
 ) -> str:
-    """Compute a deterministic `sha256:<hex>` over `sourcePaths`, cited invariant files, gate artifacts, and contract."""
+    """Compute a deterministic `sha256:<hex>` over `sourcePaths`, cited invariant files, gate definitions/artifacts, and contract."""
+    gate_ids = _feature_gate_ids(feature)
+    if gate_ids:
+        if gate_meta is None:
+            _, gate_meta = extract_gate_surfaces(root)
+        if coverage_subsystems is None:
+            coverage_subsystems = _load_coverage_subsystems(root)
     digest_paths = _feature_digest_paths(
         root,
         feature,
@@ -1134,7 +1146,25 @@ def compute_verification_digest(
         coverage_subsystems=coverage_subsystems,
     )
     source_digest = compute_source_digest(root, digest_paths, use_git=use_git)
+    cited_gates: dict[str, dict] = {}
+    cited_subsystems: dict[str, dict] = {}
+    if gate_ids and gate_meta is not None:
+        cited_sub_ids: set[str] = set()
+        for gid in sorted(gate_ids):
+            gate = gate_meta.get(gid)
+            if isinstance(gate, dict):
+                cited_gates[gid] = gate
+                for cls in gate.get("classifications", []):
+                    if isinstance(cls, dict) and isinstance(cls.get("subsystem"), str):
+                        cited_sub_ids.add(cls["subsystem"])
+        if coverage_subsystems is not None:
+            for sid in sorted(cited_sub_ids):
+                sub = coverage_subsystems.get(sid)
+                if isinstance(sub, dict):
+                    cited_subsystems[sid] = sub
     contract = {
+        "coverageSubsystems": cited_subsystems,
+        "gates": cited_gates,
         "invariants": sorted(feature["invariants"]),
         "probe": feature["probe"],
         "surfaces": sorted(feature["surfaces"]),
@@ -1205,25 +1235,45 @@ def staleness_info(
 
 
 def _markdown_heading_slugs(text: str) -> set[str]:
-    """Return GitHub heading anchor slugs from actual ATX Markdown headings outside fenced code blocks."""
+    """Return GitHub heading anchor slugs from actual ATX Markdown headings outside fenced code and HTML comments."""
     slugs: set[str] = set()
     counts: dict[str, int] = {}
     fence_char: str | None = None
     fence_len = 0
-    for line in text.splitlines():
-        fence_match = re.match(r"^\s{0,3}(`{3,}|~{3,})", line)
+    in_html_comment = False
+    for raw_line in text.splitlines():
+        if fence_char is not None:
+            close_match = re.match(r"^ {0,3}(`{3,}|~{3,})[ \t]*$", raw_line)
+            if close_match:
+                marker = close_match.group(1)
+                if marker[0] == fence_char and len(marker) >= fence_len:
+                    fence_char = None
+                    fence_len = 0
+            continue
+        line = raw_line
+        if in_html_comment:
+            end_idx = line.find("-->")
+            if end_idx == -1:
+                continue
+            line = line[end_idx + 3 :]
+            in_html_comment = False
+        # Strip inline HTML comments and handle opening multi-line HTML comments.
+        while "<!--" in line:
+            start_idx = line.find("<!--")
+            end_idx = line.find("-->", start_idx + 4)
+            if end_idx == -1:
+                line = line[:start_idx]
+                in_html_comment = True
+                break
+            line = line[:start_idx] + line[end_idx + 3 :]
+        fence_match = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
         if fence_match:
             marker = fence_match.group(1)
-            if fence_char is None:
-                fence_char = marker[0]
-                fence_len = len(marker)
-            elif marker[0] == fence_char and len(marker) >= fence_len and line[fence_match.end() :].strip() == "":
-                fence_char = None
-                fence_len = 0
+            fence_char = marker[0]
+            fence_len = len(marker)
             continue
-        if fence_char is not None:
-            continue
-        heading_match = re.match(r"^\s{0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$", line)
+        # Only 0-3 ASCII spaces may precede an ATX heading; leading tabs or 4+ spaces are indented code.
+        heading_match = re.match(r"^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$", line)
         if not heading_match:
             continue
         raw = heading_match.group(1)
@@ -1283,7 +1333,7 @@ def _strip_leading_rust_attrs(text: str) -> str:
     while idx < n:
         while idx < n and text[idx].isspace():
             idx += 1
-        if not text.startswith("#[", idx):
+        if not (text.startswith("#[", idx) or text.startswith("#![", idx)):
             break
         depth = 0
         while idx < n:
@@ -1378,13 +1428,19 @@ def _rust_top_level_declared_items(body: str, *, kinds: tuple[str, ...]) -> set[
     kind_set = set(kinds)
     decl_re = re.compile(
         r"^(?:(?:pub(?:\([^)]*\))?|default|async|unsafe|extern(?:\s+\"[^\"]*\")?)\s+)*"
-        r"(const\s+fn|fn|const|type|static|struct|enum|trait|mod)\s+([A-Za-z_][A-Za-z0-9_]*)\b"
+        r"(const\s+(?:unsafe\s+)?fn|fn|const|type|static|struct|enum|trait|mod)\s+([A-Za-z_][A-Za-z0-9_]*)\b"
     )
+    macro_re = re.compile(r"^macro_rules!\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 
     def record(raw_stmt: str) -> None:
         stmt = _strip_leading_rust_attrs(raw_stmt)
         if not stmt:
             return
+        if "macro" in kind_set:
+            macro_match = macro_re.match(stmt)
+            if macro_match:
+                items.add(macro_match.group(1))
+                return
         match = decl_re.match(stmt)
         if not match:
             return
@@ -1504,9 +1560,9 @@ def _rust_qualified_symbol_exists(masked: str, parts: list[str]) -> bool:
             if len(rest) == 1:
                 declared = _rust_top_level_declared_items(
                     body,
-                    kinds=("fn", "const", "type", "static", "struct", "enum", "trait", "mod"),
+                    kinds=("fn", "const", "type", "static", "struct", "enum", "trait", "mod", "macro"),
                 )
-                if rest[0] in declared or re.search(rf"\bmacro_rules!\s+{re.escape(rest[0])}\b", body):
+                if rest[0] in declared:
                     return True
             elif _rust_qualified_symbol_exists(body, rest):
                 return True
@@ -1549,8 +1605,11 @@ def _symbol_in_file(text: str, symbol: str, *, sep: str, suffix: str) -> bool:
         if any(not part for part in parts):
             return False
         if len(parts) == 1:
-            whole = rf"(?<![A-Za-z0-9_]){re.escape(parts[0])}(?![A-Za-z0-9_])"
-            return bool(re.search(whole, masked))
+            declared = _rust_top_level_declared_items(
+                masked,
+                kinds=("fn", "const", "type", "static", "struct", "enum", "trait", "mod", "macro"),
+            )
+            return parts[0] in declared
         return _rust_qualified_symbol_exists(masked, parts)
     whole = rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])"
     return bool(re.search(whole, text))
