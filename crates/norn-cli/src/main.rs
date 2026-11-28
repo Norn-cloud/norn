@@ -8,6 +8,7 @@ mod cli_contract;
 mod eval;
 mod explain;
 mod mcp;
+mod red_team;
 mod remote;
 mod source;
 use clap::{Args, Parser, Subcommand};
@@ -134,14 +135,7 @@ pub(crate) fn run_check(artifacts: &Path, context: &Path) -> Result<(String, boo
         cell::read_regular_file_bounded(artifacts, MAX_CHECK_BYTES, "16 MiB check input limit")?;
     let context =
         cell::read_regular_file_bounded(context, MAX_CHECK_BYTES, "16 MiB check input limit")?;
-    let report = norn_checker_wasm::check_artifact_set_json(&artifacts, &context)
-        .map_err(|error| error.to_string())?;
-    let value: serde_json::Value =
-        serde_json::from_str(&report).map_err(|error| error.to_string())?;
-    Ok((
-        report,
-        value.get("admitted").and_then(serde_json::Value::as_bool) == Some(true),
-    ))
+    red_team::check_with_red_team(&artifacts, &context)
 }
 
 fn run_eval(
