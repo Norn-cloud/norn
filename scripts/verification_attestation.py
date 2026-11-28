@@ -41,7 +41,6 @@ coverage_manifest = _sibling("coverage_manifest")
 
 
 IGNORED_EVIDENCE_DIRS = {".git", ".turbo", "__pycache__", "node_modules", "target"}
-EXPECTED_HAX_COMMIT = "37ecb8240fc237377f63614622650190a45617ff"
 EXPECTED_QUINT_SHA256 = "939b64095b706017f2f202c6f99c860c40be7c31bddc2b98557316e50f42cd7f"
 EXPECTED_APALACHE_VERSION = "0.56.1"
 EXPECTED_APALACHE_JAR_SHA256 = "4753c0ebb2cbb266e2c6ac19ab5ca3827d726cc80fd1fc5d7c1eeb64736cd60b"
@@ -419,6 +418,9 @@ def selector_is_declared(path: Path, selector: str) -> bool:
     elif path.suffix == ".rs" and selector_kind in {"test", "predicate", "harness"}:
         code = strip_comments_and_strings(source, line_marker="//", block=("/*", "*/"))
         return re.search(rf"\bfn\s+{re.escape(selector_name)}\b", code) is not None
+    elif path.suffix == ".rs" and selector_kind == "theorem":
+        code = strip_comments_and_strings(source, line_marker="//", block=("/*", "*/"))
+        return re.search(rf"\bproof\s+fn\s+{re.escape(selector_name)}\b", code) is not None
     elif path.suffix == ".py" and selector_kind == "checker":
         tree = ast.parse(source, filename=str(path))
         return any(
@@ -485,17 +487,8 @@ def collect_tool_versions(root: Path) -> dict[str, str]:
         raise ValueError("pinned ontology Python environment is missing")
     tool_root = root / "target/verification-tools"
     rustup_home = tool_root / "rustup"
-    extraction_rustc = (
-        rustup_home
-        / "toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu/bin/rustc"
-    )
-    hax_source = tool_root / "sources/hax"
-    if not rustup_home.is_dir() or not extraction_rustc.is_file():
+    if not rustup_home.is_dir():
         raise ValueError("pinned verification Rust toolchain is missing")
-    require_clean_source_tree(hax_source, label="hax")
-    hax_commit = run("git", "rev-parse", "HEAD", cwd=hax_source)
-    if hax_commit != EXPECTED_HAX_COMMIT:
-        raise ValueError(f"pinned hax source is at unexpected commit: {hax_commit}")
     extraction_env = {
         "OPAMROOT": str(tool_root / "opam-root"),
         "OPAMSWITCH": "norn-verification-5.4.1",
@@ -593,11 +586,6 @@ def collect_tool_versions(root: Path) -> dict[str, str]:
             "from importlib.metadata import version; print(version('rdflib'))",
             cwd=root,
         ),
-        "fstar": run(str(pinned_bin / "fstar.exe"), "--version", cwd=root),
-        "cargoHax": run(str(pinned_bin / "cargo-hax"), "--version", cwd=root),
-        "haxSourceCommit": hax_commit,
-        "haxSourceTree": run("git", "rev-parse", "HEAD^{tree}", cwd=hax_source),
-        "haxRustc": run(str(extraction_rustc), "--version", cwd=root),
         "opamSwitchState": run(
             str(tool_root / "bin/opam"),
             "list",
