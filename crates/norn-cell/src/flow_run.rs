@@ -144,6 +144,11 @@ pub struct RunStart {
     /// Who started it, when the host recorded a verified principal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_by: Option<RunStarter>,
+    /// STEP-PIN-1: `mapping_id -> {connector_id}` snapshot of persisted
+    /// `source.Connection` bindings captured atomically at run start, so
+    /// binding-only drift is detected even when definitions versions match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_bindings: Option<BTreeMap<String, BTreeSet<String>>>,
 }
 
 impl RunStart {
@@ -608,9 +613,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .collect())
     }
 
-    /// Source object types read by settled `norn.question@1` steps on
-    /// `(world, object_type, run_id)`, expanded transitively across Run types.
-    /// Empty for non-run objects and for runs without settled question reads.
+    /// Source object types persisted at settlement time for
+    /// `(world, object_type, run_id)` (already transitively frozen across the
+    /// upstream runs and sources this run depended on). Empty for non-run
+    /// objects and for runs without settled question reads. Never traverses the
+    /// live type-wide ledger, so later unrelated runs of the same type cannot
+    /// retroactively alter point-read grants on an already-settled run.
     ///
     /// # Errors
     /// SQL engine or decode errors.
@@ -627,8 +635,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             params![world, object_type, run_id],
         )?;
-        let direct = rows
-            .into_iter()
+        rows.into_iter()
             .map(|values| {
                 let row = SqlRow(values);
                 Ok(RunQuestionSource {
@@ -636,8 +643,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     requires_sources: row.get::<i64>(1)? != 0,
                 })
             })
-            .collect::<Result<Vec<_>, CellError>>()?;
-        self.expand_transitive_question_sources(world, direct)
+            .collect()
     }
 
     /// Distinct source object types read by any settled `norn.question@1` step

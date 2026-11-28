@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use governed::GovernedCommit as _;
 use norn_api::analytics_routes::{
-    EngineAnswer, EngineCall, ExportQuery, Transport, export_objects,
+    EngineAnswer, EngineCall, ExportQuery, Transport, export_objects, profile_objects,
 };
 use norn_api::authz::{AccessRequest, Authorizer, Operation, ReadCapability, ReadRequest};
 use norn_api::definition_routes::DefinitionKinds;
@@ -32,7 +32,10 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_api::sources::{Sources, Step, Trigger};
 use norn_api::timers::{DueWork, next_due};
-use norn_cell::analytics::{AnalyticalEngineId, EngineCapabilities};
+use norn_cell::analytics::{
+    AnalyticalEngineId, EngineCapabilities, FrontierResponse, ProfileRequest, ProfileResponse,
+    ReadSnapshot, SnapshotProvenance, Source,
+};
 use norn_cell::compute::{ALL_MEMBERS, Engine, Freshness, QueryContext, QueryResult, QueryRow};
 use norn_cell::engine::NativeEngine;
 use norn_cell::flow_run::RunStarter;
@@ -77,6 +80,9 @@ const PARTIAL: Option<&str> = Some("Bearer fixture:partial@demo");
 /// permissions, but is denied row-level (`ALL_MEMBERS`/row) access on
 /// `canon.OrderLine`.
 const ROW_BLIND: Option<&str> = Some("Bearer fixture:row_blind@demo");
+/// Holds `canon.OrderLine` and Run grants, but is denied read access on
+/// `canon.Delivery` (used to verify per-run isolation from later unrelated runs).
+const ORDER_ONLY: Option<&str> = Some("Bearer fixture:order_only@demo");
 
 const TEST_FIXTURES: &[(&str, &[&str])] = &[
     ("admin@demo", &["admin"]),
@@ -84,6 +90,7 @@ const TEST_FIXTURES: &[(&str, &[&str])] = &[
     ("blind@demo", &["member"]),
     ("partial@demo", &["member"]),
     ("row_blind@demo", &["member"]),
+    ("order_only@demo", &["member"]),
 ];
 
 const T0: u64 = 1_794_484_800_000;
@@ -108,6 +115,14 @@ const TIMER_QUESTION_GUARD_IR: &str =
 const ERPNEXT_CONFIG: &str = r#"[
   {"id": "erpnext.rest", "system": "erpnext", "label": "ERPNext REST",
    "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+   "instance": "sandbox", "baseUrl": "http://erpnext-rest:8000",
+   "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"],
+   "headers": {"X-Frappe-Site-Name": "frontend"}}
+]"#;
+
+const ERPNEXT_ALT_CONFIG: &str = r#"[
+  {"id": "erpnext.rest", "system": "erpnext", "label": "ERPNext REST",
+   "connector": "erpnext.alt.connector", "mapping": "erpnext.rest.mapping",
    "instance": "sandbox", "baseUrl": "http://erpnext-rest:8000",
    "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"],
    "headers": {"X-Frappe-Site-Name": "frontend"}}
@@ -287,15 +302,23 @@ impl Authorizer for QuestionTestPolicy {
     }
 
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        if let Some(current) = self.caller.current()
-            && request.access.resource().object_type == "canon.OrderLine"
-            && (current.subject_id == "blind@demo"
-                || (current.subject_id == "partial@demo"
-                    && request.capability == ReadCapability::Values)
-                || (current.subject_id == "row_blind@demo"
-                    && request.access.resource().id != "canon.OrderLine"))
-        {
-            return Err(norn_api::authz::read_denied());
+        if let Some(current) = self.caller.current() {
+            let ty = request.access.resource().object_type.as_str();
+            if ty == "ops.run_summary" {
+                return Ok(());
+            }
+            if ty == "canon.OrderLine"
+                && (current.subject_id == "blind@demo"
+                    || (current.subject_id == "partial@demo"
+                        && request.capability == ReadCapability::Values)
+                    || (current.subject_id == "row_blind@demo"
+                        && request.access.resource().id != "canon.OrderLine"))
+            {
+                return Err(norn_api::authz::read_denied());
+            }
+            if ty == "canon.Delivery" && current.subject_id == "order_only@demo" {
+                return Err(norn_api::authz::read_denied());
+            }
         }
         self.reads.read(request)
     }
@@ -903,7 +926,47 @@ impl QuestionCell {
         .expect("run_due_with_runtime")
     }
 
+    fn install_delivery_question(&self, expected_version: u64) {
+        let (status, doc) = self.call("GET", "/v1/questions:metrics", ADMIN, "");
+        assert_eq!(status, 200, "{doc}");
+        let metric = doc["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["objectType"] == "canon.Delivery" && m["expression"] == "quantity")
+            .expect("canon.Delivery.quantity metric")["name"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let body = json!({
+            "kind": "question",
+            "id": QUESTION_ID,
+            "expectedVersion": expected_version,
+            "payload": {
+                "irVersion": "0.1",
+                "name": QUESTION_ID,
+                "objectSet": "canon.Delivery",
+                "calendar": "iso_utc",
+                "aggregate": [{"metric": metric}],
+                "groupBy": [
+                    {"path": {"property": "occurred_at"}, "grain": "day"},
+                    {"path": {"property": "unit"}},
+                    {"path": {"property": "currency"}}
+                ],
+                "window": {"start": "2026-01-01T00:00:00Z", "end": "2027-01-01T00:00:00Z"},
+                "freshness": {"kind": "live", "maxAgeMs": 60_000}
+            }
+        });
+        let (status, installed) =
+            self.call("POST", "/v1/definitions:install", ADMIN, &body.to_string());
+        assert_eq!(status, 200, "{installed}");
+    }
+
     fn sync_erpnext(&self, now_ms: u64) {
+        self.sync_erpnext_with(ERPNEXT_CONFIG, now_ms);
+    }
+
+    fn sync_erpnext_with(&self, config_json: &str, now_ms: u64) {
         let doc: Value = serde_json::from_str(
             &std::fs::read_to_string(
                 root().join("fixtures/connectors/rest/erpnext.responses.json"),
@@ -936,7 +999,7 @@ impl QuestionCell {
             "key:secret".to_owned(),
         )]);
         let mut sources =
-            Sources::with_allowed_hosts(&self.scope, ERPNEXT_CONFIG, &secrets, SANDBOX_HOSTS)
+            Sources::with_allowed_hosts(&self.scope, config_json, &secrets, SANDBOX_HOSTS)
                 .expect("src");
         sources
             .claim("erpnext.rest", Trigger::Manual, "user:admin@demo", now_ms)
@@ -2650,5 +2713,387 @@ fn hosted_tenant_run_due_enforces_configured_unsynced_connection() {
     assert_eq!(
         melt_resp.status, 404,
         "downstream action must be withheld when configured secondary connection is unsynced"
+    );
+}
+
+struct MockProfileTransport {
+    schema_pin: String,
+}
+
+impl Transport for MockProfileTransport {
+    fn capabilities(&self) -> EngineCapabilities {
+        EngineCapabilities::of(AnalyticalEngineId::DuckDb)
+    }
+
+    fn resumed(&self) -> Option<EngineAnswer> {
+        None
+    }
+
+    fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
+        let body = match call.op.as_str() {
+            "frontier" => serde_json::to_string(&FrontierResponse { frontier: u64::MAX }).unwrap(),
+            "profile" => {
+                let req: ProfileRequest = serde_json::from_str(&call.body).unwrap();
+                let snapshot = match req.source {
+                    Source::Mirror {
+                        world,
+                        table,
+                        frontier,
+                        scope,
+                        ..
+                    } => ReadSnapshot::Mirror {
+                        world,
+                        table,
+                        frontier,
+                        scope,
+                        model_pin: req.model_pin,
+                        schema_pin: self.schema_pin.clone(),
+                    },
+                    Source::Dataset { .. } => None.expect("expected mirror source for profile"),
+                };
+                serde_json::to_string(&ProfileResponse {
+                    rows: 1,
+                    quarantined: 0,
+                    columns: Vec::new(),
+                    provenance: SnapshotProvenance {
+                        engine: AnalyticalEngineId::DuckDb,
+                        tenant: req.tenant,
+                        snapshot,
+                        freshness: Freshness::Exact,
+                    },
+                })
+                .unwrap()
+            }
+            _ => None.expect("unexpected analytics operation"),
+        };
+        Some(EngineAnswer {
+            op: call.op.clone(),
+            digest: call.digest.clone(),
+            status: 200,
+            body,
+        })
+    }
+}
+
+fn call_profile(
+    cell: &QuestionCell,
+    object_type: &str,
+    auth: Option<&str>,
+    transport: &dyn Transport,
+) -> Result<norn_api::object_profile::NornObjectProfile, Refusal> {
+    let scope_q = ScopeQuery {
+        org_id: Some("org_demo".to_owned()),
+        environment_id: Some("dev".to_owned()),
+    };
+    let _req = norn_cell_do::principal::RequestScope::new(&cell.principals);
+    let actor =
+        norn_cell_do::principal::PrincipalResolver::resolve(&cell.principals, auth, T0_SECS);
+    profile_objects(
+        &cell.host,
+        &scope_q,
+        actor.as_deref(),
+        object_type,
+        &TestObjectAccess,
+        transport,
+    )
+}
+
+fn call_export(cell: &QuestionCell, object_type: &str, auth: Option<&str>) -> Result<(), Refusal> {
+    let export_query = ExportQuery {
+        org_id: Some("org_demo".to_owned()),
+        environment_id: Some("dev".to_owned()),
+        columns: "status".to_owned(),
+        format: Some("jsonl".to_owned()),
+    };
+    let _req = norn_cell_do::principal::RequestScope::new(&cell.principals);
+    let actor =
+        norn_cell_do::principal::PrincipalResolver::resolve(&cell.principals, auth, T0_SECS);
+    export_objects(
+        &cell.host,
+        &export_query,
+        actor.as_deref(),
+        object_type,
+        &TestObjectAccess,
+        &PanicTransport,
+    )
+}
+
+/// Round 4 Blocker 2 (Inherited `RunQuestionRead` clearance on transform reads
+/// and analytical object profiles): a caller with direct Run grants lacking
+/// inherited question source grants (`BLIND`, `PARTIAL`) is refused with 403
+/// on both `GET /v1/transforms/{id}/rows` and `profile_objects`, while a
+/// caller holding inherited grants (`ADMIN`) is allowed on both.
+#[test]
+fn transform_reads_and_analytical_profile_enforce_inherited_question_clearance() {
+    let cell = QuestionCell::open(true, false);
+    cell.install_order_line_question(60_000, None);
+    cell.install_guard_flow(None);
+    cell.sync_erpnext(T0);
+
+    let (status, run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": GUARD_FLOW_ID, "runId": "q-tf-prof-1" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{run}");
+    assert_eq!(run["state"], json!("completed"), "{run}");
+
+    let compile_body = json!({
+        "id": "ops.run_summary",
+        "title": "Run summary",
+        "version": "0.1.0",
+        "sql": "SELECT r.run_id AS run_id, r.status AS status FROM \"ops.QuestionGuardRun\" r"
+    });
+    let (status, compiled) = cell.call(
+        "POST",
+        "/v1/transforms:compile",
+        ADMIN,
+        &compile_body.to_string(),
+    );
+    assert_eq!(status, 200, "{compiled}");
+    assert_eq!(compiled["admitted"], json!(true), "{compiled}");
+    let transform_artifact: ArtifactEnvelope =
+        serde_json::from_value(compiled["artifact"].clone()).expect("transform artifact");
+    cell.host
+        .install_artifacts(std::slice::from_ref(&transform_artifact), 100)
+        .expect("install transform");
+
+    let (blind_tf_status, blind_tf) =
+        cell.call("GET", "/v1/transforms/ops.run_summary/rows", BLIND, "");
+    assert_eq!(
+        blind_tf_status, 403,
+        "BLIND must be denied transform reads: {blind_tf}"
+    );
+    let (partial_tf_status, partial_tf) =
+        cell.call("GET", "/v1/transforms/ops.run_summary/rows", PARTIAL, "");
+    assert_eq!(
+        partial_tf_status, 403,
+        "PARTIAL must be denied transform reads: {partial_tf}"
+    );
+    let (admin_tf_status, admin_tf) =
+        cell.call("GET", "/v1/transforms/ops.run_summary/rows", ADMIN, "");
+    assert_eq!(admin_tf_status, 200, "{admin_tf}");
+    assert_eq!(
+        admin_tf["rows"].as_array().unwrap().len(),
+        1,
+        "ADMIN with inherited clearance must read transform rows: {admin_tf}"
+    );
+
+    let blind_prof = call_profile(&cell, "ops.QuestionGuardRun", BLIND, &PanicTransport)
+        .expect_err("BLIND analytical profile must deny");
+    assert_eq!(blind_prof.status, 403, "{blind_prof:?}");
+    let partial_prof = call_profile(&cell, "ops.QuestionGuardRun", PARTIAL, &PanicTransport)
+        .expect_err("PARTIAL analytical profile must deny");
+    assert_eq!(partial_prof.status, 403, "{partial_prof:?}");
+
+    let schema_pin = cell
+        .host
+        .analytics_tables()
+        .expect("tables")
+        .into_iter()
+        .find(|t| t.name == "ops.QuestionGuardRun")
+        .expect("run table")
+        .pin;
+    let admin_prof = call_profile(
+        &cell,
+        "ops.QuestionGuardRun",
+        ADMIN,
+        &MockProfileTransport { schema_pin },
+    )
+    .expect("ADMIN analytical profile must succeed");
+    assert_eq!(admin_prof.rows, 1);
+}
+
+/// Round 4 Should 3 (`STEP-PIN-1` binding-only drift): changing ONLY the
+/// persisted `source.Connection` binding (`connector_id`) while keeping the
+/// definitions version and all connector artifact versions unchanged refuses
+/// the in-flight `norn.question@1` step with `question_step.definition_changed`.
+#[test]
+fn source_connection_binding_only_drift_refuses_in_flight_question_step() {
+    let mut alt_conn: ArtifactEnvelope =
+        load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json");
+    alt_conn.artifact_id = "erpnext.alt.connector".to_owned();
+    alt_conn.name = "Alt ERPNext connector".to_owned();
+
+    let cell = QuestionCell::open_with(true, false, None, std::slice::from_ref(&alt_conn), None);
+    cell.install_order_line_question(60_000, None);
+    cell.install_decide_then_question_flow();
+    cell.sync_erpnext(T0);
+
+    let (status, opened) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        MEMBER,
+        &json!({ "flow": DECIDE_FLOW_ID, "runId": "q-bind-drift-1" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{opened}");
+    assert_eq!(opened["state"], json!("awaiting_perform_ask_review"));
+
+    let defs_ver_before = cell
+        .host
+        .active_definitions_version()
+        .expect("defs version")
+        .expect("installed");
+    // Re-bind ONLY the `source.Connection` row (`erpnext.rest.mapping` -> `erpnext.alt.connector`)
+    // without touching definitions or connector artifact versions.
+    cell.sync_erpnext_with(ERPNEXT_ALT_CONFIG, T0.saturating_add(1_000));
+    assert_eq!(
+        cell.host
+            .active_definitions_version()
+            .expect("defs version")
+            .expect("installed"),
+        defs_ver_before,
+        "binding-only drift must not bump definitions version"
+    );
+
+    let pending = format!("{SCOPE}&state=pending");
+    let (_, page) = cell.call_at(
+        "GET",
+        "/v1/decisions",
+        &pending,
+        ADMIN,
+        "",
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(page["total"], json!(1), "{page}");
+    let decision_id = page["items"][0]["id"].as_str().unwrap().to_owned();
+
+    let (status, decided) = cell.call_at(
+        "POST",
+        &format!("/v1/decisions/{decision_id}:decide"),
+        SCOPE,
+        ADMIN,
+        &json!({ "choice": "approve", "idempotencyKey": "k-bind-drift" }).to_string(),
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["run"]["state"],
+        json!("failed_refused"),
+        "{decided}"
+    );
+    assert_eq!(cell.melt_status(), 404);
+    let (_, run_obj) = cell.call(
+        "GET",
+        "/v1/objects/ops.DecideThenQuestionRun/q-bind-drift-1",
+        ADMIN,
+        "",
+    );
+    assert_eq!(
+        run_obj["values"]["slots"]["failure"],
+        json!({ "_tag": "Refused", "code": question_step_codes::DEFINITION_CHANGED }),
+        "{run_obj}"
+    );
+}
+
+fn assert_run_point_read(
+    cell: &QuestionCell,
+    object_type: &str,
+    run_id: &str,
+    auth: Option<&str>,
+    expected: u16,
+) {
+    assert_eq!(
+        cell.call("GET", &format!("/v1/runs/{run_id}"), auth, "").0,
+        expected
+    );
+    assert_eq!(
+        cell.call(
+            "GET",
+            &format!("/v1/objects/{object_type}/{run_id}"),
+            auth,
+            ""
+        )
+        .0,
+        expected
+    );
+}
+
+/// Round 4 Should 4 (Per-run settlement evidence on point reads vs type-wide
+/// union on whole-type reads):
+/// (a) Transitive Run-reading-Run inheritance still holds on point reads.
+/// (b) An already-settled Run A (and a transitive Run T that depended on Run A)
+///     remain readable by a caller authorized for Run A's sources (`ORDER_ONLY`)
+///     even after a later unrelated Run B of the same type reads an additional
+///     restricted source (`canon.Delivery`), while whole-type reads deny.
+#[test]
+fn point_reads_use_persisted_per_run_settlement_evidence_without_later_run_taint() {
+    let cell = QuestionCell::open(true, false);
+    cell.install_order_line_question(60_000, None);
+    cell.install_measurable_guard_flow();
+    cell.install_run_a_question();
+    cell.install_transitive_flow();
+    cell.sync_erpnext(T0);
+
+    let (status, first_run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": GUARD_FLOW_ID, "runId": "q-iso-a" }).to_string(),
+        T0_SECS.saturating_add(5),
+    );
+    assert_eq!(status, 201, "{first_run}");
+    assert_eq!(first_run["state"], json!("completed"), "{first_run}");
+
+    let (status, transitive_run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": TRANSITIVE_FLOW_ID, "runId": "q-iso-trans" }).to_string(),
+        T0_SECS.saturating_add(6),
+    );
+    assert_eq!(status, 201, "{transitive_run}");
+    assert_eq!(
+        transitive_run["state"],
+        json!("completed"),
+        "{transitive_run}"
+    );
+
+    // Update the question to read a second restricted source (`canon.Delivery`)
+    // and run a later unrelated Run B of the SAME `ops.QuestionGuardRun` type.
+    cell.install_delivery_question(1);
+    let (status, later_run) = cell.call_at(
+        "POST",
+        "/v1/runs",
+        SCOPE,
+        ADMIN,
+        &json!({ "flow": GUARD_FLOW_ID, "runId": "q-iso-b" }).to_string(),
+        T0_SECS.saturating_add(7),
+    );
+    assert_eq!(status, 201, "{later_run}");
+
+    // (a) Transitive inheritance still denies BLIND on Run T point reads.
+    assert_run_point_read(&cell, "ops.TransitiveGuardRun", "q-iso-trans", BLIND, 404);
+
+    // (b) ORDER_ONLY is denied on Run B (`canon.Delivery`) and on whole-type
+    // reads over `ops.QuestionGuardRun`, yet still reads Run A and Run T by ID.
+    assert_run_point_read(&cell, "ops.QuestionGuardRun", "q-iso-b", ADMIN, 200);
+    assert_run_point_read(&cell, "ops.QuestionGuardRun", "q-iso-b", ORDER_ONLY, 404);
+    assert_run_point_read(&cell, "ops.QuestionGuardRun", "q-iso-a", ORDER_ONLY, 200);
+    assert_run_point_read(
+        &cell,
+        "ops.TransitiveGuardRun",
+        "q-iso-trans",
+        ORDER_ONLY,
+        200,
+    );
+    assert_eq!(
+        call_export(&cell, "ops.QuestionGuardRun", ORDER_ONLY)
+            .expect_err("whole-type export must deny ORDER_ONLY")
+            .status,
+        403
+    );
+    assert_eq!(
+        call_profile(&cell, "ops.QuestionGuardRun", ORDER_ONLY, &PanicTransport)
+            .expect_err("whole-type profile must deny ORDER_ONLY")
+            .status,
+        403
     );
 }

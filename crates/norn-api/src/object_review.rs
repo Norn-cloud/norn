@@ -685,7 +685,11 @@ pub fn get_quarantined_objects<E: SqlEngine>(
     let mut start = None;
     let mut after: Option<String> = None;
     let mut scanned = 0usize;
-    let mut candidates: Vec<(ObjectRecord, Vec<GatedFinding>)> = Vec::new();
+    let mut candidates: Vec<(
+        ObjectRecord,
+        Vec<norn_cell::flow_run::RunQuestionSource>,
+        Vec<GatedFinding>,
+    )> = Vec::new();
     let exhausted = loop {
         let (batch, done) = locked(host, access, &mut start, |reader| {
             if !reader.model().has_type(object_type) {
@@ -701,22 +705,29 @@ pub fn get_quarantined_objects<E: SqlEngine>(
                     .observation_is_quarantined(MAIN_WORLD, &row)
                     .map_err(Refusal::host)?
                 {
+                    let sources = reader
+                        .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+                        .map_err(Refusal::host)?;
                     let open: Vec<DataQualityFinding> = reader
                         .observation_findings(MAIN_WORLD, &row.object_type, &row.id)
                         .map_err(Refusal::host)?
                         .into_iter()
                         .filter(|finding| finding.status == norn_ir::DataQualityFindingStatus::Open)
                         .collect();
-                    held.push((row, gate_findings(reader, open).map_err(Refusal::host)?));
+                    held.push((
+                        row,
+                        sources,
+                        gate_findings(reader, open).map_err(Refusal::host)?,
+                    ));
                 } else {
-                    held.push((row, Vec::new()));
+                    held.push((row, Vec::new(), Vec::new()));
                 }
             }
             Ok((held, done))
         })?;
         scanned = scanned.saturating_add(batch.len());
-        after = batch.last().map(|(row, _)| row.id.clone());
-        candidates.extend(batch.into_iter().filter(|(_, open)| !open.is_empty()));
+        after = batch.last().map(|(row, _, _)| row.id.clone());
+        candidates.extend(batch.into_iter().filter(|(_, _, open)| !open.is_empty()));
         if done {
             break true;
         }
@@ -727,10 +738,9 @@ pub fn get_quarantined_objects<E: SqlEngine>(
     // Authorization runs outside the cell lock, row by row.
     let readable: Vec<_> = candidates
         .into_iter()
-        .filter(|(row, _)| {
-            [Population, Values]
-                .into_iter()
-                .all(|capability| permitted(host, access, &actor, row, capability))
+        .filter_map(|(row, sources, open)| {
+            crate::object_routes::row_and_sources_readable(host, access, &actor, &row, &sources)
+                .then_some((row, open))
         })
         .collect();
     // OBS-LINK-DISPUTE-1: a held link counts only where it is disclosed, at

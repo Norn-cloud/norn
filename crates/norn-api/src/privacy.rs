@@ -563,7 +563,7 @@ pub fn reveal<E: SqlEngine>(
     }
     let (_epoch, actor) =
         crate::object_routes::collection(host, scope, actor, object_type, access)?;
-    let (row, markings) = {
+    let (row, markings, sources) = {
         let cell = host.cell()?;
         let reader = cell.store().read();
         if !reader.model().has_type(object_type) {
@@ -583,9 +583,12 @@ pub fn reveal<E: SqlEngine>(
             .effective_markings(MAIN_WORLD, &row.object_type, &row.id, None)
             .map_err(Refusal::host)?
             .ok_or_else(crate::object_routes::not_found)?;
-        (row, markings)
+        let sources = reader
+            .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+            .map_err(Refusal::host)?;
+        (row, markings, sources)
     };
-    if !crate::object_routes::row_readable(host, access, &actor, &row) {
+    if !crate::object_routes::row_and_sources_readable(host, access, &actor, &row, &sources) {
         return Err(crate::object_routes::not_found());
     }
     let ids = markings

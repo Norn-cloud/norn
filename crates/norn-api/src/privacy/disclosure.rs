@@ -727,7 +727,7 @@ pub(crate) fn admit_export<E: SqlEngine>(
         let reader = store.read();
         let start = crate::object_routes::version_of(&reader)?;
         let leave = stored_values_leave(host, &reader, object_type)?
-            && crate::object_routes::inherited_export_permitted(
+            && crate::object_routes::inherited_type_permitted(
                 host,
                 &reader,
                 access,

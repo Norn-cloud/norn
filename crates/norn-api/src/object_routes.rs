@@ -110,6 +110,20 @@ pub(crate) fn row_readable<E: SqlEngine>(
         .all(|capability| permitted(host, access, actor, row, capability))
 }
 
+/// Whether the caller holds Population and Values on `row` and on every
+/// inherited `RunQuestionRead` source recorded on it.
+pub(crate) fn row_and_sources_readable<E: SqlEngine>(
+    host: &DevHost<E>,
+    access: &dyn ObjectAccess,
+    actor: &str,
+    row: &ObjectRecord,
+    sources: &[norn_cell::flow_run::RunQuestionSource],
+) -> bool {
+    row_readable(host, access, actor, row)
+        && question_sources_permitted(host, access, actor, sources, Population)
+        && question_sources_permitted(host, access, actor, sources, Values)
+}
+
 /// QUESTION-STEP-1 / PRIVACY-3: a Run object that persisted settled
 /// `norn.question@1` outputs or `StaleSource` source identifiers inherits the
 /// read gate of every source object type those questions read, so an ordinary
@@ -149,9 +163,10 @@ pub(crate) fn question_sources_permitted<E: SqlEngine>(
 }
 
 /// QUESTION-STEP-1 / PRIVACY-3: check inherited `RunQuestionRead` grants for
-/// exporting `object_type` inside the caller's held snapshot-permit reader so
-/// inherited clearance and exported rows share one sealed snapshot version.
-pub(crate) fn inherited_export_permitted<E: SqlEngine>(
+/// whole-type reads (export, transform, analytical profile/page, dataset
+/// lineage) inside the caller's held snapshot/version bracket so inherited
+/// clearance and read rows share one sealed snapshot version.
+pub(crate) fn inherited_type_permitted<E: SqlEngine>(
     host: &DevHost<E>,
     reader: &StoreReader<'_, E>,
     access: &dyn ObjectAccess,
@@ -160,6 +175,32 @@ pub(crate) fn inherited_export_permitted<E: SqlEngine>(
 ) -> Result<bool, Refusal> {
     let inherited = reader
         .object_type_question_source_types(MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?;
+    if inherited.is_empty() {
+        return Ok(true);
+    }
+    let Some(actor_id) = actor else {
+        return Ok(false);
+    };
+    Ok(
+        question_sources_permitted(host, access, actor_id, &inherited, Population)
+            && question_sources_permitted(host, access, actor_id, &inherited, Values),
+    )
+}
+
+/// QUESTION-STEP-1 / PRIVACY-3: check inherited `RunQuestionRead` grants for a
+/// single point read `(object_type, id)` using only that run's persisted
+/// settlement evidence (never the current type-wide union).
+pub(crate) fn inherited_run_permitted<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    access: &dyn ObjectAccess,
+    actor: Option<&str>,
+    object_type: &str,
+    id: &str,
+) -> Result<bool, Refusal> {
+    let inherited = reader
+        .run_question_source_types(MAIN_WORLD, object_type, id)
         .map_err(Refusal::host)?;
     if inherited.is_empty() {
         return Ok(true);

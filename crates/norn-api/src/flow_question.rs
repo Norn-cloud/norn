@@ -37,6 +37,7 @@ use crate::scope::ScopeQuery;
 use self::freshness::{
     build_answered_output, denied_failure, evaluate_freshness_guard, refused_failure, stale_failure,
 };
+pub(crate) use self::pin::{ConnectionBindings, capture_run_start_bindings};
 use self::pin::{verify_named_pin, verify_retained_pin};
 
 /// Stable `question_step.*` refusal codes for parked `norn.question@1` steps.
@@ -92,6 +93,7 @@ pub(crate) struct QuestionStepContext<'a> {
     pub(crate) input: &'a RuntimeValue,
     pub(crate) starter: Option<&'a RunStarter>,
     pub(crate) run_definitions_version: Option<u64>,
+    pub(crate) run_connection_bindings: Option<&'a ConnectionBindings>,
 }
 
 /// Result of dispatching one parked `norn.question@1` step: the typed outcome
@@ -254,7 +256,7 @@ pub(crate) fn dispatch_question_step<E: SqlEngine>(
             host,
             &parsed,
             starter,
-            ctx.run_definitions_version,
+            (ctx.run_definitions_version, ctx.run_connection_bindings),
             disclosure,
         )?);
         Ok(())
@@ -377,7 +379,16 @@ fn collect_inherited_sources<E: SqlEngine>(
     };
     let reader = store.read();
     let mut merged: BTreeMap<String, bool> = BTreeMap::new();
+    let grain = plan.grain().as_str();
+    let has_compact = result
+        .rows
+        .values()
+        .any(|row| row.member_count.is_some() && row.members.is_empty());
+    let exact_grain_members = !has_compact && !result.rows.is_empty();
     for ty in plan_source_types(plan) {
+        if exact_grain_members && ty == grain {
+            continue;
+        }
         for req in reader
             .object_type_question_source_types(storage_world, &ty)
             .map_err(Refusal::host)?
@@ -385,7 +396,6 @@ fn collect_inherited_sources<E: SqlEngine>(
             *merged.entry(req.source_type).or_insert(false) |= req.requires_sources;
         }
     }
-    let grain = plan.grain().as_str();
     for row in result.rows.values() {
         for id in row.members.keys() {
             for req in reader
@@ -526,7 +536,7 @@ fn evaluate_as_starter<E: SqlEngine>(
     host: &DevHost<E>,
     step: &QuestionStep,
     starter: &RunStarter,
-    run_definitions_version: Option<u64>,
+    run_pin: (Option<u64>, Option<&ConnectionBindings>),
     disclosure: &dyn QuestionRuntime<E>,
 ) -> Result<QuestionDispatch, Refusal> {
     let scope = ScopeQuery {
@@ -548,24 +558,9 @@ fn evaluate_as_starter<E: SqlEngine>(
     };
 
     let (plan, eval) = if has_retained_question {
-        evaluate_retained_question(
-            host,
-            &scope,
-            starter,
-            step,
-            run_definitions_version,
-            disclosure,
-            key,
-        )?
+        evaluate_retained_question(host, &scope, starter, step, run_pin, disclosure, key)?
     } else {
-        evaluate_named_question(
-            host,
-            &scope,
-            starter,
-            step,
-            run_definitions_version,
-            disclosure,
-        )?
+        evaluate_named_question(host, &scope, starter, step, run_pin, disclosure)?
     };
 
     let result = match eval.disclosed.as_answer() {
@@ -725,7 +720,7 @@ fn evaluate_retained_question<E: SqlEngine>(
     scope: &ScopeQuery,
     starter: &RunStarter,
     step: &QuestionStep,
-    run_definitions_version: Option<u64>,
+    (run_definitions_version, run_connection_bindings): (Option<u64>, Option<&ConnectionBindings>),
     disclosure: &dyn QuestionRuntime<E>,
     key: &[u8],
 ) -> Result<(QuestionPlan, QuestionStepEval), Refusal> {
@@ -773,7 +768,7 @@ fn evaluate_retained_question<E: SqlEngine>(
         &plan,
         installed_version,
         active_set.as_ref(),
-        run_definitions_version,
+        (run_definitions_version, run_connection_bindings),
         step.pin.as_ref(),
         step.as_of.as_deref(),
         ad_hoc.max_rows(),
@@ -832,7 +827,7 @@ fn evaluate_named_question<E: SqlEngine>(
     scope: &ScopeQuery,
     starter: &RunStarter,
     step: &QuestionStep,
-    run_definitions_version: Option<u64>,
+    (run_definitions_version, run_connection_bindings): (Option<u64>, Option<&ConnectionBindings>),
     disclosure: &dyn QuestionRuntime<E>,
 ) -> Result<(QuestionPlan, QuestionStepEval), Refusal> {
     // `admit_named_question` authorizes Population and acquires one definition_read epoch.
@@ -862,7 +857,7 @@ fn evaluate_named_question<E: SqlEngine>(
         &plan,
         installed_version,
         active_set.as_ref(),
-        run_definitions_version,
+        (run_definitions_version, run_connection_bindings),
         step.pin.as_ref(),
         max_rows,
     )?;

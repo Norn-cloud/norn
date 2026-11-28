@@ -622,6 +622,8 @@ fn commit_start<E: SqlEngine>(
         &*cell, &catalog, &slice, &turn, &output, &mut meter,
     )
     .map_err(|refusal| turn_refused(refusal.code(), "the flow's start turn was refused"))?;
+    let connection_bindings =
+        crate::flow_question::capture_run_start_bindings(&cell.store().read())?;
     let start = RunStart {
         run_id: run_id.to_owned(),
         flow: FlowRef {
@@ -631,6 +633,7 @@ fn commit_start<E: SqlEngine>(
         object_type: flow.object_type.clone(),
         state_property: flow.view.state_property.clone(),
         started_by: starter,
+        connection_bindings,
     };
     cell.commit_run_start(commit, &start).map_err(|error| {
         let norn_kernel::CommitError::Host(host_error) = error else {

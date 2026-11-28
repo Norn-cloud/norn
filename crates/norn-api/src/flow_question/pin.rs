@@ -81,13 +81,29 @@ fn check_explicit_pin(
     Ok(())
 }
 
+/// Snapshot of persisted `source.Connection` bindings (`mapping_id -> {connector_id}`).
+pub(crate) type ConnectionBindings = BTreeMap<String, BTreeSet<String>>;
+
+/// Capture the current `source.Connection` binding map at run start so
+/// `STEP-PIN-1` detects binding-only drift even when definitions versions match.
+/// Returns `Ok(None)` if the connection scan exceeds [`MAX_CONNECTION_SCAN`] so
+/// non-question flows still start while question steps fail closed with
+/// `question_step.pin_unavailable`.
+pub(crate) fn capture_run_start_bindings<E: SqlEngine>(
+    reader: &norn_cell::StoreReader<'_, E>,
+) -> Result<Option<ConnectionBindings>, Refusal> {
+    match connection_connectors_within(reader, MAX_CONNECTION_SCAN) {
+        Ok(bindings) => Ok(Some(bindings)),
+        Err(refusal) if refusal.code == super::question_step_codes::PIN_UNAVAILABLE => Ok(None),
+        Err(refusal) => Err(refusal),
+    }
+}
+
 /// Live `mapping_id -> {connector_id}` bindings read from `source.Connection`
 /// records in the cell store (empty when the model declares no connections).
 /// Fails closed with `question_step.pin_unavailable` if the connection scan
 /// exceeds [`MAX_CONNECTION_SCAN`].
-fn connection_connectors<E: SqlEngine>(
-    host: &DevHost<E>,
-) -> Result<BTreeMap<String, BTreeSet<String>>, Refusal> {
+fn connection_connectors<E: SqlEngine>(host: &DevHost<E>) -> Result<ConnectionBindings, Refusal> {
     let cell = host.cell()?;
     let reader = cell.store().read();
     connection_connectors_within(&reader, MAX_CONNECTION_SCAN)
@@ -96,7 +112,7 @@ fn connection_connectors<E: SqlEngine>(
 fn connection_connectors_within<E: SqlEngine>(
     reader: &norn_cell::StoreReader<'_, E>,
     max_connections: usize,
-) -> Result<BTreeMap<String, BTreeSet<String>>, Refusal> {
+) -> Result<ConnectionBindings, Refusal> {
     if !reader.model().has_type("source.Connection") {
         return Ok(BTreeMap::new());
     }
@@ -131,10 +147,37 @@ fn connection_connectors_within<E: SqlEngine>(
     Ok(bindings)
 }
 
+fn check_inactive_retained<E: SqlEngine>(
+    host: &DevHost<E>,
+    question_id: &str,
+    run_definitions_version: Option<u64>,
+    explicit: Option<&QuestionStepPin>,
+) -> Result<(), Refusal> {
+    if explicit.is_some() {
+        return Err(pin_mismatch());
+    }
+    let started = run_definitions_version.ok_or_else(pin_unavailable)?;
+    let cell = host.cell()?;
+    let was_active = cell
+        .store()
+        .read()
+        .retained_definition_at_version(question_id, started)
+        .map_err(Refusal::host)?
+        .is_some_and(|prior| {
+            prior.definition.kind == "question"
+                && prior.definition.lifecycle == RetainedLifecycle::Active
+        });
+    Err(if was_active {
+        definition_changed()
+    } else {
+        question_not_found()
+    })
+}
+
 /// Verify both explicit `pin` and run-start dependency-closure equivalence for
 /// a retained `"question"` definition under the caller's held `definition_read`
 /// epoch. Independently resolves the retained question plan against BOTH the
-/// run-start definitions set and the active definitions set.
+/// run-start definitions set/bindings and the active definitions set/bindings.
 #[allow(
     clippy::too_many_arguments,
     reason = "STEP-PIN-1 verification coordinates"
@@ -145,42 +188,29 @@ pub(crate) fn verify_retained_pin<E: SqlEngine>(
     plan: &QuestionPlan,
     installed_version: Option<u64>,
     active_set: Option<&InstalledDefinitionSet>,
-    run_definitions_version: Option<u64>,
+    (run_definitions_version, run_connection_bindings): (Option<u64>, Option<&ConnectionBindings>),
     explicit: Option<&QuestionStepPin>,
     as_of_override: Option<&str>,
     max_rows: u32,
 ) -> Result<(), Refusal> {
     let active_ver = installed_version.ok_or_else(pin_unavailable)?;
     if record.definition.lifecycle != RetainedLifecycle::Active {
-        if explicit.is_some() {
-            return Err(pin_mismatch());
-        }
-        let started = run_definitions_version.ok_or_else(pin_unavailable)?;
-        let cell = host.cell()?;
-        let was_active = cell
-            .store()
-            .read()
-            .retained_definition_at_version(&record.definition.id, started)
-            .map_err(Refusal::host)?
-            .is_some_and(|prior| {
-                prior.definition.kind == "question"
-                    && prior.definition.lifecycle == RetainedLifecycle::Active
-            });
-        return Err(if was_active {
-            definition_changed()
-        } else {
-            question_not_found()
-        });
+        return check_inactive_retained(
+            host,
+            &record.definition.id,
+            run_definitions_version,
+            explicit,
+        );
     }
     let active_set = active_set.ok_or_else(pin_unavailable)?;
-    let conn_map = connection_connectors(host)?;
+    let active_conn_map = connection_connectors(host)?;
     let active_digest = effective_closure_digest(
         host.scope(),
         &record.definition.id,
         plan,
         Some(record),
         active_set,
-        &conn_map,
+        &active_conn_map,
     )?;
     check_explicit_pin(
         explicit,
@@ -190,8 +220,24 @@ pub(crate) fn verify_retained_pin<E: SqlEngine>(
         &active_digest,
     )?;
     let started_version = run_definitions_version.ok_or_else(pin_unavailable)?;
+    let start_conn_map = run_connection_bindings.ok_or_else(pin_unavailable)?;
     if started_version == active_ver {
-        return Ok(());
+        if *start_conn_map == active_conn_map {
+            return Ok(());
+        }
+        let start_digest = effective_closure_digest(
+            host.scope(),
+            &record.definition.id,
+            plan,
+            Some(record),
+            active_set,
+            start_conn_map,
+        )?;
+        return if start_digest == active_digest {
+            Ok(())
+        } else {
+            Err(definition_changed())
+        };
     }
     let (start_set, start_retained) = {
         let cell = host.cell()?;
@@ -225,7 +271,7 @@ pub(crate) fn verify_retained_pin<E: SqlEngine>(
         &start_plan,
         Some(&start_retained),
         &start_set,
-        &conn_map,
+        start_conn_map,
     )?;
     if start_digest != active_digest {
         return Err(definition_changed());
@@ -236,8 +282,9 @@ pub(crate) fn verify_retained_pin<E: SqlEngine>(
 /// Verify both explicit `pin` and run-start dependency-closure equivalence for
 /// a pre-admitted named question under the caller's held `definition_read`
 /// epoch. Resolves the named question plan against BOTH the run-start
-/// definitions set and the active definitions set rather than reusing the
-/// current plan for both. Fails closed when pin evidence is absent.
+/// definitions set/bindings and the active definitions set/bindings rather than
+/// reusing the current plan or current bindings for both. Fails closed when pin
+/// evidence is absent.
 #[allow(
     clippy::too_many_arguments,
     reason = "STEP-PIN-1 verification coordinates"
@@ -248,13 +295,13 @@ pub(crate) fn verify_named_pin<E: SqlEngine>(
     plan: &QuestionPlan,
     installed_version: Option<u64>,
     active_set: Option<&InstalledDefinitionSet>,
-    run_definitions_version: Option<u64>,
+    (run_definitions_version, run_connection_bindings): (Option<u64>, Option<&ConnectionBindings>),
     explicit: Option<&QuestionStepPin>,
     max_rows: u32,
 ) -> Result<(), Refusal> {
     let active_ver = installed_version.ok_or_else(pin_unavailable)?;
     let active_set = active_set.ok_or_else(pin_unavailable)?;
-    let conn_map = connection_connectors(host)?;
+    let active_conn_map = connection_connectors(host)?;
     let active_plan = resolve_plan_in_set(
         host.scope(),
         active_set,
@@ -268,7 +315,7 @@ pub(crate) fn verify_named_pin<E: SqlEngine>(
         &active_plan,
         None,
         active_set,
-        &conn_map,
+        &active_conn_map,
     )?;
     check_explicit_pin(
         explicit,
@@ -278,8 +325,24 @@ pub(crate) fn verify_named_pin<E: SqlEngine>(
         &active_digest,
     )?;
     let started_version = run_definitions_version.ok_or_else(pin_unavailable)?;
+    let start_conn_map = run_connection_bindings.ok_or_else(pin_unavailable)?;
     if started_version == active_ver {
-        return Ok(());
+        if *start_conn_map == active_conn_map {
+            return Ok(());
+        }
+        let start_digest = effective_closure_digest(
+            host.scope(),
+            question_id,
+            &active_plan,
+            None,
+            active_set,
+            start_conn_map,
+        )?;
+        return if start_digest == active_digest {
+            Ok(())
+        } else {
+            Err(definition_changed())
+        };
     }
     let start_set = {
         let cell = host.cell()?;
@@ -302,7 +365,7 @@ pub(crate) fn verify_named_pin<E: SqlEngine>(
         &start_plan,
         None,
         &start_set,
-        &conn_map,
+        start_conn_map,
     )?;
     if start_digest != active_digest {
         return Err(definition_changed());
@@ -914,7 +977,13 @@ mod tests {
     use super::*;
     use crate::flow_question::question_step_codes;
     use norn_cell::engine::NativeEngine;
-    use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
+    use norn_cell::{CellStore, Model, SqliteCell};
+    use norn_kernel::cell_host::JsonObject;
+    use norn_kernel::{
+        CellCommit, CellHost as _, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime,
+    };
+
+    type TestCell = SqliteCell<RuntimeValue, JsonObject, JsonObject, NativeEngine>;
 
     fn connection_model() -> Model {
         let def: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
@@ -929,21 +998,35 @@ mod tests {
         Model::from_definitions(&[def], &[]).unwrap()
     }
 
+    fn open_connection_cell() -> TestCell {
+        let store = CellStore::open_in_memory(connection_model()).unwrap();
+        SqliteCell::new(
+            store,
+            "org_demo/dev".to_owned(),
+            |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+        )
+        .unwrap()
+    }
+
     fn put_connection(
-        store: &mut CellStore<NativeEngine>,
+        cell: &mut TestCell,
         id: &str,
         mapping_id: &str,
         connector_id: &str,
         at_ms: u64,
     ) {
-        store
-            .commit(&CommitBatch {
-                world: MAIN_WORLD.into(),
-                scope: "org_demo/dev".into(),
-                logical_time: at_ms,
-                writes: vec![FactWriteRow::Put {
-                    object_type: "source.Connection".into(),
-                    key: id.into(),
+        let expected = FactVersion(
+            cell.store()
+                .read()
+                .version(MAIN_WORLD, "source.Connection", id)
+                .unwrap(),
+        );
+        cell.advance_to(LogicalTime::from_millis(at_ms));
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("source.Connection", id),
+                expected,
+                mutation: FactMutation::Put {
                     values: BTreeMap::from([
                         ("id".to_owned(), RuntimeValue::String(id.to_owned())),
                         (
@@ -955,31 +1038,32 @@ mod tests {
                             RuntimeValue::String(connector_id.to_owned()),
                         ),
                     ]),
-                }],
-                ..CommitBatch::default()
-            })
-            .unwrap();
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .unwrap();
     }
 
     #[test]
     fn connection_connectors_reads_mapping_id_and_connector_id_and_fails_closed_on_truncation() {
-        let mut store = CellStore::open_in_memory(connection_model()).unwrap();
+        let mut cell = open_connection_cell();
         put_connection(
-            &mut store,
+            &mut cell,
             "conn-1",
             "erpnext.rest.mapping",
             "erpnext.bound.connector",
             1_000,
         );
         put_connection(
-            &mut store,
+            &mut cell,
             "conn-2",
             "other.mapping",
             "other.connector",
             2_000,
         );
 
-        let bindings = connection_connectors_within(&store.read(), 10).unwrap();
+        let bindings = connection_connectors_within(&cell.store().read(), 10).unwrap();
         assert_eq!(
             bindings,
             BTreeMap::from([
@@ -993,8 +1077,12 @@ mod tests {
                 ),
             ])
         );
+        assert_eq!(
+            capture_run_start_bindings(&cell.store().read()).unwrap(),
+            Some(bindings)
+        );
 
-        let err = connection_connectors_within(&store.read(), 1)
+        let err = connection_connectors_within(&cell.store().read(), 1)
             .expect_err("truncated connection scan must fail closed");
         assert_eq!(err.code, question_step_codes::PIN_UNAVAILABLE);
     }

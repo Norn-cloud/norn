@@ -347,6 +347,7 @@ struct StepCall {
     input: RuntimeValue,
     starter: Option<RunStarter>,
     run_definitions_version: Option<u64>,
+    run_connection_bindings: Option<crate::flow_question::ConnectionBindings>,
 }
 
 /// Every parked cell-executed step (`norn.action@1` or `norn.question@1`,
@@ -374,10 +375,13 @@ fn cell_steps<E: SqlEngine>(
             .and_then(|input| input.get(parsed.step))
             .cloned()
             .unwrap_or(RuntimeValue::Null);
-        let starter = reader
+        let run_start = reader
             .run_start(MAIN_WORLD, parsed.run_id)
-            .map_err(Refusal::host)?
-            .and_then(|start| start.started_by);
+            .map_err(Refusal::host)?;
+        let starter = run_start
+            .as_ref()
+            .and_then(|start| start.started_by.clone());
+        let run_connection_bindings = run_start.and_then(|start| start.connection_bindings);
         let run_definitions_version = match reader
             .flow_run(MAIN_WORLD, parsed.run_id)
             .map_err(Refusal::host)?
@@ -400,6 +404,7 @@ fn cell_steps<E: SqlEngine>(
                 input,
                 starter,
                 run_definitions_version,
+                run_connection_bindings,
             },
             pending.result,
         ));
@@ -705,6 +710,7 @@ pub fn drive_run<E: SqlEngine>(
                     input: &step.input,
                     starter: step.starter.as_ref(),
                     run_definitions_version: step.run_definitions_version,
+                    run_connection_bindings: step.run_connection_bindings.as_ref(),
                 },
                 as_starter,
                 disclosure,

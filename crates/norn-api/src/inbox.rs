@@ -43,8 +43,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_cell::read::LinkDirection;
-use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
+use norn_cell::{
+    MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine, flow_run::RunQuestionSource,
+    read::LinkDirection,
+};
 use norn_ir::{
     ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind, DataQualityFinding,
     DataQualityFindingStatus, DataQualityRuleRef, Decimal, LawIR, LawResponse, PropertyType,
@@ -58,10 +60,12 @@ use crate::actions::ActionQuery;
 use crate::authz::ReadCapability::{Population, Sources, Values};
 use crate::decisions::{DecisionDocument, DecisionsQuery, list_decisions};
 use crate::host::DevHost;
+use crate::object_links::{GatedFinding, gate_findings};
 use crate::object_query::ObjectQueryParams;
 use crate::object_review::SOURCE_EVIDENCE;
 use crate::object_routes::{
     ObjectAccess, SCAN_BATCH, collection, get_object_query_within, locked, permitted,
+    row_and_sources_readable,
 };
 use crate::privacy::{NornMaskedProperty, disclosure::project_object};
 use crate::refusal::Refusal;
@@ -454,8 +458,8 @@ struct Held {
     open: Vec<DataQualityFinding>,
 }
 
-/// One quarantined row and its open findings, as scanned under the lock.
-type Scanned = (ObjectRecord, Vec<crate::object_links::GatedFinding>);
+/// One quarantined row, its persisted question sources, and its open findings.
+type Scanned = (ObjectRecord, Vec<RunQuestionSource>, Vec<GatedFinding>);
 
 /// Scan `object_type` from its first row, at most `budget` rows; the held
 /// rows and whether the type was read to its end.
@@ -473,13 +477,12 @@ fn scan_type<E: SqlEngine>(
             return Ok((held, false));
         }
         let want = SCAN_BATCH.min(*budget);
-        let (batch, last, done) = locked(host, access, start, |reader| {
+        let ((batch, scanned), last, done) = locked(host, access, start, |reader| {
             let rows = reader
                 .list_after(MAIN_WORLD, object_type, after.as_deref(), want)
                 .map_err(Refusal::host)?;
-            let done = rows.len() < want;
+            let (done, scanned) = (rows.len() < want, rows.len());
             let last = rows.last().map(|row| row.id.clone());
-            let scanned = rows.len();
             let mut batch = Vec::new();
             for row in rows {
                 // Rows of a subtype are scanned with their own type.
@@ -497,14 +500,15 @@ fn scan_type<E: SqlEngine>(
                     .filter(|finding| finding.status == DataQualityFindingStatus::Open)
                     .collect();
                 if !open.is_empty() {
-                    let open =
-                        crate::object_links::gate_findings(reader, open).map_err(Refusal::host)?;
-                    batch.push((row, open));
+                    let sources = reader
+                        .run_question_source_types(MAIN_WORLD, &row.object_type, &row.id)
+                        .map_err(Refusal::host)?;
+                    let open = gate_findings(reader, open).map_err(Refusal::host)?;
+                    batch.push((row, sources, open));
                 }
             }
             Ok(((batch, scanned), last, done))
         })?;
-        let (batch, scanned) = batch;
         *budget = budget.saturating_sub(scanned);
         held.extend(batch);
         if done {
@@ -553,12 +557,10 @@ fn held_back<E: SqlEngine>(
         // is disclosed as the link would be, and the snapshot is confirmed
         // after the policy whether or not a record below reads evidence
         // (OBS-LINK-DISPUTE-1).
-        let readable: Vec<Scanned> = held
+        let readable: Vec<_> = held
             .into_iter()
-            .filter(|(row, _)| {
-                [Population, Values]
-                    .into_iter()
-                    .all(|capability| permitted(host, access, actor, row, capability))
+            .filter_map(|(r, s, o)| {
+                row_and_sources_readable(host, access, actor, &r, &s).then_some((r, o))
             })
             .collect();
         let visible: Vec<Held> =
