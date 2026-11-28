@@ -697,7 +697,9 @@ def workflow_verdict_canaries(source: str) -> None:
     cases.append(("pull_request", affected, {**passed, "CORE": "Success"}, False))
     # More bundles than the start budget allows fail, even when they cover the plan exactly.
     spread = copy.deepcopy(full_plan)
-    spread["bundle"].append({"id": "b9", "tasks": [spread["bundle"][0]["tasks"].pop()]})
+    while len(spread["bundle"]) <= 10:
+        donor = next(bundle for bundle in spread["bundle"] if len(bundle["tasks"]) > 1)
+        spread["bundle"].append({"id": f"b{len(spread['bundle'])}", "tasks": [donor["tasks"].pop()]})
     cases.append(("merge_group", spread, passed, False))
     for mutate in (
         lambda p: p.pop("bundle"),
@@ -788,14 +790,15 @@ def studio_browser_pin_canaries() -> None:
     with tempfile.TemporaryDirectory() as directory:
         mutated = Path(directory) / "core.sh"
         for label, before, after in (
-                ("passes with no tests", "bunx playwright test --forbid-only --reporter=list,json\n", "bunx playwright test --forbid-only --reporter=list,json --pass-with-no-tests\n"),
-                ("drops forbid-only", "bunx playwright test --forbid-only --reporter=list,json\n", "bunx playwright test --reporter=list,json\n"),
-                ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
-                ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
-                ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
-                ("not in the plan", " integration-clients browser formal ", " integration-clients formal "),
-                ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
-                ("no named-case check", "        grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
+                ("passes with no tests", 'bunx playwright test --shard="$shard_index/$shard_total" --forbid-only --reporter=list,json\n', 'bunx playwright test --shard="$shard_index/$shard_total" --forbid-only --reporter=list,json --pass-with-no-tests\n'),
+                ("drops forbid-only", 'bunx playwright test --shard="$shard_index/$shard_total" --forbid-only --reporter=list,json\n', 'bunx playwright test --shard="$shard_index/$shard_total" --reporter=list,json\n'),
+                ("all skipped passes", '    [[ $ran -gt 0 ]] || { printf \'browser-%s: Playwright ran no tests (every row skipped)\\n\' "$shard_index" >&2; exit 1; }\n', ""),
+                ("skips while tests exist", "      exit 1\n    fi\n    printf '::notice::browser-%s", "    fi\n    printf '::notice::browser-%s"),
+                ("no listing check", '    [[ ${listed:-0} -gt 0 ]] || { printf \'browser-%s: Playwright lists no tests\\n\' "$shard_index" >&2; exit 1; }\n', ""),
+                ("not in the plan", " integration-clients browser-1 browser-2 formal ", " integration-clients browser-1 formal "),
+                ("drops second shard", "      run_browser_shard 2 2\n", "      run_browser_shard 1 2\n"),
+                ("no checker-admission test", "      decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
+                ("no named-case check", "      grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser-1: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
                 ("named case matched as a substring", "grep -qxE '\\(pass\\) the checker admits", "grep -qE '\\(pass\\) the checker admits"),
                 ("checker-admission test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts", "bun test test/decision.test.ts"),
                 ("checker-canvas test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test test/canvas.test.ts", "bun test test/canvas.test.ts")):
@@ -929,7 +932,8 @@ def studio_browser_phase_canaries() -> None:
                    'if [ "$2" = test/canvas.test.ts ]; then printf "%s\\n" "$BUN_CANVAS_OUTPUT"; exit "$BUN_CANVAS_STATUS"; fi; '
                    'printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
             "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.100.0"; fi',
-            "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
+            "bunx": 'if [ "$3" != "--shard=$EXPECTED_SHARD" ]; then echo "unexpected shard arg: $3" >&2; exit 2; fi; '
+                    'if [ "$4" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
                     'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
                     'exit "$RUN_STATUS"',
         }
@@ -953,50 +957,63 @@ def studio_browser_phase_canaries() -> None:
             subprocess.run([*git, *argv], cwd=tree, check=True, capture_output=True, timeout=30,
                            env={"PATH": os.environ.get("PATH", ""), "HOME": directory})
         wasm_libdir.mkdir()
-        for label, has_config, has_tests, listed, run_status, expected, libdir, ran in (
-                ("no config, no tests", False, False, "0", 0, 0, "", "0"),
-                ("tests without a config", False, True, "0", 0, 1, str(wasm_libdir), "0"),
-                ("config, no wasm32 target", True, True, "99", 0, 1, str(Path(directory) / "absent"), "0"),
-                ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir), "0"),
-                ("config, every row skipped", True, True, "99", 0, 1, str(wasm_libdir), "0"),
-                ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir), "99"),
-                ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98"),
-                ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
-                ("config, checker-admission case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99"),
-                ("config, checker-admission case missing", True, True, "99", 0, 1, str(wasm_libdir), "99"),
-                ("config, only a longer name passed", True, True, "99", 0, 1, str(wasm_libdir), "99"),
-                ("config, checker-canvas test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
-                ("config, checker-canvas case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99")):
-            config.unlink(missing_ok=True)
-            if has_config:
-                config.write_text("export default {}\n")
-            if has_tests:
-                e2e.mkdir(exist_ok=True)
-                (e2e / "row.e2e.ts").write_text("")
-            elif e2e.exists():
-                for entry in e2e.iterdir():
-                    entry.unlink()
-                e2e.rmdir()
-            result = subprocess.run(["bash", str(ROOT / "scripts/ci/core.sh"), "browser"], cwd=tree, capture_output=True,
-                                    text=True, timeout=60, env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
-                                                                "CARGO_HOME": str(Path(directory) / "cargo-home"),
-                                                                "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
-                                                                "WASM_LIBDIR": libdir, "RAN": ran,
-                                                                "BUN_TEST_STATUS": "1" if label == "config, checker-admission test fails" else "0",
-                                                                "BUN_TEST_OUTPUT": {
-                                                                    "config, checker-admission case skipped": "(skip) the checker admits what a drawn decision lowers to",
-                                                                    "config, checker-admission case missing": "(pass) the decider reads the real time limit",
-                                                                    "config, only a longer name passed": "(pass) the checker admits what a drawn decision lowers to, twice [1.00ms]",
-                                                                }.get(label, "(pass) the checker admits what a drawn decision lowers to [1.00ms]"),
-                                                                "BUN_CANVAS_STATUS": "1" if label == "config, checker-canvas test fails" else "0",
-                                                                "BUN_CANVAS_OUTPUT": {
-                                                                    "config, checker-canvas case skipped": "(skip) the checker finds the stuck state a deleted step leaves",
-                                                                }.get(label, "(pass) the checker finds the stuck state a deleted step leaves [1.00ms]"),
-                                                                "SKIPPED": str(int(listed) - int(ran))})
-            if result.returncode != expected:
-                raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")
-            if label == "config, no wasm32 target" and "run under the pinned CI toolchain" not in result.stderr:
-                raise AssertionError(f"browser phase must name the pinned toolchain when wasm32 is missing: {result.stderr[-300:]}")
+        for phase, expected_shard, cases in (
+                ("browser-1", "1/2", (
+                    ("no config, no tests", False, False, "0", 0, 0, "", "0"),
+                    ("tests without a config", False, True, "0", 0, 1, str(wasm_libdir), "0"),
+                    ("config, no wasm32 target", True, True, "99", 0, 1, str(Path(directory) / "absent"), "0"),
+                    ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir), "0"),
+                    ("config, every row skipped", True, True, "99", 0, 1, str(wasm_libdir), "0"),
+                    ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir), "99"),
+                    ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98"),
+                    ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                    ("config, checker-admission case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                    ("config, checker-admission case missing", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                    ("config, only a longer name passed", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                    ("config, checker-canvas test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                    ("config, checker-canvas case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                )),
+                ("browser-2", "2/2", (
+                    ("no config, no tests", False, False, "0", 0, 0, "", "0"),
+                    ("tests without a config", False, True, "0", 0, 1, str(wasm_libdir), "0"),
+                    ("config, no wasm32 target", True, True, "99", 0, 1, str(Path(directory) / "absent"), "0"),
+                    ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir), "0"),
+                    ("config, every row skipped", True, True, "99", 0, 1, str(wasm_libdir), "0"),
+                    ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir), "99"),
+                    ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98"),
+                ))):
+            for label, has_config, has_tests, listed, run_status, expected, libdir, ran in cases:
+                config.unlink(missing_ok=True)
+                if has_config:
+                    config.write_text("export default {}\n")
+                if has_tests:
+                    e2e.mkdir(exist_ok=True)
+                    (e2e / "row.e2e.ts").write_text("")
+                elif e2e.exists():
+                    for entry in e2e.iterdir():
+                        entry.unlink()
+                    e2e.rmdir()
+                result = subprocess.run(["bash", str(ROOT / "scripts/ci/core.sh"), phase], cwd=tree, capture_output=True,
+                                        text=True, timeout=60, env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                                                                    "CARGO_HOME": str(Path(directory) / "cargo-home"),
+                                                                    "HOME": directory, "EXPECTED_SHARD": expected_shard,
+                                                                    "LISTED": listed, "RUN_STATUS": str(run_status),
+                                                                    "WASM_LIBDIR": libdir, "RAN": ran,
+                                                                    "BUN_TEST_STATUS": "1" if label == "config, checker-admission test fails" else "0",
+                                                                    "BUN_TEST_OUTPUT": {
+                                                                        "config, checker-admission case skipped": "(skip) the checker admits what a drawn decision lowers to",
+                                                                        "config, checker-admission case missing": "(pass) the decider reads the real time limit",
+                                                                        "config, only a longer name passed": "(pass) the checker admits what a drawn decision lowers to, twice [1.00ms]",
+                                                                    }.get(label, "(pass) the checker admits what a drawn decision lowers to [1.00ms]"),
+                                                                    "BUN_CANVAS_STATUS": "1" if label == "config, checker-canvas test fails" else "0",
+                                                                    "BUN_CANVAS_OUTPUT": {
+                                                                        "config, checker-canvas case skipped": "(skip) the checker finds the stuck state a deleted step leaves",
+                                                                    }.get(label, "(pass) the checker finds the stuck state a deleted step leaves [1.00ms]"),
+                                                                    "SKIPPED": str(int(listed) - int(ran))})
+                if result.returncode != expected:
+                    raise AssertionError(f"{phase} phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")
+                if label == "config, no wasm32 target" and "run under the pinned CI toolchain" not in result.stderr:
+                    raise AssertionError(f"{phase} phase must name the pinned toolchain when wasm32 is missing: {result.stderr[-300:]}")
 
 
 def workflow_expression_cap_canaries() -> None:
@@ -1980,8 +1997,8 @@ def workflow_canaries() -> None:
         ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
         ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
         ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
-        ("more bundles than the start budget", "length >= 1 and length <= 8 and all(.[];", "length >= 1 and length <= 10 and all(.[];"),
-        ("empty bundle plan accepted", "length >= 1 and length <= 8 and all(.[];", "length <= 8 and all(.[];"),
+        ("more bundles than the start budget", "length >= 1 and length <= 10 and all(.[];", "length >= 1 and length <= 12 and all(.[];"),
+        ("empty bundle plan accepted", "length >= 1 and length <= 10 and all(.[];", "length <= 10 and all(.[];"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("skipped PR affected plan", 'if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA");', 'if [ -n "$BASE" ]; then plan=$(jq -cn \'{mode: "affected", shard: [], phase: [], packages: "", rest_shards: 1, bundle: []}\');'),
         ("unconditional fail-fast", "fail-fast: ${{ github.event_name == 'merge_group' }}", "fail-fast: true"),

@@ -17,7 +17,7 @@ log line. The table is the median over those runs of:
   profile", less the rebuild every later test shard of the same bundle still pays (its
   median, which stays in each task's own time);
 - `wasm_pkg_seconds`: the checker WASM package build, from the start of the tasks that begin
-  with it (`phase/browser`, `phase/integration-wasm`) to the package's size report. Only the
+  with it (`phase/browser-1`, `phase/browser-2`, `phase/integration-wasm`) to the package's size report. Only the
   first of a bundle's package tasks builds it; the later ones reuse it and log no report;
 - `task_seconds`: each task's own time, net of the shared builds above (a Test-group task net
   of its measured build; the first WASM-package task of a bundle net of its measured build,
@@ -50,7 +50,7 @@ PRUNED = re.compile(rf"^(?:##\[notice\]|::notice::)pruned target before {TASK};"
 TEST_BUILT = re.compile(r"^\s*Finished `test` profile ")
 WASM_BUILT = re.compile(r"^@norn/checker-wasm \S+ size report ")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-WASM_FIRST = ("phase/browser", "phase/integration-wasm")
+WASM_FIRST = ("phase/browser", "phase/browser-1", "phase/browser-2", "phase/integration-wasm")
 WASM_AFTER_NATIVE = ("phase/integration-authoring",)
 TEST_AFTER_PREREQ = ("phase/guards",)
 

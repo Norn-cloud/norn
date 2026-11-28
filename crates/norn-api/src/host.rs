@@ -2,7 +2,7 @@
 mod source_capture;
 use crate::{
     action_admission::Serving,
-    authz::{Authorizer, DenyAll, ReadCapability, ReadRequest, read_denied},
+    authz::{Authorizer, DenyAll, ReadCapability, ReadRequest, bind_result_authz, read_denied},
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
@@ -16,13 +16,13 @@ use norn_kernel::{Command, FactEvent, ObservationEvent, Observed};
 pub use source_capture::{DisputeFallbackState, SourceCaptureError, SourceCapturePlan};
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, atomic::Ordering},
+    sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, atomic::Ordering},
 };
 pub(crate) type ActionCell<E> = norn_cell::SqliteCell<FactEvent, RuntimeObject, RuntimeObject, E>;
 /// A single tenant's cell and definition epoch. Unconfigured authorization denies.
 pub struct DevHost<E: SqlEngine> {
-    scope: CellScope,
-    pub(crate) authorizer: Box<dyn Authorizer>,
+    pub(crate) scope: CellScope,
+    pub(crate) authorizer: Arc<dyn Authorizer>,
     definitions: RwLock<()>,
     /// Always `Some` outside [`DevHost::ingest`], which holds the lock while
     /// it maps one page of source rows under the observation profile.
@@ -212,10 +212,12 @@ impl<E: SqlEngine> DevHost<E> {
         responder: impl FnMut(&Command<RuntimeObject>) -> RuntimeObject + Send + 'static,
     ) -> Result<Self, Refusal> {
         scope.admit(Some(&scope.org_id), Some(&scope.environment_id))?;
-        let cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
+        let authorizer: Arc<dyn Authorizer> = Arc::new(DenyAll);
+        let mut cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
+        bind_result_authz(&mut cell, &scope, &authorizer);
         Ok(Self {
             scope,
-            authorizer: Box::new(DenyAll),
+            authorizer,
             definitions: RwLock::new(()),
             cell: Mutex::new(Some(cell)),
             waiting: std::sync::atomic::AtomicUsize::new(0),
@@ -228,7 +230,7 @@ impl<E: SqlEngine> DevHost<E> {
     /// Supply the trusted server policy before sharing this host.
     #[must_use]
     pub fn with_authorizer(mut self, authorizer: impl Authorizer + 'static) -> Self {
-        self.authorizer = Box::new(authorizer);
+        self.rebind_authorizer(Arc::new(authorizer));
         self
     }
     /// Key this cell's pseudonyms with `secret` (the host's lineage key);
