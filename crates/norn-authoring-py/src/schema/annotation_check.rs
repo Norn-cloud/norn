@@ -231,7 +231,7 @@ fn unwrap_nullable(val: AnnVal) -> (AnnVal, bool) {
             let has_none = items.len() < original_len;
             if has_none
                 && items.len() == 1
-                && let Some(only) = items.into_iter().next()
+                && let Some(only) = items.pop()
             {
                 return (only, true);
             }
