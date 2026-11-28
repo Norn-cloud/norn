@@ -27,7 +27,7 @@ When asked to verify Norn features 1-by-1:
    ```
    Read the cited `specContracts` and linked `invariants` (promoted Lean/Quint/Kani gates or checker modules) FIRST so you know what is already formally checked versus what requires runtime/E2E probing.
 4. **Drive the feature's probe** using the real surface harness below, capture action + resulting state + second-view read, and report any unmet precondition or gap honestly. Never weaken a probe to make it pass.
-5. **Update `lastVerified` only after an actual run** on clean sources, recording the exact `commitSha` (`git rev-parse HEAD`) and `liveSourceDigest` (which hashes both `sourcePaths` and the feature contract: `probe`, `invariants`, `surfaces`) printed by `show <feature-id>`, then run `python3 scripts/feature_map.py write` and `python3 scripts/record_new_files.py`.
+5. **Update `lastVerified` only after an actual run** on clean sources, recording the exact `commitSha` (`git rev-parse HEAD`) and `liveSourceDigest` (which hashes `sourcePaths`, cited invariant files, promoted-gate artifact/model files, and the feature contract: `probe`, `invariants`, `surfaces`) printed by `show <feature-id>`, then run `python3 scripts/feature_map.py write` and `python3 scripts/record_new_files.py`.
 
 ## Launch
 
@@ -59,8 +59,8 @@ Ready means: feature map check exits `0`, `.norn/dev.json` reports `norn-dev/1` 
 
 ## Drive
 
-- **CLI (`cli:norn ...`):** execute literal `norn` subcommands against disposable temp dirs; record command, exit code, stdout, and stderr.
-- **HTTP API (`http:<METHOD> <PATH>`):** send `curl` requests to the loopback `norn dev` URL using the bearer token from `.norn/dev.json` (`tokenFile` for developer, `reviewer.tokenFile` for reviewer). Include `Idempotency-Key` on mutating action calls and verify both positive commits and fail-closed refusals.
+- **CLI (`cli:norn ...`, `cli:norn-ts ...`):** execute literal Rust `norn` or TypeScript authoring (`bun run tools/norn-ts/src/cli.ts`) subcommands against disposable temp dirs; record command, exit code, stdout, and stderr.
+- **HTTP API (`http:<METHOD> <PATH>`):** send `curl` requests to the loopback `norn dev` URL using the bearer token from `.norn/dev.json` (`tokenFile` for developer, `reviewer.tokenFile` for reviewer). Pass explicit scope in the query string (`?orgId=<orgId>&environmentId=<environmentId>`), include `idempotencyKey` in the JSON request body on mutating action/decision calls (e.g. `{"input":{...},"idempotencyKey":"..."}`), and verify both positive commits and fail-closed refusals.
 - **Studio UI (`studio:<route>`):** prefer existing Playwright specs in `apps/studio/e2e/*.e2e.ts` or drive routes from `apps/studio/src/lib/pages.ts` using ARIA roles and accessible names (never brittle coordinates). Confirm mutations via a second read-only view or reload.
 - **Formal & integrity gates (`gate:<id>`):** run Python integrity gates locally (`python3 scripts/proof_enrollment.py`, `python3 scripts/ci/check_test_wiring.py`, `python3 scripts/record_new_files.py --check`); inspect Lean/Quint/Kani gate definitions in `verification/coverage-v1/promoted-gates.json` and run them only in CI or disposable Boat sandboxes.
 

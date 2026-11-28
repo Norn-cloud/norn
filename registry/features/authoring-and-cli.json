@@ -23,7 +23,12 @@
         "cli:norn dashboard",
         "cli:norn fmt",
         "cli:norn profile",
-        "cli:norn question"
+        "cli:norn question",
+        "cli:norn-ts compile",
+        "cli:norn-ts dashboard",
+        "cli:norn-ts fmt",
+        "cli:norn-ts profile",
+        "cli:norn-ts question"
       ],
       "sourcePaths": [
         "crates/norn-cli/src/main.rs",
@@ -32,7 +37,8 @@
         "crates/norn-cli/src/authoring/py.rs",
         "crates/norn-cli/src/authoring/fmt.rs",
         "crates/norn-authoring/src/lib.rs",
-        "crates/norn-authoring-py/src/lib.rs"
+        "crates/norn-authoring-py/src/lib.rs",
+        "tools/norn-ts/src"
       ],
       "invariants": [
         "checker:crates/norn-authoring/src/profile.rs"
@@ -56,11 +62,11 @@
       "status": "implemented",
       "evidenceTier": "runtime-enforced",
       "surfaces": [
-        "cli:norn apply",
         "cli:norn cell apply",
         "cli:norn cell plan",
-        "cli:norn plan",
-        "cli:norn source pull"
+        "cli:norn source pull",
+        "cli:norn-ts apply",
+        "cli:norn-ts plan"
       ],
       "sourcePaths": [
         "crates/norn-cli/src/cell.rs",
@@ -95,13 +101,16 @@
       "evidenceTier": "runtime-enforced",
       "surfaces": [
         "cli:norn check",
-        "cli:norn explain"
+        "cli:norn explain",
+        "cli:norn-ts check",
+        "cli:norn-ts explain"
       ],
       "sourcePaths": [
         "crates/norn-cli/src/main.rs",
         "crates/norn-cli/src/explain.rs",
         "crates/norn-checker/src/artifact_set.rs",
-        "crates/norn-checker/src/explain.rs"
+        "crates/norn-checker/src/explain.rs",
+        "tools/norn-ts/src"
       ],
       "invariants": [
         "checker-certificates-correspondence",
@@ -127,19 +136,14 @@
       "status": "implemented",
       "evidenceTier": "runtime-enforced",
       "surfaces": [
-        "cli:norn codegen",
-        "cli:norn dev",
-        "cli:norn init",
-        "cli:norn seed",
-        "cli:norn setup"
+        "cli:norn-ts codegen",
+        "cli:norn-ts dev",
+        "cli:norn-ts init",
+        "cli:norn-ts seed",
+        "cli:norn-ts setup"
       ],
       "sourcePaths": [
-        "tools/norn-ts/src/cli.ts",
-        "tools/norn-ts/src/codegen.ts",
-        "tools/norn-ts/src/dev.ts",
-        "tools/norn-ts/src/init.ts",
-        "tools/norn-ts/src/seed.ts",
-        "tools/norn-ts/src/setup.ts",
+        "tools/norn-ts/src",
         "crates/norn-cell-do/src/dev/http.rs"
       ],
       "invariants": [

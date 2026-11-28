@@ -55,10 +55,10 @@ Source registry: [`registry/features/api-and-hosts.json`](../../../../registry/f
 
 ### Probe
 
-- **Drive:** Against a running `norn dev` cell (bearer token from `.norn/dev.json`), call `GET /v1/actions`, invoke an admitted action via `POST /v1/actions/{actionId}` with an `Idempotency-Key`, and start/inspect a flow via `POST /v1/runs` + `GET /v1/runs/{id}`.
+- **Drive:** Against a running `norn dev` cell (bearer token from `.norn/dev.json`), call `GET /v1/actions?orgId=<orgId>&environmentId=<environmentId>`, invoke an admitted action via `POST /v1/actions/{actionId}?orgId=<orgId>&environmentId=<environmentId>` with `{"input": {...}, "idempotencyKey": "..."}` in the JSON request body, and start/inspect a flow via `POST /v1/runs?orgId=<orgId>&environmentId=<environmentId>` + `GET /v1/runs/{id}?orgId=<orgId>&environmentId=<environmentId>`.
 - **Observable end state:** `GET /v1/actions` lists admitted actions with schemas; `POST /v1/actions/{actionId}` returns receipt/pending/refused envelope; `GET /v1/runs/{id}` reflects durable run state.
 - **Gotchas:**
-  - Mutating action calls require an explicit non-blank idempotency key and matching org/env scope headers.
+  - Explicit scope travels in the query string (`?orgId=<orgId>&environmentId=<environmentId>`), and mutating action calls require a non-blank `idempotencyKey` field in the JSON request body (never custom scope or `Idempotency-Key` headers).
 
 ---
 
@@ -142,10 +142,11 @@ Source registry: [`registry/features/api-and-hosts.json`](../../../../registry/f
 
 ### Probe
 
-- **Drive:** Trigger an approval-gated action as developer, inspect `GET /v1/decisions:requested` and `GET /v1/inbox`, attempt self-approval (must refuse), then approve via `POST /v1/decisions/{id}:decide` using the reviewer token from `.norn/dev.json` and confirm via `GET /v1/decisions`.
-- **Observable end state:** Self-approval fails closed; reviewer decision commits atomically, resolves the pending decision in `GET /v1/decisions`, and applies the fenced action effect.
+- **Drive:** Trigger an approval-gated action as developer (`POST /v1/actions/{actionId}?orgId=<orgId>&environmentId=<environmentId>` with `{"input": {...}, "idempotencyKey": "..."}` returning `202` pending), inspect `GET /v1/decisions:requested` and `GET /v1/inbox`, attempt self-approval (must refuse `404`), approve via `POST /v1/decisions/{id}:decide?orgId=<orgId>&environmentId=<environmentId>` using the reviewer token from `.norn/dev.json` (`{"choice":"approve","idempotencyKey":"..."}`), verify the action has not executed yet (`call: {committed: false, state: "not_executed"}`), and then retry the exact original `POST /v1/actions/{actionId}` call as developer to execute it; test flow-step `norn.decision@1` decisions separately.
+- **Observable end state:** Self-approval fails closed; for a parked action, reviewer approval records the decision in `DECISION-LEDGER-1` and returns `call: {committed: false, state: "not_executed"}` without mutating target state, and only the requester's retry of the exact call commits the approved action under the requester's own authority (`APPROVAL-RECOVERY-1`). (Separately, deciding a flow-step decision records the resolution and commits the flow run's result turn.)
 - **Gotchas:**
   - The requester principal can never decide their own pending approval; always read `reviewer.tokenFile` from `.norn/dev.json`.
+  - Keep parked-action approvals distinct from flow decisions: reviewer approval of a parked action runs nothing (`not_executed`) and waits for the requester to retry the exact call.
 
 ---
 
@@ -174,7 +175,7 @@ Source registry: [`registry/features/api-and-hosts.json`](../../../../registry/f
 
 ### Probe
 
-- **Drive:** Send a JSON-RPC 2.0 `tools/list` request to `POST /v1/mcp` on a running `norn dev` cell with bearer auth and scope headers, then invoke a returned tool via `tools/call`.
+- **Drive:** Send a JSON-RPC 2.0 `tools/list` request to `POST /v1/mcp?orgId=<orgId>&environmentId=<environmentId>` on a running `norn dev` cell with bearer auth, then invoke a returned tool via `tools/call`.
 - **Observable end state:** `tools/list` returns the cell's live admitted tools with JSON Schemas and catalog digest; `tools/call` routes through the same cell authority and returns a receipt or typed refusal.
 - **Gotchas:**
   - Discovery never installs definitions; unauthenticated or out-of-scope MCP calls refuse closed.

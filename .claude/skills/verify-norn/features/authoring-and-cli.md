@@ -12,9 +12,9 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 
 | Feature ID | Title | Status | Evidence tier | Surfaces | Invariants |
 | --- | --- | --- | --- | ---: | ---: |
-| [`cli-authoring-compile-and-format`](#cli-authoring-compile-and-format) | Native TypeScript/Python authoring compile, format, profile, question, and dashboard CLI | `implemented` | `runtime-enforced` | 5 | 1 |
+| [`cli-authoring-compile-and-format`](#cli-authoring-compile-and-format) | Native TypeScript/Python authoring compile, format, profile, question, and dashboard CLI | `implemented` | `runtime-enforced` | 10 | 1 |
 | [`cli-cell-and-source-ops`](#cli-cell-and-source-ops) | Governed hosted cell plan/apply and sealed source pull CLI | `implemented` | `runtime-enforced` | 5 | 2 |
-| [`cli-check-and-explain`](#cli-check-and-explain) | Shared checker admission (`norn check`) and explanation (`norn explain`) CLI | `implemented` | `runtime-enforced` | 2 | 2 |
+| [`cli-check-and-explain`](#cli-check-and-explain) | Shared checker admission (`norn check`) and explanation (`norn explain`) CLI | `implemented` | `runtime-enforced` | 4 | 2 |
 | [`cli-dev-and-project-lifecycle`](#cli-dev-and-project-lifecycle) | Authoring CLI project init, local dev host, seed, setup, and TypeScript codegen | `implemented` | `runtime-enforced` | 5 | 1 |
 | [`cli-mcp-and-remote`](#cli-mcp-and-remote) | Local stdio MCP server, capabilities paging, and remote MCP client CLI | `implemented` | `runtime-enforced` | 4 | 1 |
 | [`cli-offline-eval-and-contracts`](#cli-offline-eval-and-contracts) | Offline decision evaluation, OpenAPI contract emission, and HOST-TREE-1 source digest CLI | `implemented` | `runtime-enforced` | 3 | 1 |
@@ -41,6 +41,11 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 - `cli:norn fmt`
 - `cli:norn profile`
 - `cli:norn question`
+- `cli:norn-ts compile`
+- `cli:norn-ts dashboard`
+- `cli:norn-ts fmt`
+- `cli:norn-ts profile`
+- `cli:norn-ts question`
 
 ### Source paths
 
@@ -51,6 +56,7 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 - `crates/norn-cli/src/authoring/fmt.rs`
 - `crates/norn-authoring/src/lib.rs`
 - `crates/norn-authoring-py/src/lib.rs`
+- `tools/norn-ts/src`
 
 ### Probe
 
@@ -77,11 +83,11 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 
 ### Owned surfaces
 
-- `cli:norn apply`
 - `cli:norn cell apply`
 - `cli:norn cell plan`
-- `cli:norn plan`
 - `cli:norn source pull`
+- `cli:norn-ts apply`
+- `cli:norn-ts plan`
 
 ### Source paths
 
@@ -120,6 +126,8 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 
 - `cli:norn check`
 - `cli:norn explain`
+- `cli:norn-ts check`
+- `cli:norn-ts explain`
 
 ### Source paths
 
@@ -127,6 +135,7 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 - `crates/norn-cli/src/explain.rs`
 - `crates/norn-checker/src/artifact_set.rs`
 - `crates/norn-checker/src/explain.rs`
+- `tools/norn-ts/src`
 
 ### Probe
 
@@ -153,20 +162,15 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 
 ### Owned surfaces
 
-- `cli:norn codegen`
-- `cli:norn dev`
-- `cli:norn init`
-- `cli:norn seed`
-- `cli:norn setup`
+- `cli:norn-ts codegen`
+- `cli:norn-ts dev`
+- `cli:norn-ts init`
+- `cli:norn-ts seed`
+- `cli:norn-ts setup`
 
 ### Source paths
 
-- `tools/norn-ts/src/cli.ts`
-- `tools/norn-ts/src/codegen.ts`
-- `tools/norn-ts/src/dev.ts`
-- `tools/norn-ts/src/init.ts`
-- `tools/norn-ts/src/seed.ts`
-- `tools/norn-ts/src/setup.ts`
+- `tools/norn-ts/src`
 - `crates/norn-cell-do/src/dev/http.rs`
 
 ### Probe

@@ -95,11 +95,12 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** For live cell verification, open `/decisions` as reviewer (`bun run local --project <proj> --as reviewer --port <port>`), inspect a pending approval in the floating DetailSheet, decide it, and open `/runs/$id`; separately, `cd apps/studio && bunx playwright test e2e/decisions.e2e.ts e2e/approved-run.e2e.ts` tests UI behavior against stand-in routes only.
-- **Observable end state:** Against a live cell, pending decisions list honestly, reviewer decision records a durable receipt and transitions the run state on `/runs/$id`, and self-approval shows the cell's refusal banner; stand-in Playwright specs verify UI flows only.
+- **Drive:** For live cell verification, exercise both flows separately: (1) for a parked-action approval (`APPROVAL-1`), park a gated action as requester, open `/decisions` as reviewer (`bun run local --project <proj> --as reviewer --port <port>`) and approve it in the floating DetailSheet (confirming `not_executed` / waiting for requester), then switch back to the requester's Studio instance to retry the exact approved call (`Approved, run it`); (2) for a flow-step decision (`DECISIONS-1`), decide the pending flow decision on `/decisions` as reviewer and inspect `/runs/$id`; separately, `cd apps/studio && bunx playwright test e2e/decisions.e2e.ts e2e/approved-run.e2e.ts` tests UI behavior against stand-in routes only.
+- **Observable end state:** Against a live cell, pending decisions list honestly and self-approval shows the cell's refusal; for a parked action, reviewer approval records the decision with `not_executed` (`Approved; waiting for the requester to run it.`) and only the requester's retry executes and commits it; separately, deciding a flow-step decision commits the run's result turn and transitions `/runs/$id`; stand-in Playwright specs verify UI flows only.
 - **Gotchas:**
   - `e2e/decisions.e2e.ts` and `e2e/approved-run.e2e.ts` use stand-in `/api/host` route mocks (skipping when `E2E_BASE` is set) and do not prove live cell persistence.
   - The requester cannot approve their own pending decision; run a second `bun run local --as reviewer` instance on a separate loopback port.
+  - Keep parked-action approval distinct from flow decisions and timer delivery: approving a parked action on `/decisions` never runs the requester's call (`not_executed`) until the requester retries it.
 
 ---
 

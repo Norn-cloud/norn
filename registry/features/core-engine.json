@@ -62,11 +62,11 @@
         "transition-domain-authority-quint-typecheck"
       ],
       "probe": {
-        "drive": "Inspect the bounded Quint/Apalache and Kani gate definitions in `verification/coverage-v1/promoted-gates.json` (run them in CI or a Boat sandbox, never local `cargo`/`rustc`), and drive an approval-gated action + self-approval refusal + reviewer approval and hosted timer dispatch against a local `norn dev` cell.",
-        "observableEndState": "Requester self-approval and stale-revision decisions fail closed with state unchanged; distinct reviewer approval commits atomically and fires scheduled timer/outbox work without duplicate execution.",
+        "drive": "Inspect the bounded Quint/Apalache and Kani gate definitions in `verification/coverage-v1/promoted-gates.json` (run them in CI or a Boat sandbox, never local `cargo`/`rustc`); separately against a local `norn dev` cell, (1) drive a parked approval-gated action (`POST /v1/actions/{actionId}?orgId=<orgId>&environmentId=<environmentId>` with `idempotencyKey` in the JSON body) -> self-approval refusal -> reviewer `POST /v1/decisions/{id}:decide` returning `call: {committed: false, state: \"not_executed\"}` -> requester retry of the exact call to execute the approved action, and (2) exercise hosted timer/outbox scheduling and delivery independently.",
+        "observableEndState": "Requester self-approval and stale-revision decisions fail closed with state unchanged; for a parked action, reviewer approval records only the decision and returns `not_executed` until the requester retries the exact call under their own authority (`APPROVAL-RECOVERY-1`), distinct from flow decisions and timer delivery; separately, scheduled hosted timers/outbox work wake and deliver without duplicate execution.",
         "gotchas": [
           "`hosted-timers-quint`, `hosted-timers-progress-quint`, and `approval-fencing-quint` are bounded Quint/Apalache model checks (5-step / 10-step bounds) and `kernel-version-kani` is a bounded Kani harness — evidence is `bounded`, never `checked-proof`.",
-          "Approval decisions are fenced against requester self-approval and stale revision; test with a distinct `--as reviewer` principal."
+          "Keep parked-action approval distinct from flow decisions and timer delivery: reviewer approval of a parked action returns `not_executed` and never executes the action or fires timers until the requester retries the exact call; test with a distinct `--as reviewer` principal."
         ]
       }
     },
@@ -164,7 +164,7 @@
         "transition-lean"
       ],
       "probe": {
-        "drive": "Submit an action with an idempotency key to a local `norn dev` cell (`POST /v1/actions/{actionId}`), replay the same idempotency key with identical and conflicting payloads, and verify stale-version CAS refusal; inspect Lean/Verus/Aeneas proof gates in `verification/coverage-v1/promoted-gates.json` (run formal gates in CI or a Boat sandbox).",
+        "drive": "Submit an action to a local `norn dev` cell (`POST /v1/actions/{actionId}?orgId=<orgId>&environmentId=<environmentId>` with `idempotencyKey` in the JSON body), replay the same `idempotencyKey` with identical and conflicting payloads, and verify stale-version CAS refusal; inspect Lean/Verus/Aeneas proof gates in `verification/coverage-v1/promoted-gates.json` (run formal gates in CI or a Boat sandbox).",
         "observableEndState": "First call commits atomically and returns a receipt; identical replay returns the original receipt without duplicate effects; conflicting payload or stale revision refuses with state unchanged; all linked Lean/Verus/Aeneas gates hold without proof holes.",
         "gotchas": [
           "Bounded Quint/Kani checks for approval fencing, hosted timers, and v2 commit admission live under `core-approval-fencing-and-timers` (`bounded`), separate from these unbounded Lean/Verus proofs."

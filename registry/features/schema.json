@@ -43,7 +43,7 @@
     },
     "surfaceKey": {
       "type": "string",
-      "pattern": "^(http:(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) /[^\\s]+|cli:norn [a-z0-9-]+( [a-z0-9-]+)*|ir:[A-Za-z][A-Za-z0-9_-]*|studio:/[^\\s]*|gate:[a-z0-9][a-z0-9-]*)$"
+      "pattern": "^(http:(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) /[^\\s]+|cli:norn(-ts)? [a-z0-9-]+( [a-z0-9-]+)*|ir:[A-Za-z][A-Za-z0-9_-]*|studio:/[^\\s]*|gate:[a-z0-9][a-z0-9-]*)$"
     },
     "invariantRef": {
       "type": "string",

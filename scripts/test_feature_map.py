@@ -364,7 +364,7 @@ pub enum ArtifactKind {
         )
         self.assertEqual(fm.extract_ir_surfaces(self.tmp), {"ir:business-pack", "ir:custom_override"})
 
-        # 4. CLI: also extract authoring subcommands from tools/norn-ts/src/cli.ts.
+        # 4. CLI: separate Rust `cli:norn <cmd>` vs TypeScript `cli:norn-ts <cmd>` (including overlapping commands).
         ts_cli = self.tmp / "tools/norn-ts/src/cli.ts"
         ts_cli.parent.mkdir(parents=True)
         ts_cli.write_text(
@@ -377,7 +377,13 @@ if (command !== "check" && command !== "compile") {}
             encoding="utf-8",
         )
         cli_surfaces = fm.extract_cli_surfaces(self.tmp)
-        self.assertTrue({"cli:norn dev", "cli:norn init", "cli:norn seed"}.issubset(cli_surfaces))
+        self.assertIn("cli:norn check", cli_surfaces)
+        self.assertTrue(
+            {"cli:norn-ts dev", "cli:norn-ts init", "cli:norn-ts seed", "cli:norn-ts check", "cli:norn-ts compile"}
+            .issubset(cli_surfaces)
+        )
+        self.assertNotIn("cli:norn dev", cli_surfaces)
+        self.assertNotIn("cli:norn init", cli_surfaces)
 
         # 5. Promoted gates: refuse duplicate gate IDs explicitly.
         gates_file = self.tmp / "verification/coverage-v1/promoted-gates.json"
@@ -396,12 +402,56 @@ if (command !== "check" && command !== "compile") {}
             fm.extract_gate_surfaces(self.tmp)
 
     def test_invariant_symbol_validation(self):
-        # Present symbol (both `::` and `#` markdown heading) passes.
+        # Populate Rust file with a top-level constant outside ArtifactKind, struct, and impl methods.
+        (self.tmp / "crates/norn-ir/src/lib.rs").write_text(
+            """
+pub const SUPPORTED_IR_VERSION: &str = "0.1";
+
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactKind {
+    Entity,
+    BusinessPack,
+}
+
+impl ArtifactKind {
+    pub const DEFAULT_KIND: Self = Self::Entity;
+    pub fn as_str(&self) -> &'static str {
+        let _ = SUPPORTED_IR_VERSION;
+        "entity"
+    }
+}
+
+pub struct Envelope {
+    pub kind: ArtifactKind,
+}
+""",
+            encoding="utf-8",
+        )
+        (self.tmp / "docs/spec/core/01-values-identity.md").write_text(
+            """# Spec
+
+## Action Wire Contract
+
+Action requests carry `idempotencyKey` in the JSON body.
+
+```sh
+# fake-code-heading
+```
+""",
+            encoding="utf-8",
+        )
+
+        # Present symbols (top-level type, enum variant, impl method/const, struct field, real Markdown heading) pass.
         feat_ok = _base_feature(
             invariants=[
                 "demo-gate",
                 "checker:crates/norn-ir/src/lib.rs::ArtifactKind",
+                "checker:crates/norn-ir/src/lib.rs::ArtifactKind::Entity",
+                "checker:crates/norn-ir/src/lib.rs::ArtifactKind::as_str",
+                "checker:crates/norn-ir/src/lib.rs::ArtifactKind::DEFAULT_KIND",
+                "checker:crates/norn-ir/src/lib.rs::Envelope::kind",
                 "law:docs/spec/core/01-values-identity.md#spec",
+                "law:docs/spec/core/01-values-identity.md#action-wire-contract",
             ]
         )
         _write_domain(self.tmp, [feat_ok])
@@ -415,13 +465,146 @@ if (command !== "check" && command !== "compile") {}
         with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'DoesNotExistSymbol' not found"):
             fm.load_registry(self.tmp)
 
-        # Missing `#` symbol fails Law 2.
+        # Top-level constant outside `ArtifactKind` MUST be refused for `ArtifactKind::SUPPORTED_IR_VERSION`.
+        feat_bad_qualified = _base_feature(
+            invariants=["demo-gate", "checker:crates/norn-ir/src/lib.rs::ArtifactKind::SUPPORTED_IR_VERSION"]
+        )
+        _write_domain(self.tmp, [feat_bad_qualified])
+        with self.assertRaisesRegex(
+            fm.FeatureMapError, r"cited symbol 'ArtifactKind::SUPPORTED_IR_VERSION' not found"
+        ):
+            fm.load_registry(self.tmp)
+
+        # Missing `#` heading anchor fails Law 2.
         feat_bad_anchor = _base_feature(
             invariants=["demo-gate", "law:docs/spec/core/01-values-identity.md#missing-anchor"]
         )
         _write_domain(self.tmp, [feat_bad_anchor])
         with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'missing-anchor' not found"):
             fm.load_registry(self.tmp)
+
+        # Body-only identifier `#idempotencyKey` (not an actual Markdown heading) MUST be refused.
+        feat_body_only_anchor = _base_feature(
+            invariants=["demo-gate", "law:docs/spec/core/01-values-identity.md#idempotencyKey"]
+        )
+        _write_domain(self.tmp, [feat_body_only_anchor])
+        with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'idempotencyKey' not found"):
+            fm.load_registry(self.tmp)
+
+        # Heading-like comment inside fenced code block MUST also be refused.
+        feat_fenced_anchor = _base_feature(
+            invariants=["demo-gate", "law:docs/spec/core/01-values-identity.md#fake-code-heading"]
+        )
+        _write_domain(self.tmp, [feat_fenced_anchor])
+        with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'fake-code-heading' not found"):
+            fm.load_registry(self.tmp)
+
+    def test_digest_tracks_gate_quint_models_invariant_files_and_ts_cli_sources(self):
+        # 1. Promoted gate Quint model file (resolved from promoted-gates.json command + coverage manifest)
+        quint_model = self.tmp / "verification/hosted-timers-v1/models/hosted-timers.qnt"
+        quint_model.parent.mkdir(parents=True)
+        quint_model.write_text("module hostedTimers { val x = 1 }\n", encoding="utf-8")
+
+        manifest_model = self.tmp / "verification/hosted-timers-v1/models/approval-fencing.qnt"
+        manifest_model.write_text("module approvalFencing { val y = 1 }\n", encoding="utf-8")
+
+        (self.tmp / "verification/coverage-v1/promoted-gates.json").write_text(
+            json.dumps(
+                {
+                    "gates": [
+                        {
+                            "id": "demo-gate",
+                            "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache",
+                            "classifications": [{"subsystem": "transition-authority", "layer": "model"}],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        cm = _sibling("coverage_manifest")
+        cm.write(
+            {
+                "schemaVersion": "norn.verification.coverage.v1",
+                "subsystems": [
+                    {
+                        "id": "transition-authority",
+                        "model": {
+                            "status": "bounded_model_checked",
+                            "artifacts": [
+                                "verification/hosted-timers-v1/models/hosted-timers.qnt",
+                                "verification/hosted-timers-v1/models/approval-fencing.qnt",
+                            ],
+                            "commands": [],
+                            "generatedArtifacts": [],
+                            "resultArtifacts": [],
+                        },
+                        "obligationClaims": [],
+                    }
+                ],
+            },
+            self.tmp / "verification/coverage-v1/manifest",
+        )
+
+        # 2. Cited invariant file outside sourcePaths
+        inv_file = self.tmp / "crates/norn-checker/src/table_analysis.rs"
+        inv_file.parent.mkdir(parents=True)
+        inv_file.write_text("pub fn analyze() {}\n", encoding="utf-8")
+
+        # 3. TypeScript CLI source under tools/norn-ts/src
+        ts_fmt = self.tmp / "tools/norn-ts/src/fmt.ts"
+        ts_fmt.parent.mkdir(parents=True)
+        ts_fmt.write_text("export function fmt() { return 0 }\n", encoding="utf-8")
+
+        feat = _base_feature(
+            sourcePaths=["crates/norn-ir/src/lib.rs", "tools/norn-ts/src"],
+            invariants=["demo-gate", "checker:crates/norn-checker/src/table_analysis.rs"],
+        )
+        d0 = fm.compute_verification_digest(self.tmp, feat, use_git=False)
+
+        # Editing the promoted gate's Quint model file MUST change the feature's digest.
+        quint_model.write_text("module hostedTimers { val x = 2 }\n", encoding="utf-8")
+        d_quint = fm.compute_verification_digest(self.tmp, feat, use_git=False)
+        self.assertNotEqual(d0, d_quint)
+
+        # Editing a coverage-manifest subsystem artifact for that gate MUST also change the digest.
+        manifest_model.write_text("module approvalFencing { val y = 2 }\n", encoding="utf-8")
+        d_manifest = fm.compute_verification_digest(self.tmp, feat, use_git=False)
+        self.assertNotEqual(d_quint, d_manifest)
+
+        # Editing the cited invariant file MUST change the digest.
+        inv_file.write_text("pub fn analyze() { /* changed */ }\n", encoding="utf-8")
+        d_inv = fm.compute_verification_digest(self.tmp, feat, use_git=False)
+        self.assertNotEqual(d_manifest, d_inv)
+
+        # Editing tools/norn-ts/src/fmt.ts MUST change the digest.
+        ts_fmt.write_text("export function fmt() { return 1 }\n", encoding="utf-8")
+        d_ts = fm.compute_verification_digest(self.tmp, feat, use_git=False)
+        self.assertNotEqual(d_inv, d_ts)
+
+        # Also verify against the real repository registry that core-approval-fencing-and-timers
+        # includes hosted-timers.qnt and cli-authoring-compile-and-format includes tools/norn-ts/src/fmt.ts.
+        domains, _, gate_meta = fm.load_registry(ROOT)
+        coverage_subsystems = fm._load_coverage_subsystems(ROOT)
+        approval_feat = next(
+            f for f in domains["core-engine"]["features"] if f["id"] == "core-approval-fencing-and-timers"
+        )
+        approval_paths = fm._feature_digest_paths(
+            ROOT, approval_feat, gate_meta=gate_meta, coverage_subsystems=coverage_subsystems
+        )
+        self.assertIn("verification/hosted-timers-v1/models/hosted-timers.qnt", approval_paths)
+
+        cli_feat = next(
+            f for f in domains["authoring-and-cli"]["features"] if f["id"] == "cli-authoring-compile-and-format"
+        )
+        cli_files = {
+            p.relative_to(ROOT).as_posix()
+            for sp in fm._feature_digest_paths(
+                ROOT, cli_feat, gate_meta=gate_meta, coverage_subsystems=coverage_subsystems
+            )
+            for p in fm._files_under_path(ROOT, sp, True)
+        }
+        self.assertIn("tools/norn-ts/src/fmt.ts", cli_files)
 
     def test_git_commit_verification_untracked_exclusion_and_symlink_rejection(self):
         def git(*args: str) -> str:

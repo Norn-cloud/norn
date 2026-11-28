@@ -13,11 +13,11 @@ pass, then inspect each feature with `python3 scripts/feature_map.py show <featu
 | Surface family | Live extracted | Claimed by features | Coverage |
 | --- | ---: | ---: | ---: |
 | HTTP routes (`http:`) | 44 | 44 | 100% |
-| CLI subcommands (`cli:`) | 24 | 24 | 100% |
+| CLI subcommands (`cli:`) | 31 | 31 | 100% |
 | IR artifact kinds (`ir:`) | 17 | 17 | 100% |
 | Studio UI routes (`studio:`) | 34 | 34 | 100% |
 | Promoted gates (`gate:`) | 101 | 101 | 100% |
-| **Total** | **220** | **220** | **100%** |
+| **Total** | **227** | **227** | **100%** |
 
 ## Feature inventory
 
@@ -26,7 +26,7 @@ Total: **33** features across **5** domains (`implemented`: 33, `partial`: 0, `p
 | Domain | File | Features | Implemented | Partial | Planned | Surfaces |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | HTTP API & Cell Host Surface (`api-and-hosts`) | [`api-and-hosts.md`](./api-and-hosts.md) | 8 | 8 | 0 | 0 | 44 |
-| Native Authoring & CLI Surface (`authoring-and-cli`) | [`authoring-and-cli.md`](./authoring-and-cli.md) | 6 | 6 | 0 | 0 | 24 |
+| Native Authoring & CLI Surface (`authoring-and-cli`) | [`authoring-and-cli.md`](./authoring-and-cli.md) | 6 | 6 | 0 | 0 | 31 |
 | Core Engine & IR Semantics (`core-engine`) | [`core-engine.md`](./core-engine.md) | 9 | 9 | 0 | 0 | 101 |
 | Norn Studio UI Surface (`studio-ui`) | [`studio-ui.md`](./studio-ui.md) | 8 | 8 | 0 | 0 | 34 |
 | Verification Integrity & Formal Assurance (`verification`) | [`verification.md`](./verification.md) | 2 | 2 | 0 | 0 | 17 |
