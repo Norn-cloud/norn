@@ -766,17 +766,9 @@ pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutpu
         None => "{}".to_owned(),
     };
 
-    let report = match norn_checker_wasm::check_artifact_set_json(&artifacts_json, &context_json) {
-        Ok(text) => text,
-        Err(err) => return CommandOutput::usage_or_io_error(&err.to_string()),
-    };
-    let parsed: Value = match serde_json::from_str(&report) {
-        Ok(val) => val,
-        Err(err) => return CommandOutput::usage_or_io_error(&err.to_string()),
-    };
-    if parsed.get("admitted").and_then(Value::as_bool) == Some(true) {
-        CommandOutput::ok(report)
-    } else {
-        CommandOutput::refused(report)
+    match crate::red_team::check_with_red_team(&artifacts_json, &context_json) {
+        Ok((report, true)) => CommandOutput::ok(report),
+        Ok((report, false)) => CommandOutput::refused(report),
+        Err(err) => CommandOutput::usage_or_io_error(&err),
     }
 }
