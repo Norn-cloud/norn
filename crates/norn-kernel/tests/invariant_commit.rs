@@ -4383,6 +4383,30 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
     );
 }
 
+struct EmptyCommitView;
+
+impl CommitView for EmptyCommitView {
+    type Error = std::convert::Infallible;
+    fn version(&self, _: &FactKey) -> Result<FactVersion, Self::Error> {
+        Ok(FactVersion::ABSENT)
+    }
+    fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Self::Error> {
+        Ok(None)
+    }
+    fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Self::Error> {
+        Ok(FactVersion::ABSENT)
+    }
+    fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Self::Error> {
+        Ok(Vec::new())
+    }
+    fn object_values(&self, _: &FactKey) -> Result<Option<JsonObject>, Self::Error> {
+        Ok(None)
+    }
+    fn pending(&self, _: &Consumed) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+}
+
 #[test]
 fn law_exception_audit_attribution_records_applied_exception_ids() {
     let types = vec![quality_item_type()];
@@ -4402,7 +4426,7 @@ fn law_exception_audit_attribution_records_applied_exception_ids() {
         &mut TurnFuel::default(),
     )
     .expect("both sibling exceptions lift the law");
-    assert!(lifted.failures.is_empty());
+    assert_eq!(lifted.failures, Vec::new());
     assert_eq!(lifted.applied_exceptions.len(), 1);
     assert_eq!(
         lifted.applied_exceptions[0].applied_exception_ids,
@@ -4420,7 +4444,7 @@ fn law_exception_audit_attribution_records_applied_exception_ids() {
         &mut TurnFuel::default(),
     )
     .expect("huge_cap defeats vip while board_override still lifts");
-    assert!(re_engaged.failures.is_empty());
+    assert_eq!(re_engaged.failures, Vec::new());
     assert_eq!(
         re_engaged.applied_exceptions[0].applied_exception_ids,
         vec!["board_override".to_owned(), "huge_cap".to_owned()]
@@ -4442,7 +4466,7 @@ fn law_exception_audit_attribution_records_applied_exception_ids() {
     )
     .expect("huge_cap defeats sole vip exception so law re-engages");
     assert_eq!(defeated_report.failures.len(), 1);
-    assert!(defeated_report.applied_exceptions.is_empty());
+    assert_eq!(defeated_report.applied_exceptions, Vec::new());
 
     let not_lifted = norn_kernel::governing_laws::evaluate_with_audit(
         &nested_catalog,
@@ -4451,32 +4475,10 @@ fn law_exception_audit_attribution_records_applied_exception_ids() {
         &mut TurnFuel::default(),
     )
     .expect("no exception matches");
-    assert!(not_lifted.applied_exceptions.is_empty());
+    assert_eq!(not_lifted.applied_exceptions, Vec::new());
     assert_eq!(not_lifted.failures.len(), 1);
 
     // Real CellCommit through check_commit_with_audit preserves the same §8.1 attribution.
-    struct EmptyCommitView;
-    impl CommitView for EmptyCommitView {
-        type Error = std::convert::Infallible;
-        fn version(&self, _: &FactKey) -> Result<FactVersion, Self::Error> {
-            Ok(FactVersion::ABSENT)
-        }
-        fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Self::Error> {
-            Ok(None)
-        }
-        fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Self::Error> {
-            Ok(FactVersion::ABSENT)
-        }
-        fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Self::Error> {
-            Ok(Vec::new())
-        }
-        fn object_values(&self, _: &FactKey) -> Result<Option<JsonObject>, Self::Error> {
-            Ok(None)
-        }
-        fn pending(&self, _: &Consumed) -> Result<bool, Self::Error> {
-            Ok(false)
-        }
-    }
     let model = norn_kernel::CommitModel::new(&nested_catalog);
     let commit = CellCommit::<FactEvent, JsonObject, JsonObject> {
         writes: vec![FactWrite {

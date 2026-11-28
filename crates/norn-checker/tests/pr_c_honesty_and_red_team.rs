@@ -301,8 +301,7 @@ fn order_create_action() -> ArtifactEnvelope {
     )
 }
 
-#[test]
-fn law_honesty_distinguishes_enforced_from_declared_only() {
+fn law_honesty_fixtures() -> Vec<norn_ir::ArtifactEnvelope> {
     let enforced = law_envelope(
         "hr.Payslip.exact_net",
         "hr.Payslip",
@@ -364,14 +363,18 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
         "always",
         &json!({}),
     );
-
-    let statuses = classify_law_honesty(&[
+    vec![
         enforced,
         eventually,
         with_exception,
         invariant_with_exception,
         app_root,
-    ]);
+    ]
+}
+
+#[test]
+fn law_honesty_distinguishes_enforced_from_declared_only() {
+    let statuses = classify_law_honesty(&law_honesty_fixtures());
     assert_eq!(statuses.len(), 5);
     let by_id = |id: &str| statuses.iter().find(|s| s.law_id == id).expect("status");
 
