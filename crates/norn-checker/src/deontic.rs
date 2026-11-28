@@ -716,7 +716,7 @@ fn upgrade_legacy_exceptions(slot: &mut serde_json::Value) {
 }
 
 /// Decode one normative slot, upgrading flat legacy exceptions first.
-fn decode_slot(slot: &serde_json::Value) -> Result<Vec<DeonticRule>, String> {
+pub(crate) fn decode_slot(slot: &serde_json::Value) -> Result<Vec<DeonticRule>, String> {
     let mut value = slot.clone();
     upgrade_legacy_exceptions(&mut value);
     serde_json::from_slice(&norn_canonical::canonical_json_of(&value).map_err(|e| e.to_string())?)

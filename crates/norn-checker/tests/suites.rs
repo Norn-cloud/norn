@@ -38,6 +38,8 @@ mod consistency;
 mod consistency_divergence;
 #[path = "consistency_exchange.rs"]
 mod consistency_exchange;
+#[path = "core_preservation.rs"]
+mod core_preservation;
 #[path = "core_time.rs"]
 mod core_time;
 #[path = "core_units.rs"]

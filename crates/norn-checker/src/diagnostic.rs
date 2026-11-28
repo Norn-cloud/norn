@@ -8,6 +8,7 @@
 //! dotted path becomes an RFC 6901 JSON pointer. Every code is registered in
 //! [`crate::codes`]; [`diagnostics_to_json`] is the stable JSON output (T1-CHK-2).
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::codes::{self, CodeEntry, severity_str};
@@ -229,12 +230,65 @@ pub struct Diagnostic {
     pub witness: Option<DiagnosticWitness>,
 }
 
-/// A shortest run that shows a finding: the edge path the check walked, and at each step which
-/// machine moved and by which transition. Hosts step through it; nothing is parsed from the message.
+/// A shortest run or structured counterexample that shows a finding: the edge path the check
+/// walked (and at each step which machine moved and by which transition), and/or structured
+/// ontology/law counterexample fields. Hosts step through it; nothing is parsed from the message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticWitness {
     /// The steps, from an initial state.
     pub steps: Vec<WitnessStep>,
+    /// Structured counterexample witness for core-link completeness, core-law non-defeasibility,
+    /// or core-law preservation findings.
+    pub counterexample: Option<Box<CounterexampleWitness>>,
+}
+
+/// Structured counterexample data attached to [`DiagnosticWitness`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CounterexampleWitness {
+    /// Missing, dangling, incompatible, or widened interface/core link contract.
+    CoreLink {
+        /// Specializing object type, interface, or action.
+        child_concept: String,
+        /// Parent interface, supertype, or unresolved target naming the contract.
+        parent_interface: String,
+        /// Link or role identifier that failed the contract.
+        link_id: String,
+        /// Expected link or role contract.
+        expected_contract: String,
+        /// Actual link or role contract observed (or `"missing"`).
+        actual_contract: String,
+    },
+    /// Downstream attempt to weaken, shadow, except, or defeat a core constitutional law.
+    CoreLawWeakening {
+        /// Offending artifact identity.
+        offending_artifact: String,
+        /// Offending law or rule identity.
+        offending_law_id: String,
+        /// Protected inherited or `core.*` law identity.
+        core_law_id: String,
+        /// Concrete explanation of the prohibited weakening or defeat.
+        reason: String,
+    },
+    /// Concrete counterexample showing an action, writer, rule, or lifecycle transition breaking
+    /// an inherited `core.*` law or leaving a reachable state with zero law-satisfying exits.
+    CoreLawViolation {
+        /// Offending action identity (or `"<lifecycle>"` for direct lifecycle violations).
+        action_id: String,
+        /// Offending writer, derivation, rule artifact, or transition identity.
+        writer_id: String,
+        /// Concrete governed object type.
+        subject_type: String,
+        /// Violated `core.*` law or interface invariant identity.
+        core_law_id: String,
+        /// Concrete object state assignment witnessing the violation.
+        state_assignment: BTreeMap<String, String>,
+        /// Concrete action input assignment witnessing the violation.
+        input_assignment: BTreeMap<String, String>,
+        /// Concrete transition/writer trace leading to the violating state.
+        trace: Vec<String>,
+        /// Concise explanation of why this witness refutes preservation.
+        detail: String,
+    },
 }
 
 /// One step of a [`DiagnosticWitness`].
@@ -264,11 +318,145 @@ pub enum WitnessSide {
     Backend,
 }
 
+impl CounterexampleWitness {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::CoreLink {
+                child_concept,
+                parent_interface,
+                link_id,
+                expected_contract,
+                actual_contract,
+            } => serde_json::json!({
+                "kind": "core_link",
+                "childConcept": child_concept,
+                "parentInterface": parent_interface,
+                "linkId": link_id,
+                "expectedContract": expected_contract,
+                "actualContract": actual_contract,
+            }),
+            Self::CoreLawWeakening {
+                offending_artifact,
+                offending_law_id,
+                core_law_id,
+                reason,
+            } => serde_json::json!({
+                "kind": "core_law_weakening",
+                "offendingArtifact": offending_artifact,
+                "offendingLawId": offending_law_id,
+                "coreLawId": core_law_id,
+                "reason": reason,
+            }),
+            Self::CoreLawViolation {
+                action_id,
+                writer_id,
+                subject_type,
+                core_law_id,
+                state_assignment,
+                input_assignment,
+                trace,
+                detail,
+            } => serde_json::json!({
+                "kind": "core_law_violation",
+                "actionId": action_id,
+                "writerId": writer_id,
+                "subjectType": subject_type,
+                "coreLawId": core_law_id,
+                "stateAssignment": state_assignment,
+                "inputAssignment": input_assignment,
+                "trace": trace,
+                "detail": detail,
+            }),
+        }
+    }
+}
+
 impl DiagnosticWitness {
+    /// Build a step-only witness (with no structured counterexample).
+    #[must_use]
+    pub const fn from_steps(steps: Vec<WitnessStep>) -> Self {
+        Self {
+            steps,
+            counterexample: None,
+        }
+    }
+
+    /// Build a core-link / specialization completeness witness.
+    #[must_use]
+    pub fn core_link(
+        child_concept: impl Into<String>,
+        parent_interface: impl Into<String>,
+        link_id: impl Into<String>,
+        expected_contract: impl Into<String>,
+        actual_contract: impl Into<String>,
+    ) -> Self {
+        Self {
+            steps: Vec::new(),
+            counterexample: Some(Box::new(CounterexampleWitness::CoreLink {
+                child_concept: child_concept.into(),
+                parent_interface: parent_interface.into(),
+                link_id: link_id.into(),
+                expected_contract: expected_contract.into(),
+                actual_contract: actual_contract.into(),
+            })),
+        }
+    }
+
+    /// Build a core-law weakening / constitutional-defeat witness.
+    #[must_use]
+    pub fn core_law_weakening(
+        offending_artifact: impl Into<String>,
+        offending_law_id: impl Into<String>,
+        core_law_id: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            steps: Vec::new(),
+            counterexample: Some(Box::new(CounterexampleWitness::CoreLawWeakening {
+                offending_artifact: offending_artifact.into(),
+                offending_law_id: offending_law_id.into(),
+                core_law_id: core_law_id.into(),
+                reason: reason.into(),
+            })),
+        }
+    }
+
+    /// Build a core-law preservation counterexample witness with optional backend steps.
+    #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "structured counterexample witness fields are named explicitly"
+    )]
+    pub fn core_law_violation(
+        steps: Vec<WitnessStep>,
+        action_id: impl Into<String>,
+        writer_id: impl Into<String>,
+        subject_type: impl Into<String>,
+        core_law_id: impl Into<String>,
+        state_assignment: BTreeMap<String, String>,
+        input_assignment: BTreeMap<String, String>,
+        trace: Vec<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            steps,
+            counterexample: Some(Box::new(CounterexampleWitness::CoreLawViolation {
+                action_id: action_id.into(),
+                writer_id: writer_id.into(),
+                subject_type: subject_type.into(),
+                core_law_id: core_law_id.into(),
+                state_assignment,
+                input_assignment,
+                trace,
+                detail: detail.into(),
+            })),
+        }
+    }
+
     /// Wire JSON representation of this counterexample witness.
     #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut value = serde_json::json!({
             "steps": self.steps.iter().map(|step| serde_json::json!({
                 "edge": step.edge,
                 "moves": step.moves.iter().map(|step| serde_json::json!({
@@ -279,7 +467,13 @@ impl DiagnosticWitness {
                     "label": step.label,
                 })).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
-        })
+        });
+        if let Some(counterexample) = &self.counterexample
+            && let Some(object) = value.as_object_mut()
+        {
+            object.insert("counterexample".to_owned(), counterexample.to_json());
+        }
+        value
     }
 }
 

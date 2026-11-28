@@ -31,6 +31,7 @@ pub mod codes;
 mod concept_roles;
 pub mod connector_path;
 pub mod consistency;
+pub mod core_preservation;
 pub mod decision_links;
 mod defined_concepts;
 pub mod definition_catalog;
@@ -118,13 +119,14 @@ pub use artifact_set::{
     check_artifact_set_ring0_phases, may_reference, resolve_artifact_set, scope_conflict,
 };
 pub use codes::{CodeEntry, Tier, conformance_manifest};
+pub use core_preservation::check_core_preservation_set;
 pub use definitions_diff::{
     AdditivityChange, DefinitionDiff, DefinitionId, Narrowing, diff_definition_sets,
 };
 pub use diagnostic::{
-    DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
-    DiagnosticWitness, SourceSpan, Span, StructuralEvidence, WitnessMove, WitnessSide, WitnessStep,
-    diagnostics_to_json,
+    CounterexampleWitness, DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation,
+    DiagnosticSeverity, DiagnosticWitness, SourceSpan, Span, StructuralEvidence, WitnessMove,
+    WitnessSide, WitnessStep, diagnostics_to_json,
 };
 pub use engine_release::{ENGINE_DOWNGRADE, ENGINE_UNKNOWN_VERSION, ENGINE_UPGRADE_UNSUPPORTED};
 pub use entity_artifacts::{

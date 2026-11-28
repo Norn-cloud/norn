@@ -114,8 +114,9 @@ pub use tzdb::{
     check_expression, check_expression_in, check_expression_under, check_expression_under_in,
     check_expression_with, check_expression_with_in, check_expression_with_root_bounds,
     check_expression_with_root_bounds_in, check_expression_with_sources,
-    check_expression_with_sources_in, check_unary, check_unary_in, check_unary_with,
-    check_unary_with_in,
+    check_expression_with_sources_in, check_inherited_expression, check_inherited_expression_in,
+    check_inherited_expression_under, check_inherited_expression_under_in, check_unary,
+    check_unary_in, check_unary_with, check_unary_with_in,
 };
 
 /// The checker profile: the admitted grammar documented in this module, its
@@ -922,6 +923,7 @@ struct AnalysisContext<'a> {
     limits: &'a ResourceLimitProfile,
     root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>,
     exact_enabled: bool,
+    allow_narrowed_null_checks: bool,
     /// Read paths a guarding condition proved non-null.
     assumed: &'a [Vec<String>],
     tzdb: &'a crate::temporal::TzdbBundle,
@@ -948,6 +950,7 @@ fn analyze_expression(
         limits,
         root_bounds,
         exact_enabled,
+        allow_narrowed_null_checks,
         assumed,
         tzdb,
     } = *context;
@@ -975,6 +978,7 @@ fn analyze_expression(
     }
     let mut checker = Checker::new(env, metadata, None, tzdb);
     checker.exact_math = exact_enabled;
+    checker.allow_narrowed_null_checks = allow_narrowed_null_checks;
     checker.non_null = assumed.to_vec();
     let expectation = checker.expectation(expected);
     let found = checker.infer(ast, expectation.as_ref());
@@ -1022,6 +1026,7 @@ pub(super) struct CheckOptions<'a> {
     pub(super) limits: &'a ResourceLimitProfile,
     pub(super) root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>,
     pub(super) exact_enabled: bool,
+    pub(super) allow_narrowed_null_checks: bool,
     pub(super) assumed: &'a [Vec<String>],
     pub(super) tzdb: &'a crate::temporal::TzdbBundle,
 }
@@ -1043,6 +1048,7 @@ pub(super) fn check_expression_with_sources_and_root_bounds(
             limits,
             root_bounds,
             exact_enabled,
+            allow_narrowed_null_checks: false,
             assumed: &[],
             tzdb,
         },
@@ -1068,6 +1074,7 @@ pub(super) fn check_guarded(
         limits: options.limits,
         root_bounds: options.root_bounds,
         exact_enabled: options.exact_enabled,
+        allow_narrowed_null_checks: options.allow_narrowed_null_checks,
         assumed: options.assumed,
         tzdb: options.tzdb,
     };
@@ -1700,6 +1707,7 @@ struct Checker<'a> {
     types: HashMap<usize, T>,
     exact: bool,
     exact_math: bool,
+    allow_narrowed_null_checks: bool,
     /// Literal read paths a guarding condition proved non-null: a law's
     /// response is evaluated only when its condition holds. Expressions in
     /// the profile itself never narrow.
@@ -1837,6 +1845,7 @@ impl<'a> Checker<'a> {
             types: HashMap::new(),
             exact: false,
             exact_math: false,
+            allow_narrowed_null_checks: false,
             non_null: Vec::new(),
             tzdb,
         }
@@ -2927,8 +2936,14 @@ impl<'a> Checker<'a> {
                 let inner =
                     match self.infer(left, expected.map(|e| optional(e.clone())).as_ref())? {
                         T::Optional(inner) => *inner,
-                        ty @ (T::Null
-                        | T::Bool
+                        T::Null => {
+                            return self.report(
+                                left,
+                                codes::TYPE_ERROR,
+                                "the left side of `??` is never null (`null`)".to_owned(),
+                            );
+                        }
+                        ty @ (T::Bool
                         | T::Number(_)
                         | T::Str(_)
                         | T::Date
@@ -2937,11 +2952,15 @@ impl<'a> Checker<'a> {
                         | T::ParsedTimestamp
                         | T::List(_)
                         | T::Record(_)) => {
-                            return self.report(
-                                left,
-                                codes::TYPE_ERROR,
-                                format!("the left side of `??` is never null (`{ty}`)"),
-                            );
+                            if self.allow_narrowed_null_checks {
+                                ty
+                            } else {
+                                return self.report(
+                                    left,
+                                    codes::TYPE_ERROR,
+                                    format!("the left side of `??` is never null (`{ty}`)"),
+                                );
+                            }
                         }
                     };
                 let fallback = self.value(right, Some(&inner))?;
@@ -2963,8 +2982,12 @@ impl<'a> Checker<'a> {
                     };
                     return match self.infer(other, None)? {
                         T::Optional(_) => Some(T::Bool),
-                        ty @ (T::Null
-                        | T::Bool
+                        T::Null => self.report(
+                            node,
+                            codes::CONSTANT_COMPARISON,
+                            "a `null` value is never null".to_owned(),
+                        ),
+                        ty @ (T::Bool
                         | T::Number(_)
                         | T::Str(_)
                         | T::Date
@@ -2972,11 +2995,17 @@ impl<'a> Checker<'a> {
                         | T::ParsedDate
                         | T::ParsedTimestamp
                         | T::List(_)
-                        | T::Record(_)) => self.report(
-                            node,
-                            codes::CONSTANT_COMPARISON,
-                            format!("a `{ty}` value is never null"),
-                        ),
+                        | T::Record(_)) => {
+                            if self.allow_narrowed_null_checks {
+                                Some(T::Bool)
+                            } else {
+                                self.report(
+                                    node,
+                                    codes::CONSTANT_COMPARISON,
+                                    format!("a `{ty}` value is never null"),
+                                )
+                            }
+                        }
                     };
                 }
                 let l = self.value(left, None);

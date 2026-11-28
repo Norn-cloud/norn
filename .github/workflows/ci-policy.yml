@@ -386,6 +386,26 @@ jobs:
         with:
           tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129,uv@0.13.10,mold@3.0.0
       - run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
+      - name: Build prebuilt norn-linux-x86_64 CLI
+        if: ${{ github.repository == 'Norn-cloud/norn' && github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.bundle.id == 'b0' }}
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p norn-cli --bin norn
+          out="$RUNNER_TEMP/norn-linux-x86_64"
+          rm -rf -- "$out"
+          mkdir -p "$out"
+          install -m 0755 "${CARGO_TARGET_DIR:-target}/release/norn" "$out/norn"
+          "$out/norn" --version
+          git rev-parse HEAD > "$out/commit.txt"
+          (cd "$out" && sha256sum norn > norn.sha256)
+      - name: Upload prebuilt norn-linux-x86_64 CLI
+        if: ${{ github.repository == 'Norn-cloud/norn' && github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.bundle.id == 'b0' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: norn-linux-x86_64
+          path: ${{ runner.temp }}/norn-linux-x86_64
+          retention-days: 14
+          if-no-files-found: error
   full:
     needs: [plan, core, test]
     if: always() && !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
