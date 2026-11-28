@@ -13,7 +13,11 @@ use norn_kernel::pack_mbt_support::{
 };
 use norn_kernel::{ActionCall, ActionOutcome, DecisionTurn, TypeCatalog, World, commit_action};
 
-use super::seed::{Seeder, encode_action_wire_input, fill_missing_action_input_fields};
+use super::seed::{
+    Seeder, encode_action_wire_input, fill_missing_action_input_fields,
+    seed_create_links_and_slice_targets,
+};
+use super::synth::synthesize_object;
 use super::{AdmittedAction, AdmittedPack, PackHost};
 
 /// Strips balanced outer parentheses around `text`, respecting string literals.
@@ -285,10 +289,16 @@ pub(super) fn unwrap_operand(side: &str) -> &str {
     }
 }
 
+pub(super) fn is_plain_field(field: &str) -> bool {
+    !field.is_empty() && field.chars().all(is_ident_char)
+}
+
 fn extract_mul_input_field(side: &str) -> Option<&str> {
     let cur = strip_outer_parens(side);
     let (lhs, _rhs) = cur.split_once('*')?;
-    unwrap_operand(lhs).strip_prefix("input.")
+    unwrap_operand(lhs)
+        .strip_prefix("input.")
+        .filter(|field| is_plain_field(field))
 }
 
 /// Binds `input.X == <literal>`, `input.X == aggregates.<name>`, and
@@ -302,7 +312,7 @@ pub(super) fn prebind_input_literals_and_aggregates(
     for (raw_lhs, raw_rhs) in precondition_equalities(&admitted.root.preconditions) {
         let lhs = unwrap_operand(&raw_lhs);
         let rhs = unwrap_operand(&raw_rhs);
-        if let Some(field) = lhs.strip_prefix("input.") {
+        if let Some(field) = lhs.strip_prefix("input.").filter(|f| is_plain_field(f)) {
             if let Some(lit) = literal(rhs) {
                 input.insert(field.to_owned(), lit);
             } else if rhs.starts_with("aggregates.") {
@@ -310,7 +320,7 @@ pub(super) fn prebind_input_literals_and_aggregates(
             }
             continue;
         }
-        if let Some(field) = rhs.strip_prefix("input.") {
+        if let Some(field) = rhs.strip_prefix("input.").filter(|f| is_plain_field(f)) {
             if let Some(lit) = literal(lhs) {
                 input.insert(field.to_owned(), lit);
             } else if lhs.starts_with("aggregates.") {
@@ -433,13 +443,15 @@ pub(super) fn apply_safe_overrides(
     }
 }
 
-/// Identifies the slice index of an `update_only` action's own target object
-/// when no other slice entry depends on reading a property from that slice.
-pub(super) fn deferrable_update_self_slice(admitted: &AdmittedAction) -> Option<usize> {
+/// Identifies the slice index of an `update_only` action's own target object,
+/// returning `(slice_idx, can_defer)` where `can_defer` is true when no other
+/// slice entry depends on reading a property from that slice.
+pub(super) fn update_self_slice(admitted: &AdmittedAction) -> Option<(usize, bool)> {
     let Some(ActionEffectProgram::UpsertInputObject {
         object_kind,
         object_id_field,
         write_mode: UpsertWriteMode::UpdateOnly,
+        ..
     }) = &admitted.root.effect_program
     else {
         return None;
@@ -449,7 +461,7 @@ pub(super) fn deferrable_update_self_slice(admitted: &AdmittedAction) -> Option<
             && matches!(
                 &s.key,
                 SliceKey::Property { from, property }
-                    if from == "input" && property == object_id_field
+                    if from == "input" && property.as_str() == object_id_field.as_str()
             );
         if !is_self {
             return None;
@@ -460,23 +472,16 @@ pub(super) fn deferrable_update_self_slice(admitted: &AdmittedAction) -> Option<
                 SliceKey::Property { from, .. } if from == &s.name
             )
         });
-        (!depended_on).then_some(idx)
+        Some((idx, !depended_on))
     })
 }
 
-/// Fallback seeder for an `update_only` target object whose laws require
-/// governed links or derived fields: invokes a matching `create_only` action on
-/// the same entity type using the already-bound fixture input.
-pub(super) fn seed_update_target_via_creator<H: PackHost>(
-    pack: &AdmittedPack,
-    catalog: &TypeCatalog<'_>,
-    host: &mut H,
+fn create_only_candidates<'p>(
+    pack: &'p AdmittedPack,
     target_ty_name: &str,
-    target_id: &str,
     input: &JsonObject,
-    seq: u64,
-) -> Result<bool, String> {
-    let mut candidates: Vec<(usize, &AdmittedAction, &str)> = pack
+) -> Vec<(usize, &'p AdmittedAction, &'p str)> {
+    let mut candidates: Vec<(usize, &'p AdmittedAction, &'p str)> = pack
         .actions
         .iter()
         .filter_map(|action| {
@@ -484,6 +489,7 @@ pub(super) fn seed_update_target_via_creator<H: PackHost>(
                 object_kind,
                 object_id_field,
                 write_mode: UpsertWriteMode::CreateOnly,
+                ..
             }) = &action.root.effect_program
             else {
                 return None;
@@ -503,8 +509,35 @@ pub(super) fn seed_update_target_via_creator<H: PackHost>(
         })
         .collect();
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
-    for (_overlap, creator, object_id_field) in candidates {
-        let mut create_input = input.clone();
+    candidates
+}
+
+/// Fallback seeder for an `update_only` target object whose laws require
+/// governed links or derived fields: invokes a matching `create_only` action on
+/// the same entity type using synthesized defaults overlaid with the fixture
+/// input.
+pub(super) fn seed_update_target_via_creator<H: PackHost>(
+    pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
+    host: &mut H,
+    target_ty_name: &str,
+    target_id: &str,
+    input: &JsonObject,
+    seq: u64,
+) -> Result<bool, String> {
+    let Some(target_ty) = pack
+        .object_types
+        .iter()
+        .find(|ty| ty.name.as_str() == target_ty_name)
+    else {
+        return Ok(false);
+    };
+    for (_overlap, creator, object_id_field) in create_only_candidates(pack, target_ty_name, input)
+    {
+        let mut create_input = synthesize_object(pack, target_ty, target_id, seq);
+        for (k, v) in input {
+            create_input.insert(k.clone(), v.clone());
+        }
         create_input.insert(
             object_id_field.to_owned(),
             JsonValue::String(target_id.to_owned()),
@@ -515,6 +548,11 @@ pub(super) fn seed_update_target_via_creator<H: PackHost>(
             target_id,
             seq,
         );
+        if seed_create_links_and_slice_targets(pack, catalog, creator, &mut create_input, host, seq)
+            .is_err()
+        {
+            continue;
+        }
         encode_action_wire_input(&creator.root.input_schema, &mut create_input);
         for field in creator.root.actor_stamped_fields() {
             create_input.remove(&field);
@@ -555,4 +593,26 @@ pub(super) fn seed_update_target_via_creator<H: PackHost>(
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_mul_input_field, is_plain_field, unwrap_operand};
+
+    #[test]
+    fn operand_unwrapping_and_product_matching_keep_plain_fields() {
+        assert_eq!(
+            unwrap_operand("timestamp(input.period_start)"),
+            "input.period_start"
+        );
+        assert_eq!(
+            unwrap_operand("(slice.existing.on_hand_count_id ?? '')"),
+            "slice.existing.on_hand_count_id"
+        );
+        assert!(!is_plain_field("avg_weekly_sales_qty * input.sales_weeks"));
+        assert_eq!(
+            extract_mul_input_field("(input.avg_weekly_sales_qty * input.sales_weeks)"),
+            Some("avg_weekly_sales_qty")
+        );
+    }
 }

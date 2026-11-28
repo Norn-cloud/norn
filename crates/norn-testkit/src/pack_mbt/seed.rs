@@ -473,34 +473,30 @@ pub(crate) fn seed_create_links_and_slice_targets<H: PackHost>(
     let desired_states =
         super::seed_precond::parse_slice_precondition_states(&admitted.root.preconditions);
     let overrides = super::seed_precond::slice_input_overrides(&admitted.root.preconditions, input);
-    let deferred_self = super::seed_precond::deferrable_update_self_slice(admitted);
+    let self_slice = super::seed_precond::update_self_slice(admitted);
+    let deferred_self = self_slice.and_then(|(idx, can_defer)| can_defer.then_some(idx));
 
-    for (idx, slice_spec) in admitted.root.slice.iter().enumerate() {
+    for idx in 0..admitted.root.slice.len() {
         if deferred_self == Some(idx) {
             continue;
         }
-        let resolved_id = resolve_slice_target_id(&slice_spec.key, input, &seeded_slices, host)?;
-        if let Some(target_id) = resolved_id {
-            let target_ty_name = slice_spec.object_type.as_str();
-            if seeded_keys.insert((target_ty_name.to_owned(), target_id.clone())) {
-                let slice_overrides = overrides
-                    .get(&slice_spec.name)
-                    .map_or(&[][..], Vec::as_slice);
-                seed_related_target_with_overrides(
-                    (pack, catalog),
-                    host,
-                    target_ty_name,
-                    &target_id,
-                    desired_states.get(&slice_spec.name),
-                    slice_overrides,
-                    seq,
-                )?;
-            }
-            seeded_slices.insert(
-                slice_spec.name.clone(),
-                FactKey::new(target_ty_name, &target_id),
-            );
-        }
+        let allow_creator_fallback = self_slice.is_some_and(|(self_idx, _)| self_idx == idx);
+        seed_slice_entry(
+            &SliceSeedCtx {
+                pack,
+                catalog,
+                admitted,
+                desired_states: &desired_states,
+                overrides: &overrides,
+                idx,
+                seq,
+                allow_creator_fallback,
+            },
+            host,
+            input,
+            &mut seeded_keys,
+            &mut seeded_slices,
+        )?;
     }
     for link in &admitted.root.create_links {
         if let Some(JsonValue::String(target_id)) = input.get(&link.target_id_field) {
@@ -520,8 +516,8 @@ pub(crate) fn seed_create_links_and_slice_targets<H: PackHost>(
     }
     bind_input_to_preconditions(admitted, input, &seeded_slices, host)?;
     if let Some(idx) = deferred_self {
-        seed_deferred_self_slice(
-            &DeferredSeedCtx {
+        seed_slice_entry(
+            &SliceSeedCtx {
                 pack,
                 catalog,
                 admitted,
@@ -529,17 +525,19 @@ pub(crate) fn seed_create_links_and_slice_targets<H: PackHost>(
                 overrides: &overrides,
                 idx,
                 seq,
+                allow_creator_fallback: true,
             },
             host,
             input,
             &mut seeded_keys,
             &mut seeded_slices,
         )?;
+        bind_input_to_preconditions(admitted, input, &seeded_slices, host)?;
     }
     Ok(())
 }
 
-struct DeferredSeedCtx<'a> {
+struct SliceSeedCtx<'a> {
     pack: &'a AdmittedPack,
     catalog: &'a TypeCatalog<'a>,
     admitted: &'a AdmittedAction,
@@ -547,12 +545,13 @@ struct DeferredSeedCtx<'a> {
     overrides: &'a BTreeMap<String, Vec<(String, JsonValue)>>,
     idx: usize,
     seq: u64,
+    allow_creator_fallback: bool,
 }
 
-fn seed_deferred_self_slice<H: PackHost>(
-    ctx: &DeferredSeedCtx<'_>,
+fn seed_slice_entry<H: PackHost>(
+    ctx: &SliceSeedCtx<'_>,
     host: &mut H,
-    input: &mut JsonObject,
+    input: &JsonObject,
     seeded_keys: &mut BTreeSet<(String, String)>,
     seeded_slices: &mut BTreeMap<String, FactKey>,
 ) -> Result<(), String> {
@@ -579,15 +578,16 @@ fn seed_deferred_self_slice<H: PackHost>(
             ctx.seq,
         );
         if let Err(err) = direct
-            && !super::seed_precond::seed_update_target_via_creator(
-                ctx.pack,
-                ctx.catalog,
-                host,
-                target_ty_name,
-                &target_id,
-                input,
-                ctx.seq,
-            )?
+            && (!ctx.allow_creator_fallback
+                || !super::seed_precond::seed_update_target_via_creator(
+                    ctx.pack,
+                    ctx.catalog,
+                    host,
+                    target_ty_name,
+                    &target_id,
+                    input,
+                    ctx.seq,
+                )?)
         {
             return Err(err);
         }
@@ -596,7 +596,7 @@ fn seed_deferred_self_slice<H: PackHost>(
         slice_spec.name.clone(),
         FactKey::new(target_ty_name, &target_id),
     );
-    bind_input_to_preconditions(ctx.admitted, input, seeded_slices, host)
+    Ok(())
 }
 
 fn resolve_slice_target_id<H: PackHost>(
@@ -659,7 +659,12 @@ fn bind_input_to_preconditions<H: PackHost>(
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
                 && super::seed_precond::literal(side).is_none()
         };
-        let (field, other) = match (lhs.strip_prefix("input."), rhs.strip_prefix("input.")) {
+        let (field, other) = match (
+            lhs.strip_prefix("input.")
+                .filter(|f| super::seed_precond::is_plain_field(f)),
+            rhs.strip_prefix("input.")
+                .filter(|f| super::seed_precond::is_plain_field(f)),
+        ) {
             (Some(field), _) => (field.to_owned(), rhs),
             (None, Some(field)) => (field.to_owned(), lhs),
             (None, None) if bare(lhs) && super::seed_precond::literal(rhs).is_some() => {

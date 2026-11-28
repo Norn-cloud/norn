@@ -161,7 +161,7 @@ export const StockLot = Norn.type({
   valueLabels: { unit: UnitLabels, cost_status: CostStatusLabels },
   needsReview: ["ar"],
   identity: [{ name: "primary", properties: ["lot_id"] }],
-  defaults: { unit_cost: 1, depleted_qty: 0, depleted_stock_value: 0 },
+  defaults: { depleted_qty: 0 },
   links: [
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true }, inverse: "lots" },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
@@ -681,7 +681,12 @@ export const StoreCommercialRollup = Norn.type({
     { name: "primary", properties: ["rollup_id"] },
     { name: "store_sku_week_grain", properties: ["store_id", "sku_id", "period_week"] },
   ],
-  defaults: { period_week: "2026-01-12", period_start: "2026-01-12T00:00:00Z", sales_weeks: 1 },
+  defaults: {
+    period_week: "2026-01-12",
+    period_start: "2026-01-12T00:00:00Z",
+    period_end: "2026-01-15T12:00:00Z",
+    sales_weeks: 1,
+  },
   links: [
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },

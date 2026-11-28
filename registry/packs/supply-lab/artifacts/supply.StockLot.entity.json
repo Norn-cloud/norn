@@ -178,7 +178,6 @@
           "constraints": {
             "nullable": true
           },
-          "default": "1",
           "id": "unit_cost",
           "type": {
             "additivity": {
@@ -202,7 +201,6 @@
           }
         },
         {
-          "default": "0",
           "id": "depleted_stock_value",
           "type": {
             "additivity": {
