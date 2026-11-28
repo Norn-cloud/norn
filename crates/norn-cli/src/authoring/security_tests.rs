@@ -116,11 +116,13 @@ fn invocation_budget_enforces_scanned_entry_cap_and_shared_byte_cap() -> TestRes
     }
     let dir = Arc::new(TrustedDir::open(scratch.path())?);
     let mut scan_budget = InvocationBudget::with_limits(4, 100, 1024, 4096, 4096);
-    let scan_err = dir.walk_files_pinned(is_formattable_file, &mut scan_budget);
+    let scan_err = dir
+        .walk_files_pinned(is_formattable_file, &mut scan_budget)
+        .err();
     assert!(
         scan_err
-            .as_ref()
-            .is_err_and(|msg| msg.contains("entry invocation limit")),
+            .as_deref()
+            .is_some_and(|msg| msg.contains("entry invocation limit")),
         "expected scanned-entry cap error, got: {scan_err:?}"
     );
     assert_eq!(scan_budget.scanned_entries(), 4);
