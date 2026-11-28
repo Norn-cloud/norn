@@ -649,16 +649,27 @@ fn valid_evidence_with_pending<E: SqlEngine>(
     // Under `accept-first` or pre-v13 conflict consumption, the conflict's
     // accepted first bundle is NOT consumed and may be carried in the same
     // record's `pending_observations` (restored right after `restore_input`).
-    // Recheck inside a savepoint without leaving a duplicate inbox row behind.
+    // Validate directly against that pending bundle without any SQL write.
     if !obs_id.starts_with("mapping-conflict:") {
         return Ok(false);
     }
-    let Some(accepted_id) = conflict_accepted_bundle_id(observed) else {
+    let Ok(obs) = norn_ir::runtime::decode::<norn_kernel::Observed<Value>>(observed) else {
         return Ok(false);
     };
+    if obs.id.0 != obs_id {
+        return Ok(false);
+    }
+    let Ok(conflict) =
+        norn_ir::runtime::decode::<crate::mapping_conflict::MappingConflict>(&obs.input)
+    else {
+        return Ok(false);
+    };
+    if format!("mapping-conflict:{}", conflict.finding.id) != obs_id {
+        return Ok(false);
+    }
     let Some(pending) = pending_observations
         .iter()
-        .find(|p| p.observation_id == accepted_id)
+        .find(|p| p.observation_id == conflict.accepted_bundle_id)
     else {
         return Ok(false);
     };
@@ -672,33 +683,26 @@ fn valid_evidence_with_pending<E: SqlEngine>(
         .conn
         .query_optional(
             &format!("SELECT 1 FROM \"{inbox}\" WHERE \"observation_id\" = ?1"),
-            params![accepted_id],
+            params![conflict.accepted_bundle_id.as_str()],
             |_row| Ok(()),
         )?
         .is_some();
     if already_in_inbox {
         return Ok(false);
     }
-    reader
-        .conn
-        .execute_batch("SAVEPOINT \"norn_conflict_recheck\"")?;
-    let inserted = reader.conn.execute(
-        &format!(
-            "INSERT INTO \"{inbox}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
-             VALUES (?1, ?2, ?3, NULL)"
-        ),
-        params![
-            to_i64(pending.position, "position")?,
-            pending.observation_id.as_str(),
-            crate::codec::canonical_json(&pending.observed)?,
-        ],
-    );
-    let ok = inserted.is_ok() && valid_evidence_observation(reader, obs_id, observed);
-    reader.conn.execute_batch(
-        "ROLLBACK TO SAVEPOINT \"norn_conflict_recheck\"; \
-             RELEASE SAVEPOINT \"norn_conflict_recheck\"",
-    )?;
-    Ok(ok)
+    let Ok(pending_obs) =
+        norn_ir::runtime::decode::<norn_kernel::Observed<Value>>(&pending.observed)
+    else {
+        return Ok(false);
+    };
+    let Ok(pending_bundle) =
+        norn_ir::runtime::decode::<crate::mapping_bundle::MappingBundle>(&pending_obs.input)
+    else {
+        return Ok(false);
+    };
+    Ok(reader
+        .recheck_mapping_conflict_against(&conflict, &pending.observation_id, &pending_bundle)
+        .is_ok())
 }
 
 fn ensure_pending_inbox_row<E: SqlEngine>(

@@ -114,87 +114,24 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         incoming: &MappingBundle,
     ) -> Result<SourceEventCapture, CellError> {
-        let new = content(incoming)?;
+        let _ = content(incoming)?;
         let existing = self.source_event_bundles(incoming)?;
         let Some(accepted) = existing.first() else {
             return Ok(SourceEventCapture::Fresh);
         };
         let accepted_id = format!("mapping-bundle:{}", accepted.digest);
-        let old = content(accepted)?;
-        if old == new {
-            if incoming.reprocesses.is_none()
-                && let Some(matched) = existing.iter().find(|b| same_capture_pin(b, incoming))
-            {
-                return Ok(SourceEventCapture::Replay(format!(
-                    "mapping-bundle:{}",
-                    matched.digest
-                )));
-            }
-            return Ok(SourceEventCapture::Fresh);
+        if let Some(conflict) = build_mapping_conflict(accepted_id, accepted, incoming)? {
+            return Ok(SourceEventCapture::Conflict(Box::new(conflict)));
         }
-        let evidence = norn_ir::canonical::domain_hash_hex(
-            b"norn.source.conflict.v1\0",
-            &(
-                &incoming.input.connector_instance,
-                &incoming.input.partition,
-                field(incoming, "source")?,
-                field(incoming, "source_id")?,
-                field(incoming, "event_id")?,
-                old,
-                new,
-            ),
-        )?;
-        let subjects = accepted
-            .records
-            .iter()
-            .chain(&incoming.records)
-            .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
-            .chain(
-                accepted
-                    .deletes
-                    .iter()
-                    .chain(&incoming.deletes)
-                    .map(|d| DataQualitySubject::new(d.object_type.clone(), &d.key)),
-            )
-            .collect();
-        let observation_ids = vec![
-            accepted_id.clone(),
-            format!("mapping-bundle:{}", incoming.digest),
-        ];
-        let lineage = accepted
-            .records
-            .iter()
-            .chain(&incoming.records)
-            .map(|r| &r.provenance)
-            .chain(
-                accepted
-                    .deletes
-                    .iter()
-                    .chain(&incoming.deletes)
-                    .map(|d| &d.provenance),
-            )
-            .map(|p| DataQualityLineage::new(p.clone(), observation_ids.clone()))
-            .collect();
-        let finding = DataQualityFinding::v2(
-            DataQualityRuleRef::Builtin {
-                id: "core.boundary.import_finding".into(),
-                version: "1".into(),
-            },
-            subjects,
-            DataQualitySeverity::Error,
-            "conflicting immutable source event content",
-            DataQualityOutcome::NotSatisfied,
-            lineage,
-            incoming.input.recorded_at.clone(),
-            incoming.input.recorded_at.clone(),
-            DataQualityFindingStatus::Open,
-        )?
-        .with_evidence_digest(evidence)?;
-        Ok(SourceEventCapture::Conflict(Box::new(MappingConflict {
-            accepted_bundle_id: accepted_id,
-            incoming: incoming.clone(),
-            finding,
-        })))
+        if incoming.reprocesses.is_none()
+            && let Some(matched) = existing.iter().find(|b| same_capture_pin(b, incoming))
+        {
+            return Ok(SourceEventCapture::Replay(format!(
+                "mapping-bundle:{}",
+                matched.digest
+            )));
+        }
+        Ok(SourceEventCapture::Fresh)
     }
 
     /// Find a conflict against the first captured source event, including consumed captures.
@@ -236,6 +173,83 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         Ok(())
     }
+}
+
+/// Construct a [`MappingConflict`] between `accepted` and `incoming` when
+/// their immutable source event contents differ, or `Ok(None)` if identical.
+pub(crate) fn build_mapping_conflict(
+    accepted_id: String,
+    accepted: &MappingBundle,
+    incoming: &MappingBundle,
+) -> Result<Option<MappingConflict>, CellError> {
+    let old = content(accepted)?;
+    let new = content(incoming)?;
+    if old == new {
+        return Ok(None);
+    }
+    let evidence = norn_ir::canonical::domain_hash_hex(
+        b"norn.source.conflict.v1\0",
+        &(
+            &incoming.input.connector_instance,
+            &incoming.input.partition,
+            field(incoming, "source")?,
+            field(incoming, "source_id")?,
+            field(incoming, "event_id")?,
+            old,
+            new,
+        ),
+    )?;
+    let subjects = accepted
+        .records
+        .iter()
+        .chain(&incoming.records)
+        .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
+        .chain(
+            accepted
+                .deletes
+                .iter()
+                .chain(&incoming.deletes)
+                .map(|d| DataQualitySubject::new(d.object_type.clone(), &d.key)),
+        )
+        .collect();
+    let observation_ids = vec![
+        accepted_id.clone(),
+        format!("mapping-bundle:{}", incoming.digest),
+    ];
+    let lineage = accepted
+        .records
+        .iter()
+        .chain(&incoming.records)
+        .map(|r| &r.provenance)
+        .chain(
+            accepted
+                .deletes
+                .iter()
+                .chain(&incoming.deletes)
+                .map(|d| &d.provenance),
+        )
+        .map(|p| DataQualityLineage::new(p.clone(), observation_ids.clone()))
+        .collect();
+    let finding = DataQualityFinding::v2(
+        DataQualityRuleRef::Builtin {
+            id: "core.boundary.import_finding".into(),
+            version: "1".into(),
+        },
+        subjects,
+        DataQualitySeverity::Error,
+        "conflicting immutable source event content",
+        DataQualityOutcome::NotSatisfied,
+        lineage,
+        incoming.input.recorded_at.clone(),
+        incoming.input.recorded_at.clone(),
+        DataQualityFindingStatus::Open,
+    )?
+    .with_evidence_digest(evidence)?;
+    Ok(Some(MappingConflict {
+        accepted_bundle_id: accepted_id,
+        incoming: incoming.clone(),
+        finding,
+    }))
 }
 
 /// FEED-CURSOR-1: comparison and evidence capture share the caller's write transaction.
@@ -1136,10 +1150,7 @@ mod tests {
             partition: "snapshot".into(),
             recorded_at: UtcTimestamp(recorded_at.into()),
         };
-        let dv = match derivation {
-            Derivation::V1 => 1,
-            Derivation::CURRENT => 2,
-        };
+        let dv = crate::mapping_bundle::derivation_number(derivation);
         let bundle = store
             .read()
             .derived_mapping_bundle_version(&raw, &input, 1, derivation, dv, reprocesses)

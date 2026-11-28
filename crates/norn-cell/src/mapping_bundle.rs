@@ -104,7 +104,7 @@ fn derivations_of(version: u32) -> Result<&'static [Derivation], CellError> {
     }
 }
 
-const fn derivation_number(derivation: Derivation) -> u32 {
+pub(crate) const fn derivation_number(derivation: Derivation) -> u32 {
     match derivation {
         Derivation::V1 | Derivation::V1DecimalText => 1,
         Derivation::V2 => 2,

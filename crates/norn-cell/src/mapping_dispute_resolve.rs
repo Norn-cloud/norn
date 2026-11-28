@@ -142,7 +142,7 @@ pub(crate) enum VerifiedDispute {
 }
 
 impl VerifiedDispute {
-    fn incoming_bundle(&self) -> &MappingBundle {
+    pub(crate) fn incoming_bundle(&self) -> &MappingBundle {
         match self {
             Self::Conflict(conflict) => &conflict.incoming,
             Self::Identity(identity) => &identity.bundle,
@@ -328,6 +328,40 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             self.recheck_identity_evidence(&identity, dispute_id)?;
             Ok((observed, VerifiedDispute::Identity(Box::new(identity))))
         }
+    }
+
+    /// Recheck a `mapping-conflict:` row directly against a validated pending
+    /// first bundle that has not yet been inserted into `_norn_inbox` (e.g.
+    /// carried in the same export record's `pending_observations`), without any
+    /// SQL write or savepoint.
+    pub(crate) fn recheck_mapping_conflict_against(
+        &self,
+        conflict: &MappingConflict,
+        accepted_id: &str,
+        accepted: &MappingBundle,
+    ) -> Result<(), CellError> {
+        self.recheck_mapping_bundle(&conflict.incoming)?;
+        if conflict.accepted_bundle_id != accepted_id
+            || crate::mapping_identity::keys(&accepted.raw, &accepted.input)?
+                != crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
+        {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        // Only valid when no earlier capture for this event already exists in `_norn_inbox`.
+        if self.mapping_conflict(&conflict.incoming)?.is_some() {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        if crate::mapping_conflict::build_mapping_conflict(
+            accepted_id.to_owned(),
+            accepted,
+            &conflict.incoming,
+        )?
+        .as_ref()
+            != Some(conflict)
+        {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        Ok(())
     }
 
     /// Whether `row` is a synthetic carry-forward claim written by a prior

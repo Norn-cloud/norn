@@ -130,18 +130,21 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
     let Some(source_id) = bundle.raw.get("source_id").and_then(RuntimeValue::as_str) else {
         return Ok(false);
     };
+    // Match `_norn_inbox/source_event`'s exact partial-index predicate and
+    // leading 4 columns `(connectorInstance, partition, source, source_id)` so
+    // SQLite uses an index range scan instead of scanning `_norn_inbox`.
     let rows = reader.conn.query(
         &format!(
             "SELECT i.\"observed\" \
              FROM \"{inbox}\" i \
-             WHERE i.\"consumed_commit_seq\" IS NOT NULL \
-               AND substr(i.\"observation_id\", 1, 15) = 'mapping-bundle:' \
-               AND json_extract(i.\"observed\", '$.input.input.mapping') = ?1 \
-               AND json_extract(i.\"observed\", '$.input.input.dataset') = ?2 \
-               AND json_extract(i.\"observed\", '$.input.input.connectorInstance') = ?3 \
-               AND json_extract(i.\"observed\", '$.input.input.partition') = ?4 \
-               AND json_extract(i.\"observed\", '$.input.raw.source') = ?5 \
-               AND json_extract(i.\"observed\", '$.input.raw.source_id') = ?6 \
+             WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' \
+               AND json_extract(i.\"observed\", '$.input.input.connectorInstance') = ?1 \
+               AND json_extract(i.\"observed\", '$.input.input.partition') = ?2 \
+               AND json_extract(i.\"observed\", '$.input.raw.source') = ?3 \
+               AND json_extract(i.\"observed\", '$.input.raw.source_id') = ?4 \
+               AND json_extract(i.\"observed\", '$.input.input.mapping') = ?5 \
+               AND json_extract(i.\"observed\", '$.input.input.dataset') = ?6 \
+               AND i.\"consumed_commit_seq\" IS NOT NULL \
                AND NOT EXISTS ( \
                    SELECT 1 FROM \"{res}\" r WHERE r.\"commit_seq\" = i.\"consumed_commit_seq\" \
                )",
@@ -149,12 +152,12 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
             res = crate::link_claim_frontier::DISPUTE_RESOLUTION,
         ),
         crate::engine::params![
-            bundle.input.mapping.as_str(),
-            bundle.input.dataset.as_str(),
             bundle.input.connector_instance.as_str(),
             bundle.input.partition.as_str(),
             source,
             source_id,
+            bundle.input.mapping.as_str(),
+            bundle.input.dataset.as_str(),
         ],
     )?;
     for raw in rows {
@@ -261,44 +264,39 @@ pub(crate) fn verify_delete_and_tombstone_eligibility<E: 'static, C, I, S: SqlEn
     bundle: &crate::mapping_bundle::MappingBundle,
     commit: &CellCommit<E, C, I>,
 ) -> Result<(), norn_kernel::CommitError<CellError>> {
-    if bundle.deletes.is_empty() && bundle.records.is_empty() {
-        return Ok(());
-    }
-    let blocked = has_newer_or_incomparable_landed_source_version(reader, bundle)
-        .map_err(norn_kernel::CommitError::Host)?;
-    if !blocked {
-        return Ok(());
-    }
-    for delete in &bundle.deletes {
-        let target_key = FactKey::new(delete.object_type.as_str(), &delete.key);
-        let buried = tombstone_key(&target_key);
-        let writes_tombstone = commit.writes.iter().any(|w| {
-            w.key == buried && matches!(w.mutation, norn_kernel::FactMutation::Put { .. })
+    // Fast path: check whether `commit` actually attempts a delete mutation
+    // (tombstone Put / `ObservedDeleted` event) or tombstone lift (Delete)
+    // BEFORE running any landed-version query, keeping ordinary upserts O(0).
+    let has_delete_effect =
+        bundle.deletes.iter().any(|delete| {
+            let target_key = FactKey::new(delete.object_type.as_str(), &delete.key);
+            let buried = tombstone_key(&target_key);
+            commit.writes.iter().any(|w| {
+                w.key == buried && matches!(w.mutation, norn_kernel::FactMutation::Put { .. })
+            }) || commit.events.iter().any(|event| {
+                let any: &dyn std::any::Any = event;
+                matches!(
+                    any.downcast_ref::<ObservationEvent>(),
+                    Some(ObservationEvent::ObservedDeleted { key, .. }) if *key == target_key
+                )
+            })
         });
-        let emits_deleted = commit.events.iter().any(|event| {
-            let any: &dyn std::any::Any = event;
-            matches!(
-                any.downcast_ref::<ObservationEvent>(),
-                Some(ObservationEvent::ObservedDeleted { key, .. }) if *key == target_key
-            )
-        });
-        if writes_tombstone || emits_deleted {
-            return Err(norn_kernel::CommitError::Host(
-                CellError::SourceEvidenceChanged,
-            ));
-        }
-    }
-    for record in &bundle.records {
+    let has_tombstone_lift = bundle.records.iter().any(|record| {
         let buried = tombstone_key(&FactKey::new(record.object_type.as_str(), &record.key));
-        if commit
+        commit
             .writes
             .iter()
             .any(|w| w.key == buried && matches!(w.mutation, norn_kernel::FactMutation::Delete))
-        {
-            return Err(norn_kernel::CommitError::Host(
-                CellError::SourceEvidenceChanged,
-            ));
-        }
+    });
+    if !has_delete_effect && !has_tombstone_lift {
+        return Ok(());
+    }
+    if has_newer_or_incomparable_landed_source_version(reader, bundle)
+        .map_err(norn_kernel::CommitError::Host)?
+    {
+        return Err(norn_kernel::CommitError::Host(
+            CellError::SourceEvidenceChanged,
+        ));
     }
     Ok(())
 }
