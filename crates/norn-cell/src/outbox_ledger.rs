@@ -3,7 +3,7 @@
 //! Persists append-only [`OutboxRecord`] rows in `_norn_outbox_record` keyed by
 //! `(command_id, epoch, seq)` and validates every transition through
 //! [`OperationLedger`]. The mutable `_norn_outbox` table acts strictly as the
-//! projected queue head ([`HeadProjection`]):
+//! projected queue head ([`norn_kernel::world::outbox_ledger::HeadProjection`]):
 //!
 //! - Old results never settle a newer active generation.
 //! - Late outcomes attach immutably to their original generation via a verified
