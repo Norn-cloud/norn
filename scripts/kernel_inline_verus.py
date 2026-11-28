@@ -197,14 +197,22 @@ def compare_production_ir(repo, work, symbols):
 
 
 def compare_artifact_production_ir(repo, work, symbols):
-    thir = work / "norn_ir.thir"
-    with thir.open("w") as dump:
-        subprocess.run(["cargo", "+1.100.0", "rustc", "--locked", "--release", "-p", "norn-ir",
-                        "--lib", "--", "-Zunpretty=thir-tree", f"-Zdump-mir-dir={work / 'artifact_mir'}"],
-                       cwd=repo, env={**os.environ, "RUSTC_BOOTSTRAP": "norn_ir"},
-                       stdout=dump, check=True)
+    thir_tree = work / "norn_ir.thir-tree"
+    thir_flat = work / "norn_ir.thir-flat"
+    env = {**os.environ, "RUSTC_BOOTSTRAP": "norn_ir"}
+    for path, fmt, mir_dir in (
+        (thir_tree, "thir-tree", "artifact_mir_tree"),
+        (thir_flat, "thir-flat", "artifact_mir_flat"),
+    ):
+        with path.open("w") as dump:
+            subprocess.run(["cargo", "+1.100.0", "rustc", "--locked", "--release", "-p", "norn-ir",
+                            "--lib", "--", f"-Zunpretty={fmt}", f"-Zdump-mir-dir={work / mir_dir}"],
+                           cwd=repo, env=env, stdout=dump, check=True)
     return _sibling("kernel_verus_ir").compare_artifact_governance(
-        (work / "artifact_vir/crate.vir").read_text(), thir.read_text(), symbols,
+        (work / "artifact_vir/crate.vir").read_text(),
+        thir_tree.read_text(),
+        thir_flat.read_text(),
+        symbols,
     )
 
 

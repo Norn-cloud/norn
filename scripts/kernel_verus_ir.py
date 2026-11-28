@@ -322,7 +322,14 @@ def _artifact_thir_type(ty):
 
 
 def _artifact_inventory():
-    return {"expressions": set(), "locals": Counter(), "calls": Counter(), "literal_patterns": Counter()}
+    return {
+        "expressions": set(),
+        "locals": Counter(),
+        "calls": Counter(),
+        "literal_patterns": Counter(),
+        "bool_literals": Counter(),
+        "operators": Counter(),
+    }
 
 
 def _record_artifact_binding(out, location, variable, ty):
@@ -355,6 +362,25 @@ def _visit_artifact_vir(node, out):
             raise ValueError(f"unsupported VIR literal pattern {body}")
         if body[:1] in ([">"], ["Place"]):
             out["expressions"].add((_artifact_span(location), _artifact_vir_type(ty)))
+        if body[:2] == [">", "Const"]:
+            match body:
+                case [">", "Const", ["Constant", "Bool", value]] if value in ("true", "false"):
+                    expr_ty = _artifact_vir_type(ty)
+                    require(expr_ty == "bool", f"unsupported VIR literal type {expr_ty!r}")
+                    out["bool_literals"][_artifact_span(location), expr_ty, value] += 1
+                case _:
+                    raise ValueError(f"unsupported VIR executable constant {body}")
+        if body[:2] in ([">", "Unary"], [">", "Logical"], [">", "Binary"]):
+            match body:
+                case [">", "Unary", ["UnaryOp", operator], _] if isinstance(operator, str):
+                    out["operators"][_artifact_span(location), _artifact_vir_type(ty), operator] += 1
+                case [">", ("Logical" | "Binary") as op, [kind, operator], _, _] if (
+                    (op, kind) in {("Logical", "LogicalOp"), ("Binary", "BinaryOp")}
+                    and isinstance(operator, str)
+                ):
+                    out["operators"][_artifact_span(location), _artifact_vir_type(ty), operator] += 1
+                case _:
+                    raise ValueError(f"unsupported VIR executable operator {body}")
         if body[:2] == [">", "Call"]:
             out["calls"][_artifact_span(location), _artifact_callee(field(field(body, ":target")[3], ":path"))] += 1
         if body[:2] == ["Pattern", "Var"]:
@@ -387,33 +413,81 @@ def _artifact_vir_functions(text, names):
     return result
 
 
-def _artifact_thir_function(body):
+def _artifact_thir_flat_function(body):
+    check_thir_record(body)
+    expressions = set()
+    bool_literals = Counter()
+    operators = Counter()
+    for expr in entries(body, "exprs", "Expr"):
+        kind = one(r"^            kind: (\w+) \{$", expr)
+        if kind == "Scope":
+            continue
+        if kind == "ZstLiteral":
+            require(re.search(r"^            ty: FnDef\(", expr, re.M) is not None,
+                    "unexpected THIR ZstLiteral")
+            continue
+        require(kind != "Cast", "unexpected THIR cast")
+        require(kind not in {"NonHirLiteral", "NamedConst", "ConstParam", "ConstBlock"},
+                f"unsupported THIR constant expression: {kind}")
+        location = one(r"^            span: ([^\n]+),$", expr)
+        ty = _artifact_thir_type(one(r"^            ty: ([^\n]+),$", expr))
+        span = _artifact_span(location)
+        expressions.add((span, ty))
+        if kind == "Literal":
+            require(ty == "bool", f"unsupported THIR literal type {ty!r}")
+            require(re.search(r"^                neg: false,$", expr, re.M) is not None,
+                    "unsupported negative THIR literal")
+            value = one(r"\bBool\(\s*(true|false),?\s*\)", expr)
+            bool_literals[span, ty, value] += 1
+        elif kind in ("Unary", "LogicalOp", "Binary"):
+            op = one(r"^                op: (\w+),$", expr)
+            operators[span, ty, op] += 1
+    return {"expressions": expressions, "bool_literals": bool_literals, "operators": operators}
+
+
+def _artifact_thir_function(tree_body, flat_body):
     out = _artifact_inventory()
-    expressions = list(TREE_EXPR_HEADER.finditer(body))
-    require(len(expressions) == len(re.findall(r"^ *Expr \{$", body, re.M)), "unparsed THIR expression")
+    expressions = list(TREE_EXPR_HEADER.finditer(tree_body))
+    require(len(expressions) == len(re.findall(r"^ *Expr \{$", tree_body, re.M)), "unparsed THIR expression")
+    tree_literals = 0
+    tree_operators = 0
     for expr in expressions:
         ty, location, kind, target = expr.groups()
         if kind == "Scope" or (kind == "ZstLiteral" and ty.startswith("FnDef(")):
             continue
         require(kind != "Cast", "unexpected THIR cast")
         out["expressions"].add((_artifact_span(location), _artifact_thir_type(ty)))
+        if kind == "Literal":
+            tree_literals += 1
+        elif kind in ("Unary", "LogicalOp", "Binary"):
+            tree_operators += 1
         if kind == "Call":
             match = re.search(r"FnDef\(DefId\(\d+:\d+ ~ (.*?)\),", target or "")
             require(match is not None, f"unparsed THIR call target {target!r}")
             out["calls"][_artifact_span(location), _artifact_callee(match[1])] += 1
-    for ty, location, value in TREE_LITERAL_PATTERN.findall(body):
+    for ty, location, value in TREE_LITERAL_PATTERN.findall(tree_body):
         out["literal_patterns"][_artifact_span(location), _artifact_thir_type(ty), value] += 1
-    require(len(TREE_LITERAL_PATTERN.findall(body)) == body.count("Constant {"), "unparsed THIR constant pattern")
-    bindings = list(TREE_BINDING.finditer(body))
-    require(len(bindings) == len(re.findall(r"^ *Binding \{$", body, re.M)), "unparsed THIR binding")
+    require(len(TREE_LITERAL_PATTERN.findall(tree_body)) == tree_body.count("Constant {"), "unparsed THIR constant pattern")
+    bindings = list(TREE_BINDING.finditer(tree_body))
+    require(len(bindings) == len(re.findall(r"^ *Binding \{$", tree_body, re.M)), "unparsed THIR binding")
     for binding in bindings:
-        pat = body.rindex("Pat {\n", 0, binding.start())
-        location = re.search(r"Pat \{\n\s*ty: [^\n]+\n\s*span: ([^\n]+)", body[pat:])[1]
+        pat = tree_body.rindex("Pat {\n", 0, binding.start())
+        location = re.search(r"Pat \{\n\s*ty: [^\n]+\n\s*span: ([^\n]+)", tree_body[pat:])[1]
         _record_artifact_binding(out, location, binding[1], _artifact_thir_type(binding[2]))
+    flat = _artifact_thir_flat_function(flat_body)
+    require(flat["expressions"] == out["expressions"],
+            f"THIR tree/flat expression mismatch: tree only {out['expressions'] - flat['expressions']}, "
+            f"flat only {flat['expressions'] - out['expressions']}")
+    require(tree_literals == flat["bool_literals"].total(),
+            f"THIR tree/flat literal count mismatch: tree {tree_literals} vs flat {flat['bool_literals'].total()}")
+    require(tree_operators == flat["operators"].total(),
+            f"THIR tree/flat operator count mismatch: tree {tree_operators} vs flat {flat['operators'].total()}")
+    out["bool_literals"] = flat["bool_literals"]
+    out["operators"] = flat["operators"]
     return out
 
 
-def _artifact_thir_functions(text, names):
+def _artifact_thir_sections(text, names):
     result = {}
     sections = re.split(r"^DefId\(0:\d+ ~ ([^\n]+?)\):\n", text, flags=re.M)
     for header, body in zip(sections[1::2], sections[2::2], strict=True):
@@ -422,13 +496,21 @@ def _artifact_thir_functions(text, names):
             continue
         name = match[1]
         require(name not in result, f"duplicate THIR function {header}")
-        result[name] = _artifact_thir_function(body)
+        result[name] = body
     return result
 
 
-def compare_artifact_governance(vir_text, thir_text, names):
+def _artifact_thir_functions(tree_text, flat_text, names):
+    tree_bodies = _artifact_thir_sections(tree_text, names)
+    flat_bodies = _artifact_thir_sections(flat_text, names)
+    require(tree_bodies.keys() == flat_bodies.keys(),
+            f"THIR tree/flat function mismatch: tree {sorted(tree_bodies)}, flat {sorted(flat_bodies)}")
+    return {name: _artifact_thir_function(tree_bodies[name], flat_bodies[name]) for name in tree_bodies}
+
+
+def compare_artifact_governance(vir_text, thir_tree_text, thir_flat_text, names):
     verified = _artifact_vir_functions(vir_text, names)
-    shipped = _artifact_thir_functions(thir_text, names)
+    shipped = _artifact_thir_functions(thir_tree_text, thir_flat_text, names)
     require(set(names) == verified.keys() == shipped.keys(),
             f"incomplete compiler inventory: VIR {sorted(verified)}, THIR {sorted(shipped)}")
     counts = {}

@@ -273,7 +273,12 @@ class ArtifactGovernanceCompilerAgreement(unittest.TestCase):
   (@@ "crates/norn-ir/src/artifact_governance.rs:219:5: 219:53 (#0)"
    (> Unary (UnaryOp Not)
     (@@ "crates/norn-ir/src/artifact_governance.rs:219:7: 219:52 (#0)"
-     (> Const (Constant Bool true)) (Typ Bool)))
+     (> Logical (LogicalOp And)
+      (@@ "crates/norn-ir/src/artifact_governance.rs:219:7: 219:24 (#0)"
+       (> Const (Constant Bool true)) (Typ Bool))
+      (@@ "crates/norn-ir/src/artifact_governance.rs:219:28: 219:52 (#0)"
+       (> Const (Constant Bool false)) (Typ Bool)))
+     (Typ Bool)))
    (Typ Bool)))
   (Typ Bool))))
 """
@@ -383,34 +388,215 @@ body:
                                         temp_scope_id: 7
                                         span: crates/norn-ir/src/artifact_governance.rs:219:7: 219:52 (#0)
                                         kind:
-                                            Literal
+                                            LogicalOp {
+                                                lhs:
+                                                    Expr {
+                                                        ty: bool
+                                                        temp_scope_id: 8
+                                                        span: crates/norn-ir/src/artifact_governance.rs:219:7: 219:24 (#0)
+                                                        kind:
+                                                            Literal
+                                                    }
+                                                rhs:
+                                                    Expr {
+                                                        ty: bool
+                                                        temp_scope_id: 9
+                                                        span: crates/norn-ir/src/artifact_governance.rs:219:28: 219:52 (#0)
+                                                        kind:
+                                                            Literal
+                                                    }
+                                            }
                                     }
                             }
                     }
             }
     }
 """
+    thir_flat = """DefId(0:12 ~ norn_ir[abcd]::artifact_governance::direct_artifact_write_allowed):
+Thir {
+    arms: [],
+    blocks: [],
+    exprs: [
+        Expr {
+            kind: VarRef {
+                id: LocalVarId(2),
+            },
+            ty: &'{erased} artifact_governance::ArtifactKind,
+            temp_scope_id: Node(4),
+            span: crates/norn-ir/src/artifact_governance.rs:191:36: 191:40 (#0),
+        },
+        Expr {
+            kind: Deref {
+                arg: e0,
+            },
+            ty: artifact_governance::ArtifactKind,
+            temp_scope_id: Node(3),
+            span: crates/norn-ir/src/artifact_governance.rs:191:35: 191:40 (#0),
+        },
+        Expr {
+            kind: Literal {
+                lit: Spanned {
+                    node: Bool(
+                        true,
+                    ),
+                    span: crates/norn-ir/src/artifact_governance.rs:207:35: 207:39 (#0),
+                },
+                neg: false,
+            },
+            ty: bool,
+            temp_scope_id: Node(5),
+            span: crates/norn-ir/src/artifact_governance.rs:207:35: 207:39 (#0),
+        },
+        Expr {
+            kind: Match {
+                scrutinee: e1,
+                arms: [a0],
+                match_source: Normal,
+            },
+            ty: bool,
+            temp_scope_id: Node(2),
+            span: crates/norn-ir/src/artifact_governance.rs:191:29: 209:6 (#0),
+        },
+        Expr {
+            kind: Literal {
+                lit: Spanned {
+                    node: Bool(
+                        true,
+                    ),
+                    span: crates/norn-ir/src/artifact_governance.rs:219:7: 219:24 (#0),
+                },
+                neg: false,
+            },
+            ty: bool,
+            temp_scope_id: Node(8),
+            span: crates/norn-ir/src/artifact_governance.rs:219:7: 219:24 (#0),
+        },
+        Expr {
+            kind: Literal {
+                lit: Spanned {
+                    node: Bool(
+                        false,
+                    ),
+                    span: crates/norn-ir/src/artifact_governance.rs:219:28: 219:52 (#0),
+                },
+                neg: false,
+            },
+            ty: bool,
+            temp_scope_id: Node(9),
+            span: crates/norn-ir/src/artifact_governance.rs:219:28: 219:52 (#0),
+        },
+        Expr {
+            kind: LogicalOp {
+                op: And,
+                lhs: e4,
+                rhs: e5,
+            },
+            ty: bool,
+            temp_scope_id: Node(7),
+            span: crates/norn-ir/src/artifact_governance.rs:219:7: 219:52 (#0),
+        },
+        Expr {
+            kind: Unary {
+                op: Not,
+                arg: e6,
+            },
+            ty: bool,
+            temp_scope_id: Node(6),
+            span: crates/norn-ir/src/artifact_governance.rs:219:5: 219:53 (#0),
+        },
+        Expr {
+            kind: Scope {
+                region_scope: Node(1),
+                value: e7,
+            },
+            ty: bool,
+            temp_scope_id: Node(1),
+            span: crates/norn-ir/src/artifact_governance.rs:219:5: 219:53 (#0),
+        },
+        Expr {
+            kind: Block {
+                block: b0,
+            },
+            ty: bool,
+            temp_scope_id: Node(1),
+            span: crates/norn-ir/src/artifact_governance.rs:190:10: 220:2 (#0),
+        },
+    ],
+    stmts: [],
+    params: [],
+}
+"""
 
     def test_equal_artifact_compiler_views(self):
-        counts = compare_artifact_ir(self.vir, self.thir, ["direct_artifact_write_allowed"])
+        counts = compare_artifact_ir(self.vir, self.thir, self.thir_flat, ["direct_artifact_write_allowed"])
         self.assertEqual(
             counts["direct_artifact_write_allowed"],
-            {"expressions": 7, "locals": 3, "calls": 0, "literal_patterns": 0},
+            {
+                "expressions": 9,
+                "locals": 3,
+                "calls": 0,
+                "literal_patterns": 0,
+                "bool_literals": 3,
+                "operators": 2,
+            },
         )
+        # Single-line Bool(true)/Bool(false) formatting must also be accepted.
+        single_line = self.thir_flat.replace("Bool(\n                        true,\n                    )", "Bool(true)")
+        single_line = single_line.replace("Bool(\n                        false,\n                    )", "Bool(false)")
+        self.assertEqual(
+            compare_artifact_ir(self.vir, self.thir, single_line, ["direct_artifact_write_allowed"]),
+            counts,
+        )
+
+    def test_rejects_flipped_executable_bool_literals(self):
+        # Flip the final executable Boolean literal in VIR while leaving THIR unchanged.
+        head, sep, tail = self.vir.rpartition("(Constant Bool false)")
+        self.assertTrue(sep)
+        flipped_vir = head + "(Constant Bool true)" + tail
+        with self.assertRaisesRegex(ValueError, "bool_literals"):
+            compare_artifact_ir(flipped_vir, self.thir, self.thir_flat, ["direct_artifact_write_allowed"])
+
+        # Flip an executable Boolean literal in THIR while leaving VIR unchanged.
+        flipped_flat = self.thir_flat.replace(
+            "node: Bool(\n                        false,\n                    ),",
+            "node: Bool(\n                        true,\n                    ),",
+            1,
+        )
+        self.assertNotEqual(flipped_flat, self.thir_flat)
+        with self.assertRaisesRegex(ValueError, "bool_literals"):
+            compare_artifact_ir(self.vir, self.thir, flipped_flat, ["direct_artifact_write_allowed"])
 
     def test_rejects_artifact_compiler_disagreements(self):
         cases = {
-            "expr_span": self.thir.replace("207:35: 207:39", "207:35: 207:40"),
-            "local_name": self.thir.replace('name: "authority_bearing"', 'name: "other_local"'),
-            "cast": self.thir.replace("Literal", "Cast", 1),
-            "missing_fn": self.thir.replace("direct_artifact_write_allowed", "other_fn"),
+            "expr_span": (self.thir.replace("207:35: 207:39", "207:35: 207:40"), self.thir_flat),
+            "local_name": (self.thir.replace('name: "authority_bearing"', 'name: "other_local"'), self.thir_flat),
+            "cast": (self.thir.replace("Literal", "Cast", 1), self.thir_flat),
+            "missing_fn": (self.thir.replace("direct_artifact_write_allowed", "other_fn"), self.thir_flat),
+            "missing_flat_fn": (self.thir, self.thir_flat.replace("direct_artifact_write_allowed", "other_fn")),
+            "flipped_unary_op": (self.thir, self.thir_flat.replace("op: Not,", "op: Neg,", 1)),
+            "flipped_logical_op": (self.thir, self.thir_flat.replace("op: And,", "op: Or,", 1)),
+            "negative_literal": (self.thir, self.thir_flat.replace("neg: false,", "neg: true,", 1)),
+            "non_bool_thir_literal": (
+                self.thir,
+                self.thir_flat.replace(
+                    "node: Bool(\n                        false,\n                    ),",
+                    "node: Int(\n                        Pu128(\n                            1,\n                        ),\n                        Unsuffixed,\n                    ),",
+                    1,
+                ),
+            ),
         }
-        for label, bad_thir in cases.items():
+        for label, (bad_thir, bad_flat) in cases.items():
             with self.subTest(label=label), self.assertRaises(ValueError):
-                compare_artifact_ir(self.vir, bad_thir, ["direct_artifact_write_allowed"])
+                compare_artifact_ir(self.vir, bad_thir, bad_flat, ["direct_artifact_write_allowed"])
         bad_guard = self.vir.replace("(Constant Bool true)", "(Constant Bool false)", 1)
         with self.assertRaisesRegex(ValueError, "unexpected match guard"):
-            compare_artifact_ir(bad_guard, self.thir, ["direct_artifact_write_allowed"])
+            compare_artifact_ir(bad_guard, self.thir, self.thir_flat, ["direct_artifact_write_allowed"])
+        non_bool_vir = self.vir.replace("(Constant Bool false)", "(Constant Int 1)", 1)
+        with self.assertRaisesRegex(ValueError, "unsupported VIR executable constant"):
+            compare_artifact_ir(non_bool_vir, self.thir, self.thir_flat, ["direct_artifact_write_allowed"])
+        bad_vir_op = self.vir.replace("(LogicalOp And)", "(LogicalOp Or)", 1)
+        with self.assertRaisesRegex(ValueError, "operators"):
+            compare_artifact_ir(bad_vir_op, self.thir, self.thir_flat, ["direct_artifact_write_allowed"])
 
 
 if __name__ == "__main__":
