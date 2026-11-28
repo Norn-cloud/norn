@@ -20,6 +20,7 @@ use norn_kernel::authz::CommitBinding;
 use norn_kernel::{ActionCall, ActionOutcome, DecisionTurn, LogicalTime, commit_action};
 use serde_json::json;
 
+use super::actions::StoreKpiInput;
 use super::cuts::{
     bucket_decimal_exact, cell_id_for_entity, dst_coverage_spec, evaluate_spec_cut,
     resolve_costed_bucket,
@@ -602,18 +603,72 @@ fn verify_uncosted_mid_window_withholding(cell: &mut EntityCell) -> Result<(), S
     Ok(())
 }
 
-/// Dedicated bitemporal check on an EXISTING, ALREADY-SOLD SKU (`SKU-LATE-0`)
-/// receiving a later-dated `UnitCostEvidence` + governed `supply.unit_cost.record`
-/// on that SAME existing SKU, asserting via `evaluate_question_known_at` that
-/// the prior knowledge cut preserves the original uncosted margin while the
-/// current cut reflects the newly costed margin.
+/// Dedicated bitemporal check performing genuine **in-place** `update_only`
+/// restatements on existing W9 (`2026-08-31`) objects — `InventorySnapshot`
+/// (`supply.position.restate`), `StockLot` (`supply.stock_lot.update_balance`),
+/// `StoreCount` (`supply.store_count.recount`), `StoreCommercialRollup`
+/// (`supply.store_kpi.refresh`), and `UnitCostEvidence` (in-place feed upsert
+/// on the same `cost_id`) — asserting via `evaluate_question_known_at` that
+/// `prior_cutoff` returns the exact ORIGINAL W9 answers while live evaluation
+/// returns the exact RESTATED W9 answers for those SAME existing object IDs.
 ///
 /// # Errors
-/// Returns an error if bitemporal preservation or restated margin assertion fails.
+/// Returns an error if bitemporal preservation or restated W9 assertion fails.
 pub fn verify_late_arriving_unit_cost_on_existing_sku(seed: u64) -> Result<(), String> {
     let (mut cell, prior_cutoff, prior_ctx) = seed_late_cost_cell(seed)?;
+    apply_w9_in_place_restatements(&mut cell)?;
+    assert_bitemporal_w9_pair(
+        &cell,
+        &cell.pack.supply_question("supply.on_hand_weekly")?,
+        &prior_ctx,
+        prior_cutoff,
+        &["each", "WH-LATE-1", "2026-08-31"],
+        "40",
+        "20",
+        "InventorySnapshot restatement",
+    )?;
+    assert_bitemporal_w9_pair(
+        &cell,
+        &cell
+            .pack
+            .retail_question("supply.retail.store_stock_value_weekly")?,
+        &prior_ctx,
+        prior_cutoff,
+        &["EGP", "ST-LATE-1", "costed", "2026-08-31"],
+        "4000",
+        "2000",
+        "StockLot in-place update",
+    )?;
+    assert_bitemporal_w9_pair(
+        &cell,
+        &cell
+            .pack
+            .retail_question("supply.retail.store_weeks_of_supply_weekly")?,
+        &prior_ctx,
+        prior_cutoff,
+        &["each", "ST-LATE-1", "SKU-LATE-0", "2026-08-31"],
+        "2",
+        "0.5",
+        "StoreCommercialRollup WOS refresh",
+    )?;
+    assert_bitemporal_w9_pair(
+        &cell,
+        &cell
+            .pack
+            .retail_question("supply.retail.store_gmroi_weekly")?,
+        &prior_ctx,
+        prior_cutoff,
+        &["EGP", "ST-LATE-1", "SKU-LATE-0", "2026-08-31"],
+        "0.2",
+        "0.5",
+        "StoreCommercialRollup GMROI refresh",
+    )
+}
+
+fn apply_w9_in_place_restatements(cell: &mut EntityCell) -> Result<(), String> {
+    let prior_cost_ev_count = cell.object_count("supply.UnitCostEvidence")?;
     let cost_payload = json!({
-        "cost_id": "COST-LATE-0-V1", "sku_code": "SKU-LATE-0", "vendor_code": "ATELIER-01",
+        "cost_id": "COST-LATE-0-EV", "sku_code": "SKU-LATE-0", "vendor_code": "ATELIER-01",
         "unit_cost": 120, "ccy": "EGP", "effective_from": "2026-08-31T00:00:00Z",
     })
     .to_string();
@@ -622,59 +677,117 @@ pub fn verify_late_arriving_unit_cost_on_existing_sku(seed: u64) -> Result<(), S
         mapping: COSTS_FEED_ID,
         dataset: "unit_cost",
         source: "synthetic-cost",
-        event: "ev-late-cost-0",
-        record: "COST-LATE-0-V1",
+        event: "ev-late-cost-restate-1",
+        record: "COST-LATE-0-EV",
         payload: &cost_payload,
     })?;
-    if !clean {
-        return Err("late-arriving UnitCostEvidence quarantined unexpectedly".to_owned());
+    if !clean || cell.object_count("supply.UnitCostEvidence")? != prior_cost_ev_count {
+        return Err(
+            "in-place UnitCostEvidence restatement must update existing cost_id".to_owned(),
+        );
     }
-    cell.record_unit_cost(
+    // Commit genuine in-place updates on the SAME W9 (`2026-08-31`) object IDs
+    // (`SNAP-LATE-W9`, `LOT-LATE-1`, `ST-LATE-1/SKU-LATE-0/on_hand`, `KPI-LATE-W9`).
+    cell.record_inventory_position(
+        true,
+        "SNAP-LATE-W9",
+        "WH-LATE-1",
         "SKU-LATE-0",
-        "COST-LATE-0-V1",
-        "SUP-ATELIER",
-        "120",
-        "2026-08-31T00:00:00Z",
-    )?;
-    cell.record_costed_lot(
-        "LOT-LATE-COSTED",
-        "ST-LATE-1",
-        "SKU-LATE-0",
-        "CUST-1",
-        "30",
-        "each",
-        "120",
-        "2026-09-01T09:00:00Z",
+        "20",
+        "2026-09-04T12:00:00Z",
+        "AUDIT-LATE-W9-2",
     )?;
     cell.record_costed_sale(
-        "SALE-LATE-W9",
+        "SALE-LATE-W9-2",
         "ST-LATE-1",
         "SKU-LATE-0",
-        "4",
+        "20",
         "each",
-        "1000",
-        "120",
+        "3000",
+        "100",
         "COST-LATE-0-V1",
-        "2026-09-02T12:00:00Z",
+        "2026-09-03T12:00:00Z",
     )?;
+    cell.update_lot_balance(
+        "LOT-LATE-1",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "20",
+        "40",
+        "100",
+        "2026-09-04T12:00:00Z",
+    )?;
+    cell.record_store_count(
+        true,
+        "ST-LATE-1/SKU-LATE-0/on_hand",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "20",
+        "each",
+        "on_hand",
+        "2026-09-04T14:00:00Z",
+        "CC-LATE-2",
+    )?;
+    cell.refresh_store_kpi(&StoreKpiInput {
+        rollup_id: "KPI-LATE-W9",
+        store_id: "ST-LATE-1",
+        sku_id: "SKU-LATE-0",
+        period_week: "2026-08-31",
+        unit: "each",
+        on_hand_count_id: "ST-LATE-1/SKU-LATE-0/on_hand",
+        opening_cut_id: "CUT-LATE-W9-OPEN",
+        count_ref: "CC-LATE-2",
+        count_as_of: "2026-09-04T14:00:00Z",
+        costed_ref: "COST-LATE-0-V1",
+        period_start: "2026-08-31T00:00:00Z",
+        period_end: "2026-09-06T23:59:59.999999999Z",
+        sales_weeks: 1,
+        on_hand_qty: "20",
+        avg_weekly_sales_qty: "40",
+        period_gross_margin: "2000",
+        opening_stock_value: "6000",
+        closing_stock_value: "2000",
+    })
+}
 
-    let gm_plan = cell
-        .pack
-        .retail_question("supply.retail.store_gross_margin_weekly")?;
-    let prior_gm = cell
+#[allow(
+    clippy::too_many_arguments,
+    reason = "bitemporal prior-cut vs live comparison on one existing W9 bucket"
+)]
+fn assert_bitemporal_w9_pair(
+    cell: &EntityCell,
+    plan: &norn_checker::metric::compute::QuestionPlan,
+    prior_ctx: &QueryContext,
+    prior_cutoff: KnowledgeCutoff,
+    bucket: &[&str],
+    expected_prior: &str,
+    expected_live: &str,
+    label: &str,
+) -> Result<(), String> {
+    let prior = cell
         .cell()?
         .store()
-        .evaluate_question_known_at(&gm_plan, prior_ctx, prior_cutoff, |_| Ok(true))
-        .map_err(|e| format!("prior late-cost gm known_at: {e}"))?;
-    if resolve_costed_bucket(&prior_gm.result, "EGP", "ST-LATE-1", "2026-08-31").is_some() {
-        return Err("prior knowledge cut must not disclose W9 costed margin".to_owned());
-    }
-    let live_gm = cell.answer("supply.retail.store_gross_margin_weekly")?;
-    let w9_margin = resolve_costed_bucket(&live_gm, "EGP", "ST-LATE-1", "2026-08-31")
-        .ok_or("live cut after UnitCost arrival must disclose W9 costed margin")?;
-    if w9_margin.canonical() != "520" {
+        .evaluate_question_known_at(plan, prior_ctx.clone(), prior_cutoff, |_| Ok(true))
+        .map_err(|e| format!("{label} known_at: {e}"))?;
+    let prior_val = bucket_decimal_exact(&prior.result, bucket)
+        .ok_or_else(|| format!("{label}: missing prior W9 bucket {bucket:?}"))?;
+    if prior_val.canonical() != expected_prior {
         return Err(format!(
-            "late-cost W9 margin mismatch: expected 520, got {w9_margin}"
+            "{label}: prior cut expected {expected_prior}, got {}",
+            prior_val.canonical()
+        ));
+    }
+    let live = cell
+        .cell()?
+        .store()
+        .evaluate_question(plan, cell.query_context(), |_| Ok(true))
+        .map_err(|e| format!("{label} live: {e}"))?;
+    let live_val = bucket_decimal_exact(&live, bucket)
+        .ok_or_else(|| format!("{label}: missing live W9 bucket {bucket:?}"))?;
+    if live_val.canonical() != expected_live {
+        return Err(format!(
+            "{label}: live cut expected {expected_live}, got {}",
+            live_val.canonical()
         ));
     }
     Ok(())
@@ -689,37 +802,127 @@ fn seed_late_cost_cell(seed: u64) -> Result<(EntityCell, KnowledgeCutoff, QueryC
         "prod",
         DEFAULT_CLOCK_MS,
     )?;
-    cell.register_book("Late Cost Arrival Entity", "sole_proprietorship")?;
+    cell.register_book("Late Restatement Entity", "sole_proprietorship")?;
     cell.register_sku("SKU-LATE-0", "dry_goods", "each")?;
     cell.register_store(
         "ST-LATE-1",
-        "Late Cost Store",
+        "Late Restatement Store",
         "CUST-1",
         "mall_store",
         Some("MALL-CFC"),
     )?;
-    cell.record_uncosted_lot(
-        "LOT-LATE-INIT",
-        "ST-LATE-1",
+    cell.register_warehouse("WH-LATE-1", "Late Restatement Warehouse")?;
+    cell.record_unit_cost(
         "SKU-LATE-0",
-        "CUST-1",
-        "50",
-        "each",
-        "2026-08-24T09:00:00Z",
+        "COST-LATE-0-V1",
+        "SUP-ATELIER",
+        "100",
+        "2026-07-01T00:00:00Z",
     )?;
-    cell.record_uncosted_sale(
-        "SALE-LATE-W8",
-        "ST-LATE-1",
-        "SKU-LATE-0",
-        "5",
-        "each",
-        "1000",
-        "2026-08-25T12:00:00Z",
-    )?;
+    let init_ev = json!({
+        "cost_id": "COST-LATE-0-EV", "sku_code": "SKU-LATE-0", "vendor_code": "ATELIER-01",
+        "unit_cost": 100, "ccy": "EGP", "effective_from": "2026-07-01T00:00:00Z",
+    })
+    .to_string();
+    let (_, clean) = cell.ingest_feed(&FeedRow {
+        feed_id: COSTS_FEED_ID,
+        mapping: COSTS_FEED_ID,
+        dataset: "unit_cost",
+        source: "synthetic-cost",
+        event: "ev-late-cost-init-1",
+        record: "COST-LATE-0-EV",
+        payload: &init_ev,
+    })?;
+    if !clean {
+        return Err("initial UnitCostEvidence quarantined unexpectedly".to_owned());
+    }
+    seed_late_cost_w9_position(&mut cell)?;
     let cutoff = KnowledgeCutoff {
         recorded_at: cell.now(),
         frontier: cell.head()?.commits,
     };
     let ctx = cell.query_context();
     Ok((cell, cutoff, ctx))
+}
+
+fn seed_late_cost_w9_position(cell: &mut EntityCell) -> Result<(), String> {
+    cell.record_costed_lot(
+        "LOT-LATE-1",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "CUST-1",
+        "60",
+        "each",
+        "100",
+        "2026-08-03T09:00:00Z",
+    )?;
+    cell.record_stock_valuation_cut(
+        "CUT-LATE-W9-OPEN",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "each",
+        "2026-08-31T00:00:00Z",
+        "60",
+        "6000",
+    )?;
+    cell.record_costed_sale(
+        "SALE-LATE-W9-1",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "20",
+        "each",
+        "3000",
+        "100",
+        "COST-LATE-0-V1",
+        "2026-09-01T12:00:00Z",
+    )?;
+    cell.update_lot_balance(
+        "LOT-LATE-1",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "40",
+        "20",
+        "100",
+        "2026-09-02T12:00:00Z",
+    )?;
+    cell.record_store_count(
+        false,
+        "ST-LATE-1/SKU-LATE-0/on_hand",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "40",
+        "each",
+        "on_hand",
+        "2026-09-02T14:00:00Z",
+        "CC-LATE-1",
+    )?;
+    cell.record_store_kpi(&StoreKpiInput {
+        rollup_id: "KPI-LATE-W9",
+        store_id: "ST-LATE-1",
+        sku_id: "SKU-LATE-0",
+        period_week: "2026-08-31",
+        unit: "each",
+        on_hand_count_id: "ST-LATE-1/SKU-LATE-0/on_hand",
+        opening_cut_id: "CUT-LATE-W9-OPEN",
+        count_ref: "CC-LATE-1",
+        count_as_of: "2026-09-02T14:00:00Z",
+        costed_ref: "COST-LATE-0-V1",
+        period_start: "2026-08-31T00:00:00Z",
+        period_end: "2026-09-06T23:59:59.999999999Z",
+        sales_weeks: 1,
+        on_hand_qty: "40",
+        avg_weekly_sales_qty: "20",
+        period_gross_margin: "1000",
+        opening_stock_value: "6000",
+        closing_stock_value: "4000",
+    })?;
+    cell.record_inventory_position(
+        false,
+        "SNAP-LATE-W9",
+        "WH-LATE-1",
+        "SKU-LATE-0",
+        "40",
+        "2026-09-02T12:00:00Z",
+        "INIT-LATE-W9-1",
+    )
 }

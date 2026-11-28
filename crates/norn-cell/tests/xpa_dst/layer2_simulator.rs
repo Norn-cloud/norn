@@ -1,15 +1,15 @@
 //! Layer 2A — Seeded Multi-Cell Event-Log Simulator.
 //!
 //! Drives 16–52 simulated weeks of concurrent/interleaved POS sales, supplier
-//! receipts, physical cycle counts, genuine existing-SKU cost restatements
-//! (later-dated `UnitCostEvidence` + restated-cost `StockLot` on the SAME
-//! already-sold SKU verified bitemporally via `evaluate_question_known_at`,
-//! plus late-arriving `UnitCost` activation on an already-sold SKU), bilateral
-//! inter-entity stock transfers (real seller `PosSale` + buyer `StockLot`
-//! commits bound via verified `main` [`norn_cell::export::ExportRecord`]s),
-//! and pinned reporting-view FX shifts evaluated over real multi-cell combined
-//! views, verifying every cell against an independent exact arithmetic oracle
-//! across the FULL simulated horizon.
+//! receipts, physical cycle counts, genuine **in-place** restatements of
+//! existing committed facts (`supply.position.restate` `update_only` on the
+//! exact same `InventorySnapshot` object ID verified bitemporally via
+//! `evaluate_question_known_at`, plus in-place `UnitCostEvidence` updates on
+//! the same `cost_id` and activation of restated `cost_ref`/`unit_cost` routed
+//! into subsequent sales), bilateral inter-entity stock transfers (real seller
+//! `PosSale` + buyer `StockLot` commits bound via shared transfer correlation
+//! IDs and verified `main` [`norn_cell::export::ExportRecord`]s), and pinned
+//! reporting-view FX shifts evaluated over real multi-cell combined views.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,7 +24,10 @@ use super::cuts::{
 };
 use super::env::{COSTS_FEED_ID, EntityCell, FeedRow};
 use super::layer2_faults::verify_late_arriving_unit_cost_on_existing_sku;
-use super::operating_group::{FxRateEntry, InterEntityTransfer, TransferLegEvidence};
+use super::operating_group::{
+    FxRateEntry, InterEntityTransfer, TransferLegEvidence, transfer_leg_key, transfer_lot_id,
+    transfer_sale_id,
+};
 use super::prng::{
     SplitMix64, decimal_to_scaled, rem_u32, rem_usize, scaled, week_epoch_ms, week_monday_iso,
     week_timestamp_utc,
@@ -59,7 +62,6 @@ struct ActiveSkuCost {
     sku_id: String,
     cost_ref: String,
     unit_cost: i64,
-    latest_lot_cost: i64,
     restated: bool,
 }
 
@@ -75,6 +77,8 @@ struct SimState {
     oracles: Vec<EntityOracle>,
     active_costs: BTreeMap<(usize, usize), ActiveSkuCost>,
     lot_state: BTreeMap<(usize, usize, String), LotTracker>,
+    snapshot_qty: BTreeMap<(usize, usize), i64>,
+    restated_late_sku: BTreeSet<usize>,
     counted_once: BTreeSet<(usize, usize, String)>,
     fx_history: Vec<FxRateEntry>,
     inter_entity_transfers: Vec<InterEntityTransfer>,
@@ -109,22 +113,15 @@ fn init_sim_cells(config: SimConfig, rng: &mut SplitMix64) -> Result<SimState, S
         oracles: Vec::with_capacity(config.entity_count),
         active_costs: BTreeMap::new(),
         lot_state: BTreeMap::new(),
+        snapshot_qty: BTreeMap::new(),
+        restated_late_sku: BTreeSet::new(),
         counted_once: BTreeSet::new(),
         fx_history: Vec::new(),
         inter_entity_transfers: Vec::new(),
         seq: 0,
     };
     for entity_idx in 0..config.entity_count {
-        let (cell, oracle) = init_one_sim_entity(
-            config,
-            entity_idx,
-            end_clock_ms,
-            rng,
-            &mut state.active_costs,
-            &mut state.lot_state,
-        )?;
-        state.cells.push(cell);
-        state.oracles.push(oracle);
+        init_one_sim_entity(config, entity_idx, end_clock_ms, rng, &mut state)?;
     }
     Ok(state)
 }
@@ -134,9 +131,8 @@ fn init_one_sim_entity(
     entity_idx: usize,
     end_clock_ms: u64,
     rng: &mut SplitMix64,
-    active_costs: &mut BTreeMap<(usize, usize), ActiveSkuCost>,
-    lot_state: &mut BTreeMap<(usize, usize, String), LotTracker>,
-) -> Result<(EntityCell, EntityOracle), String> {
+    state: &mut SimState,
+) -> Result<(), String> {
     let ccy = CURRENCIES
         .get(rem_usize(entity_idx, CURRENCIES.len()))
         .copied()
@@ -154,22 +150,22 @@ fn init_one_sim_entity(
         end_clock_ms,
     )?;
     cell.register_book(&format!("Sim Entity {entity_idx}"), kind)?;
+    cell.register_warehouse(
+        &format!("WH-SIM-{entity_idx}"),
+        &format!("Sim Warehouse {entity_idx}"),
+    )?;
     for store_ordinal in 0..config.stores_per_entity {
         let store_id = format!("ST-{entity_idx}-{store_ordinal}");
-        let mall = (store_ordinal == 0).then_some("MALL-CFC");
+        let (loc, mall) = if store_ordinal == 0 {
+            ("mall_store", Some("MALL-CFC"))
+        } else {
+            ("standalone", None)
+        };
         cell.register_store(
             &store_id,
             &format!("Store {entity_idx}-{store_ordinal}"),
-            if mall.is_some() {
-                "CUST-MALL-CFC-OPS"
-            } else {
-                "CUST-BRANCH-OPS"
-            },
-            if mall.is_some() {
-                "mall_store"
-            } else {
-                "standalone"
-            },
+            custodian_for_store(store_ordinal),
+            loc,
             mall,
         )?;
     }
@@ -182,17 +178,55 @@ fn init_one_sim_entity(
             entity_idx,
             sku_ordinal,
             rng,
-            active_costs,
-            lot_state,
+            state,
         )?;
     }
-    Ok((cell, oracle))
+    // Pre-register a late-costed SKU with initial UnitCostEvidence (restated in-place at W6).
+    let late_sku = format!("SKU-{entity_idx}-LATE");
+    cell.register_sku(&late_sku, "dry_goods", "each")?;
+    ingest_cost_ev_row(
+        &mut cell,
+        &format!("COST-EV-{entity_idx}-LATE"),
+        &late_sku,
+        90,
+        "2026-07-01T00:00:00Z",
+        &format!("ev-cost-late-init-{entity_idx}"),
+    )?;
+    state.cells.push(cell);
+    state.oracles.push(oracle);
+    Ok(())
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "initial simulator SKU and stock lot seeding"
-)]
+fn ingest_cost_ev_row(
+    cell: &mut EntityCell,
+    cost_id: &str,
+    sku_code: &str,
+    unit_cost: i64,
+    eff_ts: &str,
+    event: &str,
+) -> Result<(), String> {
+    let payload = json!({
+        "cost_id": cost_id, "sku_code": sku_code, "vendor_code": "ATELIER-01",
+        "unit_cost": unit_cost, "ccy": cell.currency, "effective_from": eff_ts,
+    })
+    .to_string();
+    let (_, clean) = cell.ingest_feed(&FeedRow {
+        feed_id: COSTS_FEED_ID,
+        mapping: COSTS_FEED_ID,
+        dataset: "unit_cost",
+        source: "synthetic-cost",
+        event,
+        record: cost_id,
+        payload: &payload,
+    })?;
+    if !clean {
+        return Err(format!(
+            "UnitCostEvidence {cost_id} quarantined unexpectedly"
+        ));
+    }
+    Ok(())
+}
+
 fn seed_initial_sim_sku(
     cell: &mut EntityCell,
     oracle: &mut EntityOracle,
@@ -200,8 +234,7 @@ fn seed_initial_sim_sku(
     entity_idx: usize,
     sku_ordinal: usize,
     rng: &mut SplitMix64,
-    active_costs: &mut BTreeMap<(usize, usize), ActiveSkuCost>,
-    lot_state: &mut BTreeMap<(usize, usize, String), LotTracker>,
+    state: &mut SimState,
 ) -> Result<(), String> {
     let sku_id = format!("SKU-{entity_idx}-{sku_ordinal}");
     let cost_ref = format!("COST-{entity_idx}-{sku_ordinal}-W0");
@@ -214,13 +247,22 @@ fn seed_initial_sim_sku(
         &cost_val.to_string(),
         "2026-06-01T00:00:00Z",
     )?;
-    active_costs.insert(
+    cell.record_inventory_position(
+        false,
+        &format!("SNAP-{entity_idx}-{sku_ordinal}"),
+        &format!("WH-SIM-{entity_idx}"),
+        &sku_id,
+        "200",
+        "2026-07-06T08:00:00Z",
+        &format!("INIT-{entity_idx}-{sku_ordinal}"),
+    )?;
+    state.snapshot_qty.insert((entity_idx, sku_ordinal), 200);
+    state.active_costs.insert(
         (entity_idx, sku_ordinal),
         ActiveSkuCost {
             sku_id: sku_id.clone(),
             cost_ref,
             unit_cost: cost_val,
-            latest_lot_cost: cost_val,
             restated: false,
         },
     );
@@ -232,17 +274,13 @@ fn seed_initial_sim_sku(
             &lot_id,
             &store_id,
             &sku_id,
-            if store_ordinal == 0 {
-                "CUST-MALL-CFC-OPS"
-            } else {
-                "CUST-BRANCH-OPS"
-            },
+            custodian_for_store(store_ordinal),
             &initial_qty.to_string(),
             "each",
             &cost_val.to_string(),
             "2026-07-06T08:00:00Z",
         )?;
-        lot_state.insert(
+        state.lot_state.insert(
             (entity_idx, store_ordinal, sku_id.clone()),
             LotTracker {
                 lot_id,
@@ -319,13 +357,14 @@ fn commit_bilateral_inter_entity_transfer(
     )
     .map_err(|e| format!("spot FX integer rate: {e}"))?;
 
+    let transfer_id = format!("IE-SIM-{}-W{week}", config.seed);
     let (seller_ccy, seller_unit_price, seller_leg) =
-        commit_transfer_seller_leg(week, week_monday, qty, markup, &ts, state)?;
+        commit_transfer_seller_leg(&transfer_id, week, week_monday, qty, markup, &ts, state)?;
     let buyer_unit_cost_egp = seller_unit_price.saturating_mul(whole_egp_per_usd);
-    let buyer_leg = commit_transfer_buyer_leg(week, qty, buyer_unit_cost_egp, &ts, state)?;
+    let buyer_leg = commit_transfer_buyer_leg(&transfer_id, qty, buyer_unit_cost_egp, &ts, state)?;
 
     state.inter_entity_transfers.push(InterEntityTransfer {
-        transfer_id: format!("IE-SIM-{}-W{week}", config.seed),
+        transfer_id,
         seller_entity_id: "LE-SIM-1".to_owned(),
         buyer_entity_id: "LE-SIM-0".to_owned(),
         currency: seller_ccy,
@@ -337,6 +376,7 @@ fn commit_bilateral_inter_entity_transfer(
 }
 
 fn commit_transfer_seller_leg(
+    transfer_id: &str,
     week: u32,
     week_monday: &str,
     qty: i64,
@@ -360,7 +400,7 @@ fn commit_transfer_seller_leg(
     let seller_unit_price = seller_cost.saturating_add(markup);
     let sale_rev = qty.saturating_mul(seller_unit_price);
     let seller_gross_margin = qty.saturating_mul(markup);
-    let sale_object_id = format!("SALE-IE-W{week}");
+    let sale_object_id = transfer_sale_id(transfer_id);
     let seller_ccy = state
         .cells
         .get(seller_idx)
@@ -368,7 +408,7 @@ fn commit_transfer_seller_leg(
         .ok_or("missing seller")?;
     let seller_export = {
         let seller = state.cells.get_mut(seller_idx).ok_or("missing seller")?;
-        seller.record_costed_sale(
+        seller.record_costed_sale_keyed(
             &sale_object_id,
             seller_store,
             &seller_sku,
@@ -378,6 +418,7 @@ fn commit_transfer_seller_leg(
             &seller_cost.to_string(),
             &seller_cost_ref,
             ts,
+            &transfer_leg_key(transfer_id, "seller"),
         )?;
         seller.export_main_record(seller.head()?.commits)?
     };
@@ -404,7 +445,7 @@ fn commit_transfer_seller_leg(
 }
 
 fn commit_transfer_buyer_leg(
-    week: u32,
+    transfer_id: &str,
     qty: i64,
     buyer_unit_cost_egp: i64,
     ts: &str,
@@ -417,10 +458,10 @@ fn commit_transfer_buyer_leg(
         .get(&(buyer_idx, 0))
         .map(|active| active.sku_id.clone())
         .ok_or("missing buyer active SKU")?;
-    let lot_id = format!("LOT-IE-W{week}");
+    let lot_id = transfer_lot_id(transfer_id);
     let buyer_export = {
         let buyer = state.cells.get_mut(buyer_idx).ok_or("missing buyer")?;
-        buyer.record_costed_lot(
+        buyer.record_costed_lot_keyed(
             &lot_id,
             buyer_store,
             &buyer_sku,
@@ -429,6 +470,7 @@ fn commit_transfer_buyer_leg(
             "each",
             &buyer_unit_cost_egp.to_string(),
             ts,
+            &transfer_leg_key(transfer_id, "buyer"),
         )?;
         buyer.export_main_record(buyer.head()?.commits)?
     };
@@ -468,15 +510,7 @@ fn simulate_entity_week_step(
     let sku_ordinal = rng.index(config.skus_per_entity);
     let store_id = format!("ST-{entity_idx}-{store_ordinal}");
 
-    maybe_commit_existing_sku_cost_restatement(
-        config,
-        week,
-        week_monday,
-        entity_idx,
-        sku_ordinal,
-        state,
-        rng,
-    )?;
+    maybe_commit_in_place_restatement(config, week, entity_idx, sku_ordinal, state, rng)?;
     let sale = record_simulated_sale(week, entity_idx, sku_ordinal, &store_id, state, rng)?;
     deplete_lot_for_sale(
         week,
@@ -539,15 +573,15 @@ fn record_oracle_sale(
     Ok(())
 }
 
-/// Genuine cost restatement of an EXISTING, ALREADY-SOLD SKU (no new SKU):
-/// captures `prior_cutoff`, ingests later-dated `UnitCostEvidence` + restated
-/// `StockLot`s on that SAME existing SKU, and asserts via
-/// `evaluate_question_known_at` that `prior_cutoff` preserves original costed
-/// valuation while the current cut reflects the restated cost.
-fn maybe_commit_existing_sku_cost_restatement(
+/// Genuine in-place restatement of an EXISTING committed fact (`update_only`
+/// `supply.position.restate` on the exact same `InventorySnapshot` object ID),
+/// verified bitemporally via `evaluate_question_known_at` (prior knowledge cut
+/// preserves the original quantity; live cut reflects the restated quantity),
+/// plus in-place `UnitCostEvidence` restatement on the same `cost_id` and
+/// routing of subsequent sales to the restated `cost_ref`/`unit_cost`.
+fn maybe_commit_in_place_restatement(
     config: SimConfig,
     week: u32,
-    week_monday: &str,
     entity_idx: usize,
     sku_ordinal: usize,
     state: &mut SimState,
@@ -556,228 +590,211 @@ fn maybe_commit_existing_sku_cost_restatement(
     if week == 0 || rem_u32(week, 6) != 0 {
         return Ok(());
     }
-    let (existing_sku, previous_lot_cost) = state
-        .active_costs
-        .get(&(entity_idx, sku_ordinal))
-        .map(|active| (active.sku_id.clone(), active.latest_lot_cost))
-        .ok_or("missing existing SKU for cost restatement")?;
-    let restated_cost =
-        previous_lot_cost.saturating_add(i64::try_from(rng.range_u64(15, 45)).unwrap_or(20));
-    let restated_ref = format!("COST-RESTATE-{entity_idx}-{sku_ordinal}-W{week}");
-    let eff_ts = week_timestamp_utc(week, 0, 0)?;
-    let primary_store = format!("ST-{entity_idx}-0");
-
-    let (prior_cutoff, prior_ctx, prior_val_scaled, stock_val_plan) = capture_prior_stock_value(
-        state.cells.get(entity_idx).ok_or("missing entity cell")?,
-        config.weeks,
-        &primary_store,
-        week_monday,
-    )?;
-    ingest_existing_sku_cost_evidence(
-        state,
-        entity_idx,
-        sku_ordinal,
-        week,
-        &existing_sku,
-        &restated_ref,
-        restated_cost,
-        &eff_ts,
-    )?;
-    let primary_added_val = receive_restated_lots_for_existing_sku(
-        state,
-        config.stores_per_entity,
-        entity_idx,
-        sku_ordinal,
-        week,
-        &existing_sku,
-        restated_cost,
-        &eff_ts,
-        rng,
-    )?;
-    assert_bitemporal_stock_value(
-        state.cells.get(entity_idx).ok_or("missing entity cell")?,
-        &stock_val_plan,
-        prior_ctx,
-        prior_cutoff,
-        &primary_store,
-        week_monday,
-        prior_val_scaled,
-        primary_added_val,
-    )?;
-    if let Some(active) = state.active_costs.get_mut(&(entity_idx, sku_ordinal)) {
-        active.latest_lot_cost = restated_cost;
-        active.restated = true;
-    }
+    restate_warehouse_snapshot_bitemporal(week, entity_idx, sku_ordinal, state)?;
+    restate_late_sku_cost(config, week, entity_idx, sku_ordinal, state, rng)?;
     if let Some(oracle) = state.oracles.get_mut(entity_idx) {
         oracle.total_cost_restatements = oracle.total_cost_restatements.saturating_add(1);
     }
     Ok(())
 }
 
-fn capture_prior_stock_value(
-    cell: &EntityCell,
-    weeks: u32,
-    store_id: &str,
-    week_monday: &str,
-) -> Result<(KnowledgeCutoff, QueryContext, i128, QuestionPlan), String> {
-    let cutoff = KnowledgeCutoff {
-        recorded_at: cell.now(),
-        frontier: cell.head()?.commits,
-    };
-    let ctx = cell.query_context();
-    let plan = cell.pack.retail_question_for_weeks(
-        "supply.retail.store_stock_value_weekly",
-        weeks,
-        5_000,
-    )?;
-    let prior_res = cell
-        .cell()?
-        .store()
-        .evaluate_question_known_at(&plan, ctx.clone(), cutoff, |_| Ok(true))
-        .map_err(|e| format!("prior stock value known_at: {e}"))?;
-    let prior_val = bucket_decimal_exact(
-        &prior_res.result,
-        &[&cell.currency, store_id, "costed", week_monday],
-    )
-    .map(decimal_to_scaled)
-    .transpose()?
-    .unwrap_or(0);
-    Ok((cutoff, ctx, prior_val, plan))
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "bitemporal stock valuation comparison"
-)]
-fn assert_bitemporal_stock_value(
-    cell: &EntityCell,
-    plan: &QuestionPlan,
-    prior_ctx: QueryContext,
-    prior_cutoff: KnowledgeCutoff,
-    store_id: &str,
-    week_monday: &str,
-    prior_val_scaled: i128,
-    added_val_scaled: i128,
-) -> Result<(), String> {
-    let rechecked = cell
-        .cell()?
-        .store()
-        .evaluate_question_known_at(plan, prior_ctx, prior_cutoff, |_| Ok(true))
-        .map_err(|e| format!("recheck prior stock value: {e}"))?;
-    let rechecked_scaled = bucket_decimal_exact(
-        &rechecked.result,
-        &[&cell.currency, store_id, "costed", week_monday],
-    )
-    .map(decimal_to_scaled)
-    .transpose()?
-    .unwrap_or(0);
-    if rechecked_scaled != prior_val_scaled {
-        return Err(format!(
-            "ASOF-KNOWLEDGE-1 violated on existing-SKU cost restatement: prior={prior_val_scaled} rechecked={rechecked_scaled}"
-        ));
-    }
-    let current = cell
-        .cell()?
-        .store()
-        .evaluate_question(plan, cell.query_context(), |_| Ok(true))
-        .map_err(|e| format!("current stock value: {e}"))?;
-    let current_scaled =
-        bucket_decimal_exact(&current, &[&cell.currency, store_id, "costed", week_monday])
-            .ok_or("missing current restated stock value bucket")
-            .and_then(decimal_to_scaled)?;
-    let expected_current = prior_val_scaled
-        .checked_add(added_val_scaled)
-        .ok_or("restated stock value overflow")?;
-    if current_scaled != expected_current {
-        return Err(format!(
-            "restated stock value mismatch: current={current_scaled} expected={expected_current}"
-        ));
-    }
-    Ok(())
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "existing-SKU restated UnitCostEvidence ingestion"
-)]
-fn ingest_existing_sku_cost_evidence(
-    state: &mut SimState,
+fn restate_warehouse_snapshot_bitemporal(
+    week: u32,
     entity_idx: usize,
     sku_ordinal: usize,
-    week: u32,
-    existing_sku: &str,
-    restated_ref: &str,
-    restated_cost: i64,
-    eff_ts: &str,
+    state: &mut SimState,
 ) -> Result<(), String> {
-    let cell = state
-        .cells
-        .get_mut(entity_idx)
-        .ok_or("missing entity cell")?;
-    let payload = json!({
-        "cost_id": restated_ref, "sku_code": existing_sku, "vendor_code": "ATELIER-01",
-        "unit_cost": restated_cost, "ccy": cell.currency, "effective_from": eff_ts,
-    })
-    .to_string();
-    let (_, clean) = cell.ingest_feed(&FeedRow {
-        feed_id: COSTS_FEED_ID,
-        mapping: COSTS_FEED_ID,
-        dataset: "unit_cost",
-        source: "synthetic-cost",
-        event: &format!("ev-cost-restate-{entity_idx}-{sku_ordinal}-w{week}"),
-        record: restated_ref,
-        payload: &payload,
-    })?;
-    if !clean {
-        return Err(format!("cost restatement w{week} quarantined unexpectedly"));
+    let prior_snap_qty = state
+        .snapshot_qty
+        .get(&(entity_idx, sku_ordinal))
+        .copied()
+        .ok_or("missing existing InventorySnapshot quantity")?;
+    let restated_snap_qty = if prior_snap_qty >= 40 {
+        prior_snap_qty.saturating_sub(15)
+    } else {
+        prior_snap_qty.saturating_add(25)
+    };
+    let delta_scaled = scaled(i128::from(restated_snap_qty.saturating_sub(prior_snap_qty)));
+    let warehouse_id = format!("WH-SIM-{entity_idx}");
+    let (prior_cutoff, prior_ctx, prior_total_scaled, on_hand_plan) = {
+        let cell = state.cells.get(entity_idx).ok_or("missing entity cell")?;
+        let cutoff = KnowledgeCutoff {
+            recorded_at: cell.now(),
+            frontier: cell.head()?.commits,
+        };
+        let ctx = cell.query_context();
+        let plan = cell.pack.supply_question("supply.on_hand_weekly")?;
+        let prior_total =
+            eval_wh_on_hand_scaled(cell, &plan, ctx.clone(), Some(cutoff), &warehouse_id)?;
+        (cutoff, ctx, prior_total, plan)
+    };
+    if let Some(cell) = state.cells.get_mut(entity_idx) {
+        let restate_as_of = format!("2026-07-06T09:{:02}:00Z", rem_u32(week, 60));
+        cell.record_inventory_position(
+            true,
+            &format!("SNAP-{entity_idx}-{sku_ordinal}"),
+            &warehouse_id,
+            &format!("SKU-{entity_idx}-{sku_ordinal}"),
+            &restated_snap_qty.to_string(),
+            &restate_as_of,
+            &format!("AUDIT-{entity_idx}-{sku_ordinal}-W{week}"),
+        )?;
+    }
+    let cell_ref = state.cells.get(entity_idx).ok_or("missing entity cell")?;
+    let rechecked = eval_wh_on_hand_scaled(
+        cell_ref,
+        &on_hand_plan,
+        prior_ctx,
+        Some(prior_cutoff),
+        &warehouse_id,
+    )?;
+    if rechecked != prior_total_scaled {
+        return Err(format!(
+            "ASOF-KNOWLEDGE-1 violated: prior={prior_total_scaled} rechecked={rechecked}"
+        ));
+    }
+    let current = eval_wh_on_hand_scaled(
+        cell_ref,
+        &on_hand_plan,
+        cell_ref.query_context(),
+        None,
+        &warehouse_id,
+    )?;
+    let expected_current = prior_total_scaled
+        .checked_add(delta_scaled)
+        .ok_or("restated on_hand overflow")?;
+    if current != expected_current {
+        return Err(format!(
+            "in-place restated on_hand mismatch: current={current} expected={expected_current}"
+        ));
+    }
+    state
+        .snapshot_qty
+        .insert((entity_idx, sku_ordinal), restated_snap_qty);
+    Ok(())
+}
+
+fn restate_late_sku_cost(
+    config: SimConfig,
+    week: u32,
+    entity_idx: usize,
+    sku_ordinal: usize,
+    state: &mut SimState,
+    rng: &mut SplitMix64,
+) -> Result<(), String> {
+    let restated_cost = i64::try_from(rng.range_u64(110, 175)).unwrap_or(135);
+    let late_sku = format!("SKU-{entity_idx}-LATE");
+    let eff_ts = week_timestamp_utc(week, 0, 0)?;
+    {
+        let cell = state
+            .cells
+            .get_mut(entity_idx)
+            .ok_or("missing entity cell")?;
+        let count_before = cell.object_count("supply.UnitCostEvidence")?;
+        ingest_cost_ev_row(
+            cell,
+            &format!("COST-EV-{entity_idx}-LATE"),
+            &late_sku,
+            restated_cost,
+            &eff_ts,
+            &format!("ev-cost-restate-{entity_idx}-w{week}"),
+        )?;
+        if cell.object_count("supply.UnitCostEvidence")? != count_before {
+            return Err(format!("UnitCostEvidence w{week} did not update in-place"));
+        }
+    }
+    if state.restated_late_sku.insert(entity_idx) {
+        let restated_ref = format!("COST-RESTATE-{entity_idx}-W{week}");
+        if let Some(cell) = state.cells.get_mut(entity_idx) {
+            cell.record_unit_cost(
+                &late_sku,
+                &restated_ref,
+                "SUP-ATELIER",
+                &restated_cost.to_string(),
+                "2026-07-01T00:00:00Z",
+            )?;
+        }
+        receive_restated_lots_for_sku(
+            state,
+            config.stores_per_entity,
+            entity_idx,
+            week,
+            &late_sku,
+            restated_cost,
+            &eff_ts,
+            rng,
+        )?;
+        if let Some(active) = state.active_costs.get_mut(&(entity_idx, sku_ordinal)) {
+            active.sku_id = late_sku;
+            active.cost_ref = restated_ref;
+            active.unit_cost = restated_cost;
+            active.restated = true;
+        }
     }
     Ok(())
 }
 
+fn eval_wh_on_hand_scaled(
+    cell: &EntityCell,
+    plan: &QuestionPlan,
+    ctx: QueryContext,
+    cutoff: Option<KnowledgeCutoff>,
+    warehouse_id: &str,
+) -> Result<i128, String> {
+    let result = match cutoff {
+        Some(cut) => {
+            cell.cell()?
+                .store()
+                .evaluate_question_known_at(plan, ctx, cut, |_| Ok(true))
+                .map_err(|e| format!("on_hand known_at: {e}"))?
+                .result
+        }
+        None => cell
+            .cell()?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+            .map_err(|e| format!("on_hand live: {e}"))?,
+    };
+    bucket_decimal_exact(&result, &["each", warehouse_id, "2026-07-06"])
+        .ok_or_else(|| format!("missing warehouse on_hand bucket for {warehouse_id}"))
+        .and_then(decimal_to_scaled)
+}
+
 #[allow(
     clippy::too_many_arguments,
-    reason = "restated cost stock lots on existing SKU"
+    reason = "restated cost stock lots for newly activated late-cost SKU"
 )]
-fn receive_restated_lots_for_existing_sku(
+fn receive_restated_lots_for_sku(
     state: &mut SimState,
     stores_per_entity: usize,
     entity_idx: usize,
-    sku_ordinal: usize,
     week: u32,
-    existing_sku: &str,
+    late_sku: &str,
     restated_cost: i64,
     eff_ts: &str,
     rng: &mut SplitMix64,
-) -> Result<i128, String> {
+) -> Result<(), String> {
     let cell = state
         .cells
         .get_mut(entity_idx)
         .ok_or("missing entity cell")?;
-    let mut primary_store_added_val: i128 = 0;
     for store_ordinal in 0..stores_per_entity {
         let store_id = format!("ST-{entity_idx}-{store_ordinal}");
-        let lot_id = format!("LOT-{entity_idx}-{store_ordinal}-{sku_ordinal}-R{week}");
-        let qty = i64::try_from(rng.range_u64(250, 500)).unwrap_or(300);
+        let lot_id = format!("LOT-{entity_idx}-{store_ordinal}-LATE-W{week}");
+        let qty = i64::try_from(rng.range_u64(300, 600)).unwrap_or(400);
+        let cust = custodian_for_store(store_ordinal);
         cell.record_costed_lot(
             &lot_id,
             &store_id,
-            existing_sku,
-            if store_ordinal == 0 {
-                "CUST-MALL-CFC-OPS"
-            } else {
-                "CUST-BRANCH-OPS"
-            },
+            late_sku,
+            cust,
             &qty.to_string(),
             "each",
             &restated_cost.to_string(),
             eff_ts,
         )?;
-        if store_ordinal == 0 {
-            primary_store_added_val =
-                scaled(i128::from(qty).saturating_mul(i128::from(restated_cost)));
-        }
         state.lot_state.insert(
-            (entity_idx, store_ordinal, existing_sku.to_owned()),
+            (entity_idx, store_ordinal, late_sku.to_owned()),
             LotTracker {
                 lot_id,
                 received: qty,
@@ -788,13 +805,21 @@ fn receive_restated_lots_for_existing_sku(
         if let Some(oracle) = state.oracles.get_mut(entity_idx) {
             let entry = oracle
                 .lot_conservation
-                .entry((store_id, existing_sku.to_owned()))
+                .entry((store_id, late_sku.to_owned()))
                 .or_insert((0, 0));
             entry.0 = entry.0.saturating_add(qty);
             oracle.total_receipts = oracle.total_receipts.saturating_add(1);
         }
     }
-    Ok(primary_store_added_val)
+    Ok(())
+}
+
+const fn custodian_for_store(store_ordinal: usize) -> &'static str {
+    if store_ordinal == 0 {
+        "CUST-MALL-CFC-OPS"
+    } else {
+        "CUST-BRANCH-OPS"
+    }
 }
 
 fn record_simulated_sale(
@@ -805,18 +830,16 @@ fn record_simulated_sale(
     state: &mut SimState,
     rng: &mut SplitMix64,
 ) -> Result<SimulatedSale, String> {
-    let (sku_id, cost_ref, unit_cost, restated) = state
+    let active = state
         .active_costs
         .get(&(entity_idx, sku_ordinal))
-        .map(|active| {
-            (
-                active.sku_id.clone(),
-                active.cost_ref.clone(),
-                active.unit_cost,
-                active.restated,
-            )
-        })
         .ok_or("missing active cost")?;
+    let (sku_id, cost_ref, unit_cost, restated) = (
+        active.sku_id.clone(),
+        active.cost_ref.clone(),
+        active.unit_cost,
+        active.restated,
+    );
     let sold_qty = i64::try_from(rng.range_u64(1, 6)).unwrap_or(2);
     let margin_per_unit = i64::try_from(rng.range_u64(20, 120)).unwrap_or(40);
     let net_rev = sold_qty.saturating_mul(unit_cost.saturating_add(margin_per_unit));
@@ -894,43 +917,44 @@ fn maybe_recount_store(
     seq: u64,
     state: &mut SimState,
 ) -> Result<(), String> {
-    if rem_u32(week, 4) == 2
-        && let Some((received, depleted)) = state
-            .oracles
-            .get(entity_idx)
-            .and_then(|o| {
-                o.lot_conservation
-                    .get(&(store_id.to_owned(), sku_id.to_owned()))
-            })
-            .copied()
-    {
-        let total_on_hand = received.saturating_sub(depleted);
-        let recount = !state
-            .counted_once
-            .insert((entity_idx, store_ordinal, sku_id.to_owned()));
-        if let Some(cell) = state.cells.get_mut(entity_idx) {
-            cell.record_store_count(
-                recount,
-                &format!("{store_id}/{sku_id}/on_hand"),
-                store_id,
-                sku_id,
-                &total_on_hand.to_string(),
-                "each",
-                "on_hand",
-                &week_timestamp_utc(week, 6, 10)?,
-                &format!("CC-W{week}-{seq}"),
-            )?;
-        }
-        if let Some(oracle) = state.oracles.get_mut(entity_idx) {
-            oracle.total_recounts = oracle.total_recounts.saturating_add(1);
-        }
+    if rem_u32(week, 4) != 2 {
+        return Ok(());
+    }
+    let Some((received, depleted)) = state
+        .oracles
+        .get(entity_idx)
+        .and_then(|o| {
+            o.lot_conservation
+                .get(&(store_id.to_owned(), sku_id.to_owned()))
+        })
+        .copied()
+    else {
+        return Ok(());
+    };
+    let recount = !state
+        .counted_once
+        .insert((entity_idx, store_ordinal, sku_id.to_owned()));
+    if let Some(cell) = state.cells.get_mut(entity_idx) {
+        cell.record_store_count(
+            recount,
+            &format!("{store_id}/{sku_id}/on_hand"),
+            store_id,
+            sku_id,
+            &received.saturating_sub(depleted).to_string(),
+            "each",
+            "on_hand",
+            &week_timestamp_utc(week, 6, 10)?,
+            &format!("CC-W{week}-{seq}"),
+        )?;
+    }
+    if let Some(oracle) = state.oracles.get_mut(entity_idx) {
+        oracle.total_recounts = oracle.total_recounts.saturating_add(1);
     }
     Ok(())
 }
 
 fn finalize_and_verify_sim(config: SimConfig, state: &mut SimState) -> Result<(), String> {
-    let mut any_restated = false;
-    let mut any_restated_sale = false;
+    let (mut any_restated, mut any_restated_sale) = (false, false);
     for entity_idx in 0..config.entity_count {
         let store_id = format!("ST-{entity_idx}-0");
         let (sku_id, cost_val) = state.active_costs.get(&(entity_idx, 0)).map_or_else(
@@ -954,7 +978,7 @@ fn finalize_and_verify_sim(config: SimConfig, state: &mut SimState) -> Result<()
     }
     if config.weeks >= 12 && (!any_restated || !any_restated_sale) {
         return Err(
-            "simulator must commit existing-SKU cost restatements and apply them to subsequent steps"
+            "simulator must commit in-place restatements and apply them to subsequent sales"
                 .to_owned(),
         );
     }

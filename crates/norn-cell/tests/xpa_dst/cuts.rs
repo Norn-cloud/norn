@@ -10,22 +10,25 @@ use norn_cell::combined_view::{
 };
 use norn_cell::compute::transform::RowAccess;
 use norn_cell::compute::{Frontier, QueryContext, QueryResult};
+use norn_cell::export::ExportRecord;
 use norn_cell::{CellError, ObjectRecord};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::transform::TransformPlan;
 use norn_ir::{Decimal, RuntimeValue};
 use norn_kernel::authz::CommitBinding;
 use norn_kernel::cell_host::FactKey;
+use serde_json::json;
 
 use super::env::{
-    EVIDENCE_TYPES, EntityCell, FEED_MAPPINGS, FEED_MAX_AGE_MS, REQUIRED_FEEDS, RETAIL_QUESTIONS,
-    RetailPack, TEST_HANDLE_KEY, Watermarks, repo_root, retail_pack,
+    DEFAULT_CLOCK_MS, EVIDENCE_TYPES, EntityCell, FEED_MAPPINGS, FEED_MAX_AGE_MS, REQUIRED_FEEDS,
+    RETAIL_QUESTIONS, RetailPack, TEST_HANDLE_KEY, Watermarks, repo_root, retail_pack,
 };
 use super::operating_group::{
     EntityReportingSlice, FxRateEntry, InterEntityTransfer, OperatingGroupTier,
-    evaluate_operating_group_tier, slice_from_cut_snapshot,
+    evaluate_operating_group_tier, slice_from_cut_snapshot_for_weeks, transfer_leg_key,
+    transfer_lot_id, transfer_sale_id,
 };
-use super::prng::{decimal_from_scaled, decimal_to_scaled, scaled};
+use super::prng::{SECONDARY_SEED, decimal_from_scaled, decimal_to_scaled, scaled};
 
 type SpecPlans = (
     BTreeMap<String, TransformPlan>,
@@ -517,17 +520,19 @@ pub fn verify_multi_cell_combined_view_and_fx_shifts(
         })?;
     let mut slices: Vec<EntityReportingSlice> = Vec::with_capacity(cells.len());
     for (cell, snap) in cells.iter().zip(&report.cells) {
-        slices.push(slice_from_cut_snapshot(
+        slices.push(slice_from_cut_snapshot_for_weeks(
             &cell.entity_id,
             &cell.currency,
             snap,
             "supply.retail.store_revenue_weekly",
+            Some(weeks),
         )?);
     }
     let first_rates: Vec<FxRateEntry> = fx_history.iter().take(2).cloned().collect();
     let latest_rates: Vec<FxRateEntry> = fx_history.iter().rev().take(2).cloned().collect();
     let early_fx = evaluate_operating_group_tier(
         OperatingGroupTier::FxTranslated,
+        &refs,
         &slices,
         Some("EGP"),
         &first_rates,
@@ -537,6 +542,7 @@ pub fn verify_multi_cell_combined_view_and_fx_shifts(
     .map_err(|e| format!("early FxTranslated projection failed: {e:?}"))?;
     let netted = evaluate_operating_group_tier(
         OperatingGroupTier::InterEntityNetted,
+        &refs,
         &slices,
         Some("EGP"),
         &latest_rates,
@@ -553,4 +559,419 @@ pub fn verify_multi_cell_combined_view_and_fx_shifts(
         );
     }
     Ok(())
+}
+
+/// Seeded two-book fixture (EGP sole proprietorship + USD partnership) with real
+/// bilateral transfer exports, an unrelated ledger-tip export, and unrelated
+/// same-amount sale & lot exports (without transfer correlation keys).
+pub struct TwoBookFixture {
+    pub sole_egp_book: EntityCell,
+    pub partner_usd_book: EntityCell,
+    pub seller_transfer_export: ExportRecord,
+    pub buyer_transfer_export: ExportRecord,
+    pub unrelated_tip_export: ExportRecord,
+    pub unrelated_same_amt_sale_export: ExportRecord,
+    pub unrelated_same_amt_lot_export: ExportRecord,
+}
+
+/// Seed two isolated single-book cells (`LE-EGP`, `LE-USD`) including a real
+/// bilateral inter-entity transfer (`IE-OK-1`) plus unrelated same-amount commits.
+///
+/// # Errors
+/// Returns an error if any governed setup commit or single-book refusal fails.
+pub fn seed_two_book_cells() -> Result<TwoBookFixture, String> {
+    let (sole_egp_book, buyer_transfer_export, unrelated_tip_export, unrelated_same_amt_lot_export) =
+        seed_sole_egp_book()?;
+    let (partner_usd_book, seller_transfer_export, unrelated_same_amt_sale_export) =
+        seed_partner_usd_book()?;
+    Ok(TwoBookFixture {
+        sole_egp_book,
+        partner_usd_book,
+        seller_transfer_export,
+        buyer_transfer_export,
+        unrelated_tip_export,
+        unrelated_same_amt_sale_export,
+        unrelated_same_amt_lot_export,
+    })
+}
+
+fn seed_sole_egp_book() -> Result<(EntityCell, ExportRecord, ExportRecord, ExportRecord), String> {
+    let mut book = EntityCell::open(
+        &cell_id_for_entity(SECONDARY_SEED, 0),
+        "LE-EGP",
+        "EGP",
+        "org_group_egp",
+        "prod",
+        DEFAULT_CLOCK_MS,
+    )?;
+    book.register_book("Nile Sole Prop", "sole_proprietorship")?;
+    let (second_book_code, _) = book.refused(
+        "supply.legal_entity.register",
+        "eng:dina",
+        json!({
+            "entity_id": "LE-ROGUE", "legal_name": "Rogue Second Book",
+            "entity_kind": "corporation", "book_code": "BOOK-ROGUE-EGP",
+            "functional_currency": "EGP",
+        }),
+    )?;
+    if second_book_code != "action.precondition_failed" {
+        return Err(format!(
+            "second LegalEntity in one cell must refuse, got {second_book_code}"
+        ));
+    }
+    book.register_sku("SKU-DRESS", "dry_goods", "each")?;
+    book.register_sku("SKU-RING-IE", "dry_goods", "each")?;
+    book.register_store(
+        "ST-EGP-1",
+        "ST-EGP-1",
+        "CUST-CFC",
+        "mall_store",
+        Some("MALL-CFC"),
+    )?;
+    book.record_unit_cost(
+        "SKU-DRESS",
+        "COST-1",
+        "SUP-1",
+        "100",
+        "2026-07-01T00:00:00Z",
+    )?;
+    book.record_costed_lot(
+        "LOT-EGP-BASE",
+        "ST-EGP-1",
+        "SKU-DRESS",
+        "CUST-CFC",
+        "20",
+        "each",
+        "100",
+        "2026-08-10T09:00:00Z",
+    )?;
+    book.record_costed_sale(
+        "SALE-EGP-1",
+        "ST-EGP-1",
+        "SKU-DRESS",
+        "4",
+        "each",
+        "2000",
+        "100",
+        "COST-1",
+        "2026-09-02T12:00:00Z",
+    )?;
+    // Unrelated same-amount lot (2 units * 5000 = 10,000 EGP, NO transfer correlation key).
+    book.record_costed_lot(
+        "LOT-EGP-UNRELATED",
+        "ST-EGP-1",
+        "SKU-RING-IE",
+        "CUST-CFC",
+        "2",
+        "each",
+        "5000",
+        "2026-09-02T12:45:00Z",
+    )?;
+    let unrelated_lot_export = book.export_main_record(book.head()?.commits)?;
+    // Buyer leg: 2 units * 5000 EGP = 10,000 EGP (= 200 USD * 50), transfer-correlated.
+    book.record_costed_lot_keyed(
+        &transfer_lot_id("IE-OK-1"),
+        "ST-EGP-1",
+        "SKU-RING-IE",
+        "CUST-CFC",
+        "2",
+        "each",
+        "5000",
+        "2026-09-02T13:00:00Z",
+        &transfer_leg_key("IE-OK-1", "buyer"),
+    )?;
+    let buyer_export = book.export_main_record(book.head()?.commits)?;
+    book.ingest_baseline_feeds(
+        "ST-EGP-1",
+        "SKU-DRESS",
+        "100",
+        "2026-09-02T12:00:00Z",
+        "ST-EGP-1",
+    )?;
+    book.refresh_watermarks();
+    let unrelated_tip = book.export_main_record(book.head()?.commits)?;
+    Ok((book, buyer_export, unrelated_tip, unrelated_lot_export))
+}
+
+fn seed_partner_usd_book() -> Result<(EntityCell, ExportRecord, ExportRecord), String> {
+    let mut book = EntityCell::open(
+        &cell_id_for_entity(SECONDARY_SEED, 1),
+        "LE-USD",
+        "USD",
+        "org_group_usd",
+        "prod",
+        DEFAULT_CLOCK_MS,
+    )?;
+    book.register_book("Delta Partnership", "partnership")?;
+    book.register_sku("SKU-RING", "dry_goods", "each")?;
+    book.register_store(
+        "ST-USD-1",
+        "ST-USD-1",
+        "CUST-CFC",
+        "mall_store",
+        Some("MALL-CFC"),
+    )?;
+    book.record_unit_cost("SKU-RING", "COST-1", "SUP-1", "80", "2026-07-01T00:00:00Z")?;
+    book.record_costed_lot(
+        "LOT-USD-BASE",
+        "ST-USD-1",
+        "SKU-RING",
+        "CUST-CFC",
+        "20",
+        "each",
+        "80",
+        "2026-08-10T09:00:00Z",
+    )?;
+    // Unrelated same-amount external sale (2 units, 200 USD, NO transfer correlation key).
+    book.record_costed_sale(
+        "SALE-USD-EXT-A",
+        "ST-USD-1",
+        "SKU-RING",
+        "2",
+        "each",
+        "200",
+        "80",
+        "COST-1",
+        "2026-09-02T11:00:00Z",
+    )?;
+    let unrelated_sale_export = book.export_main_record(book.head()?.commits)?;
+    book.record_costed_sale(
+        "SALE-USD-EXT-B",
+        "ST-USD-1",
+        "SKU-RING",
+        "3",
+        "each",
+        "600",
+        "80",
+        "COST-1",
+        "2026-09-02T11:30:00Z",
+    )?;
+    // Seller leg: 2 units, 200 USD net revenue (total USD = 1000), transfer-correlated.
+    book.record_costed_sale_keyed(
+        &transfer_sale_id("IE-OK-1"),
+        "ST-USD-1",
+        "SKU-RING",
+        "2",
+        "each",
+        "200",
+        "80",
+        "COST-1",
+        "2026-09-02T12:30:00Z",
+        &transfer_leg_key("IE-OK-1", "seller"),
+    )?;
+    let seller_export = book.export_main_record(book.head()?.commits)?;
+    book.ingest_baseline_feeds(
+        "ST-USD-1",
+        "SKU-RING",
+        "80",
+        "2026-09-02T12:00:00Z",
+        "ST-USD-1",
+    )?;
+    book.refresh_watermarks();
+    Ok((book, seller_export, unrelated_sale_export))
+}
+
+/// Seeded Egyptian family-business fixture (sole proprietorship in EGP +
+/// partnership in USD sharing `MALL-CFC` custodian) with real bilateral
+/// inter-entity transfer exports (`IE-CFC-TRIM-01`) plus unrelated same-amount commits.
+pub struct EgyptianFamilyFixture {
+    pub sole_book: EntityCell,
+    pub partner_book: EntityCell,
+    pub partner_sale_export: ExportRecord,
+    pub sole_buyer_lot_export: ExportRecord,
+    pub sole_unrelated_tip_export: ExportRecord,
+    pub partner_unrelated_sale_export: ExportRecord,
+    pub sole_unrelated_lot_export: ExportRecord,
+}
+
+/// Seed the Egyptian family-business multi-entity cells and bilateral transfer commits.
+///
+/// # Errors
+/// Returns an error if any governed setup commit fails.
+pub fn seed_egyptian_family_fixture(seed: u64) -> Result<EgyptianFamilyFixture, String> {
+    let (sole_book, sole_buyer_lot_export, sole_unrelated_tip_export, sole_unrelated_lot_export) =
+        seed_egyptian_sole_book(seed)?;
+    let (partner_book, partner_sale_export, partner_unrelated_sale_export) =
+        seed_egyptian_partner_book(seed)?;
+    Ok(EgyptianFamilyFixture {
+        sole_book,
+        partner_book,
+        partner_sale_export,
+        sole_buyer_lot_export,
+        sole_unrelated_tip_export,
+        partner_unrelated_sale_export,
+        sole_unrelated_lot_export,
+    })
+}
+
+fn seed_egyptian_sole_book(
+    seed: u64,
+) -> Result<(EntityCell, ExportRecord, ExportRecord, ExportRecord), String> {
+    let mut book = EntityCell::open(
+        &cell_id_for_entity(seed, 51),
+        "LE-NILE-SOLE",
+        "EGP",
+        "org_family_nile_sole",
+        "prod",
+        DEFAULT_CLOCK_MS,
+    )?;
+    book.register_book("Nile Apparel Sole Proprietorship", "sole_proprietorship")?;
+    book.register_sku("SKU-ABAYA", "dry_goods", "each")?;
+    book.register_sku("SKU-GOLD-TRIM", "spares", "each")?;
+    book.register_store(
+        "ST-SOLE-CFC",
+        "Nile CFC Booth",
+        "CUST-MALL-CFC-OPS",
+        "mall_store",
+        Some("MALL-CFC"),
+    )?;
+    book.record_unit_cost(
+        "SKU-ABAYA",
+        "COST-ABAYA-1",
+        "SUP-ATELIER",
+        "400",
+        "2026-07-01T00:00:00Z",
+    )?;
+    book.record_costed_lot(
+        "LOT-SOLE-1",
+        "ST-SOLE-CFC",
+        "SKU-ABAYA",
+        "CUST-MALL-CFC-OPS",
+        "100",
+        "each",
+        "400",
+        "2026-08-03T09:00:00Z",
+    )?;
+    book.record_costed_sale(
+        "SALE-SOLE-1",
+        "ST-SOLE-CFC",
+        "SKU-ABAYA",
+        "30",
+        "each",
+        "27000",
+        "400",
+        "COST-ABAYA-1",
+        "2026-09-02T14:00:00Z",
+    )?;
+    // Unrelated same-amount lot (2 units * 7275 = 14,550 EGP, NO transfer correlation key).
+    book.record_costed_lot(
+        "LOT-SOLE-UNRELATED",
+        "ST-SOLE-CFC",
+        "SKU-GOLD-TRIM",
+        "CUST-MALL-CFC-OPS",
+        "2",
+        "each",
+        "7275",
+        "2026-09-02T15:15:00Z",
+    )?;
+    let unrelated_lot = book.export_main_record(book.head()?.commits)?;
+    // Buyer leg: 2 units * 7275 EGP = 14,550 EGP (= 300 USD * 48.5), transfer-correlated.
+    book.record_costed_lot_keyed(
+        &transfer_lot_id("IE-CFC-TRIM-01"),
+        "ST-SOLE-CFC",
+        "SKU-GOLD-TRIM",
+        "CUST-MALL-CFC-OPS",
+        "2",
+        "each",
+        "7275",
+        "2026-09-02T15:30:00Z",
+        &transfer_leg_key("IE-CFC-TRIM-01", "buyer"),
+    )?;
+    let buyer_export = book.export_main_record(book.head()?.commits)?;
+    book.ingest_baseline_feeds(
+        "ST-SOLE-CFC",
+        "SKU-ABAYA",
+        "400",
+        "2026-09-02T14:00:00Z",
+        "egypt-sole",
+    )?;
+    book.refresh_watermarks();
+    let unrelated_tip = book.export_main_record(book.head()?.commits)?;
+    Ok((book, buyer_export, unrelated_tip, unrelated_lot))
+}
+
+fn seed_egyptian_partner_book(
+    seed: u64,
+) -> Result<(EntityCell, ExportRecord, ExportRecord), String> {
+    let mut book = EntityCell::open(
+        &cell_id_for_entity(seed, 52),
+        "LE-CAIRO-PARTNER",
+        "USD",
+        "org_family_cairo_partner",
+        "prod",
+        DEFAULT_CLOCK_MS,
+    )?;
+    book.register_book("Cairo Atelier Partnership", "partnership")?;
+    book.register_sku("SKU-GOLD-TRIM", "spares", "each")?;
+    book.register_store(
+        "ST-PART-CFC",
+        "Cairo CFC Gallery",
+        "CUST-MALL-CFC-OPS",
+        "mall_store",
+        Some("MALL-CFC"),
+    )?;
+    book.record_unit_cost(
+        "SKU-GOLD-TRIM",
+        "COST-TRIM-1",
+        "SUP-ATELIER",
+        "80",
+        "2026-07-01T00:00:00Z",
+    )?;
+    book.record_costed_lot(
+        "LOT-PART-1",
+        "ST-PART-CFC",
+        "SKU-GOLD-TRIM",
+        "CUST-MALL-CFC-OPS",
+        "40",
+        "each",
+        "80",
+        "2026-08-03T09:00:00Z",
+    )?;
+    // Unrelated same-amount sale (2 units, 300 USD, NO transfer correlation key).
+    book.record_costed_sale(
+        "SALE-PART-EXT-A",
+        "ST-PART-CFC",
+        "SKU-GOLD-TRIM",
+        "2",
+        "each",
+        "300",
+        "80",
+        "COST-TRIM-1",
+        "2026-09-02T14:20:00Z",
+    )?;
+    let unrelated_sale = book.export_main_record(book.head()?.commits)?;
+    book.record_costed_sale(
+        "SALE-PART-EXT-B",
+        "ST-PART-CFC",
+        "SKU-GOLD-TRIM",
+        "6",
+        "each",
+        "900",
+        "80",
+        "COST-TRIM-1",
+        "2026-09-02T14:30:00Z",
+    )?;
+    // Seller leg: 2 units, 300 USD net revenue (total USD = 1500), transfer-correlated.
+    book.record_costed_sale_keyed(
+        &transfer_sale_id("IE-CFC-TRIM-01"),
+        "ST-PART-CFC",
+        "SKU-GOLD-TRIM",
+        "2",
+        "each",
+        "300",
+        "80",
+        "COST-TRIM-1",
+        "2026-09-02T15:00:00Z",
+        &transfer_leg_key("IE-CFC-TRIM-01", "seller"),
+    )?;
+    let seller_export = book.export_main_record(book.head()?.commits)?;
+    book.ingest_baseline_feeds(
+        "ST-PART-CFC",
+        "SKU-GOLD-TRIM",
+        "80",
+        "2026-09-02T15:00:00Z",
+        "egypt-partner",
+    )?;
+    book.refresh_watermarks();
+    Ok((book, seller_export, unrelated_sale))
 }

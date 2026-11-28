@@ -583,7 +583,7 @@ pub fn run_duckdb_parity_suite(seed: u64) -> Result<(), String> {
 }
 
 #[cfg(feature = "duckdb")]
-fn sync_duckdb_cell(
+pub(super) fn sync_duckdb_cell(
     duck: &norn_cell::analytics::engine::Engine,
     cell: &EntityCell,
 ) -> Result<norn_cell::analytics::TenantId, String> {
@@ -613,7 +613,7 @@ fn sync_duckdb_cell(
 }
 
 #[cfg(feature = "duckdb")]
-fn eval_duckdb_question(
+pub(super) fn eval_duckdb_question(
     duck: &norn_cell::analytics::engine::Engine,
     book: &EntityCell,
     tenant: &norn_cell::analytics::TenantId,
@@ -725,7 +725,7 @@ pub fn run_datafusion_parity_suite(seed: u64) -> Result<(), String> {
 }
 
 #[cfg(feature = "datafusion")]
-fn sync_datafusion_cell(
+pub(super) fn sync_datafusion_cell(
     df: &norn_cell::analytics::datafusion::Engine,
     cell: &EntityCell,
 ) -> Result<norn_cell::analytics::TenantId, String> {
@@ -755,7 +755,7 @@ fn sync_datafusion_cell(
 }
 
 #[cfg(feature = "datafusion")]
-fn eval_datafusion_question(
+pub(super) fn eval_datafusion_question(
     df: &norn_cell::analytics::datafusion::Engine,
     book: &EntityCell,
     tenant: &norn_cell::analytics::TenantId,

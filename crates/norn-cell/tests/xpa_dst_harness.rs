@@ -41,6 +41,8 @@ mod layer4_forks_xpa;
 mod layer5_benchmarks;
 #[path = "xpa_dst/operating_group.rs"]
 mod operating_group;
+#[path = "xpa_dst/operating_group_transfers.rs"]
+mod operating_group_transfers;
 #[path = "xpa_dst/prng.rs"]
 mod prng;
 

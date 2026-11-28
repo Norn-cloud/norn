@@ -341,16 +341,31 @@ impl RetailPack {
     /// # Errors
     /// Returns an error if the file or question is missing.
     pub fn retail_question_ir(&self, name: &str) -> Result<QuestionIR, String> {
+        self.load_question_ir_from("retail.questions.json", name)
+    }
+
+    /// Admit a declared supply question from `supply.questions.json` with default member bound `2000`.
+    ///
+    /// # Errors
+    /// Returns an error if the question cannot be found or admitted.
+    pub fn supply_question(&self, name: &str) -> Result<QuestionPlan, String> {
+        let question = self.load_question_ir_from("supply.questions.json", name)?;
+        self.admit_question_ir(&question, 2_000)
+    }
+
+    fn load_question_ir_from(&self, file_name: &str, name: &str) -> Result<QuestionIR, String> {
         let text = fs::read_to_string(
-            repo_root().join("registry/packs/supply-lab/questions/retail.questions.json"),
+            repo_root()
+                .join("registry/packs/supply-lab/questions")
+                .join(file_name),
         )
-        .map_err(|e| format!("retail.questions.json: {e}"))?;
+        .map_err(|e| format!("{file_name}: {e}"))?;
         let questions: Vec<QuestionIR> =
-            serde_json::from_str(&text).map_err(|e| format!("decode retail questions: {e}"))?;
+            serde_json::from_str(&text).map_err(|e| format!("decode {file_name}: {e}"))?;
         questions
             .into_iter()
             .find(|q| q.name == name)
-            .ok_or_else(|| format!("missing retail question {name}"))
+            .ok_or_else(|| format!("missing question {name} in {file_name}"))
     }
 
     /// Admit an arbitrary `QuestionIR` against the derived metric space.
@@ -584,6 +599,26 @@ impl EntityCell {
             Outcome::Replayed => Err(format!("{action} expected Committed, got Replayed")),
             Outcome::Refused(code, msg) => Err(format!(
                 "{action} expected Committed, got Refused({code}, {msg})"
+            )),
+        }
+    }
+
+    /// Commit an action with an explicit idempotency key, failing if replayed or refused.
+    ///
+    /// # Errors
+    /// Returns an error if the call does not commit.
+    pub fn ok_keyed(
+        &mut self,
+        action: &str,
+        actor: &str,
+        input: Value,
+        key: &str,
+    ) -> Result<(), String> {
+        match self.act_keyed(action, actor, input, key)? {
+            Outcome::Committed => Ok(()),
+            Outcome::Replayed => Err(format!("{action} ({key}) expected Committed, got Replayed")),
+            Outcome::Refused(code, msg) => Err(format!(
+                "{action} ({key}) expected Committed, got Refused({code}, {msg})"
             )),
         }
     }

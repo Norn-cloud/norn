@@ -48,9 +48,11 @@ pub enum BenchScale {
     Smoke,
     /// Medium Boat profile (10 stores x 20 SKUs x 26 weeks; 1,000 governed cell/OLAP facts).
     Medium,
-    /// Uncapped full Boat/CI profile (M5 3,049 SKUs x 10 stores x 260 weeks synthetic stream;
-    /// full `10 stores x 50 SKUs x 52 weeks = 26,000` governed cell/OLAP facts by default,
-    /// overridable via `XPA_BENCH_FACTS`).
+    /// Bounded full Boat/CI profile (M5 3,049 SKUs x 10 stores x 260 weeks in-memory
+    /// synthetic stream; `10 stores x 50 SKUs x 52 weeks = 26,000` governed cell/OLAP
+    /// facts by default; `XPA_BENCH_FACTS` is bounded by `norn.limits/1`'s `100,000`
+    /// single-question scan limit, refusing above it fail-closed; 1M+ partitioned/OLAP
+    /// sweeps & external scorecards remain open under `#1965`).
     Full,
 }
 
@@ -93,7 +95,7 @@ pub struct M5ShapeConfig {
 }
 
 impl M5ShapeConfig {
-    /// Full Walmart M5 reference cardinality (`10 stores x 3,049 SKUs x 260 weeks` = 5 years).
+    /// Full Walmart M5 reference cardinality (`10 stores x 3,049 SKUs x 260 weeks`).
     #[must_use]
     pub const fn full_m5() -> Self {
         Self {
@@ -297,11 +299,25 @@ pub struct FpaBenchConfig {
 }
 
 impl FpaBenchConfig {
+    /// Maximum single-question governed cell scan bound enforced by `norn.limits/1`
+    /// (`100,000` records). Overrides above this refuse fail-closed rather than
+    /// silently exceeding the profile limit; 1M+ partitioned/OLAP sweeps remain
+    /// tracked under `#1965` on Boat.
+    #[must_use]
+    pub fn max_single_question_facts() -> usize {
+        usize::try_from(
+            norn_ir::ResourceLimitProfile::norn_limits_v1()
+                .question_limits()
+                .max_scanned_records,
+        )
+        .unwrap_or(100_000)
+    }
+
     /// Construct the benchmark shape for `scale`, honoring optional
-    /// `XPA_BENCH_FACTS` override for non-smoke Boat scale sweeps.
+    /// `XPA_BENCH_FACTS` override (bounded by `1..=100_000` under `norn.limits/1`).
     ///
     /// # Errors
-    /// Returns an error if `XPA_BENCH_FACTS` is set to an invalid integer.
+    /// Returns an error if `XPA_BENCH_FACTS` is invalid or exceeds `norn.limits/1`.
     pub fn for_scale(scale: BenchScale) -> Result<Self, String> {
         let mut cfg = match scale {
             BenchScale::Smoke => Self {
@@ -336,8 +352,11 @@ impl FpaBenchConfig {
                 .trim()
                 .parse::<usize>()
                 .map_err(|e| format!("invalid XPA_BENCH_FACTS `{raw}`: {e}"))?;
-            if parsed == 0 {
-                return Err("XPA_BENCH_FACTS must be >= 1".to_owned());
+            let max_facts = Self::max_single_question_facts();
+            if parsed == 0 || parsed > max_facts {
+                return Err(format!(
+                    "XPA_BENCH_FACTS={parsed} outside governed norn.limits/1 single-question bound 1..={max_facts}; 1M+ partitioned/OLAP sweeps remain open under #1965"
+                ));
             }
             cfg.cell_sales_commits = parsed;
         }
@@ -410,6 +429,59 @@ impl BenchmarkScorecard {
         let rss = self
             .rss_kib
             .map_or_else(|| "n/a".to_owned(), |kib| format!("{kib} KiB"));
+        let rows = [
+            (
+                "M5 Synthetic Stream (`stores x skus x weeks`, in-memory)",
+                format!(
+                    "`{} x {} x {}` ({} daily POS events)",
+                    self.m5_summary.stores,
+                    self.m5_summary.skus,
+                    self.m5_summary.weeks,
+                    self.m5_summary.daily_pos_events
+                ),
+            ),
+            (
+                "M5 Stream Revenue / Margin / GMROI",
+                format!(
+                    "`{}` / `{}` / `{}`",
+                    self.m5_summary.total_revenue,
+                    self.m5_summary.total_gross_margin,
+                    self.m5_summary.portfolio_gmroi.as_deref().unwrap_or("n/a")
+                ),
+            ),
+            (
+                "FPABench Synthetic Stream (in-memory, not cell-loaded)",
+                format!(
+                    "`{}` facts / net income `{}`",
+                    self.synthetic_facts_generated, self.fpabench_total_net_income
+                ),
+            ),
+            (
+                "Loaded Population (`cell_facts_loaded` / `olap_facts_loaded`)",
+                format!(
+                    "`{}` / `{}` governed `PosSale` facts",
+                    self.cell_facts_loaded, self.olap_facts_loaded
+                ),
+            ),
+            (
+                "Exactness & Lineage Verified",
+                format!(
+                    "exact=`{}` / lineage=`{}`",
+                    self.exactness_verified, self.lineage_verified
+                ),
+            ),
+            (
+                "Live Process RSS (`VmRSS`, sampled pre-drop)",
+                format!("`{rss}`"),
+            ),
+            (
+                "Governed Cell Ingest Throughput",
+                format!(
+                    "`{} facts/s` ({} loaded)",
+                    self.ingest_facts_per_sec, self.cell_facts_loaded
+                ),
+            ),
+        ];
         let mut lines = vec![
             format!(
                 "### xP&A Layer 5 Benchmark Scorecard (scale=`{}`, seed=`0x{:016x}`, evidence=`{}`)",
@@ -418,44 +490,21 @@ impl BenchmarkScorecard {
             String::new(),
             "| Metric | Value |".to_owned(),
             "|---|---|".to_owned(),
-            format!(
-                "| M5 Synthetic Stream (`stores x skus x weeks`, in-memory) | `{} x {} x {}` ({} daily POS events) |",
-                self.m5_summary.stores,
-                self.m5_summary.skus,
-                self.m5_summary.weeks,
-                self.m5_summary.daily_pos_events
-            ),
-            format!(
-                "| M5 Stream Revenue / Margin / GMROI | `{}` / `{}` / `{}` |",
-                self.m5_summary.total_revenue,
-                self.m5_summary.total_gross_margin,
-                self.m5_summary.portfolio_gmroi.as_deref().unwrap_or("n/a")
-            ),
-            format!(
-                "| FPABench Synthetic Stream (in-memory, not cell-loaded) | `{}` facts / net income `{}` |",
-                self.synthetic_facts_generated, self.fpabench_total_net_income
-            ),
-            format!(
-                "| Loaded Population (`cell_facts_loaded` / `olap_facts_loaded`) | `{}` / `{}` governed `PosSale` facts |",
-                self.cell_facts_loaded, self.olap_facts_loaded
-            ),
-            format!(
-                "| Exactness & Lineage Verified | exact=`{}` / lineage=`{}` |",
-                self.exactness_verified, self.lineage_verified
-            ),
-            format!("| Live Process RSS (`VmRSS`, sampled pre-drop) | `{rss}` |"),
-            format!(
-                "| Governed Cell Ingest Throughput | `{} facts/s` ({} loaded) |",
-                self.ingest_facts_per_sec, self.cell_facts_loaded
-            ),
-            format_latency_row("Incremental Commit Latency", &self.commit_latency),
-            format_latency_row("Fork Branching Latency", &self.fork_branch_latency),
-            format_query_row(
-                "Exact Cell Query Latency",
-                &self.exact_query_timing,
-                self.cell_facts_loaded,
-            ),
         ];
+        lines.extend(rows.into_iter().map(|(k, v)| format!("| {k} | {v} |")));
+        lines.push(format_latency_row(
+            "Incremental Commit Latency",
+            &self.commit_latency,
+        ));
+        lines.push(format_latency_row(
+            "Fork Branching Latency",
+            &self.fork_branch_latency,
+        ));
+        lines.push(format_query_row(
+            "Exact Cell Query Latency",
+            &self.exact_query_timing,
+            self.cell_facts_loaded,
+        ));
         if let Some(duck) = &self.duckdb_query_timing {
             lines.push(format_query_row(
                 "DuckDB OLAP Query Latency",
@@ -493,8 +542,14 @@ pub fn run_benchmark_scorecard(scale: BenchScale, seed: u64) -> Result<Benchmark
     let fork_branch_latency = benchmark_fork_branching(&cell, fpa_cfg.fork_branches)?;
 
     let horizon_weeks = u32::try_from(fpa_cfg.weeks.max(1)).unwrap_or(52);
-    let member_bound =
-        u32::try_from(fpa_cfg.cell_sales_commits.saturating_add(1_000)).unwrap_or(u32::MAX);
+    let max_facts = FpaBenchConfig::max_single_question_facts();
+    let member_bound = u32::try_from(
+        fpa_cfg
+            .cell_sales_commits
+            .saturating_add(1_000)
+            .min(max_facts),
+    )
+    .unwrap_or(100_000);
     let plan = cell.pack.retail_question_for_weeks(
         "supply.retail.store_gross_margin_rate_weekly",
         horizon_weeks,
@@ -503,22 +558,26 @@ pub fn run_benchmark_scorecard(scale: BenchScale, seed: u64) -> Result<Benchmark
     let (exact_query_timing, exact_result) =
         benchmark_exact_queries(&cell, &plan, fpa_cfg.query_iterations)?;
     verify_loaded_exactness_and_lineage(&exact_result, &loaded_oracle, fpa_cfg.cell_sales_commits)?;
-    let mut peak_live_rss_kib = read_process_rss_kib();
+    let peak_live_rss_kib = read_process_rss_kib();
 
     let (duckdb_query_timing, duck_live_rss) =
         benchmark_duckdb_queries(&cell, &plan, fpa_cfg.query_iterations, &exact_result)?;
-    peak_live_rss_kib = max_opt_u64(peak_live_rss_kib, duck_live_rss);
-
     let (datafusion_query_timing, df_live_rss) =
         benchmark_datafusion_queries(&cell, &plan, fpa_cfg.query_iterations, &exact_result)?;
-    peak_live_rss_kib = max_opt_u64(peak_live_rss_kib, df_live_rss);
-
     let olap_facts_loaded = if duckdb_query_timing.is_some() || datafusion_query_timing.is_some() {
         fpa_cfg.cell_sales_commits
     } else {
         0
     };
-    peak_live_rss_kib = max_opt_u64(peak_live_rss_kib, read_process_rss_kib());
+    let peak_live_rss_kib = [
+        peak_live_rss_kib,
+        duck_live_rss,
+        df_live_rss,
+        read_process_rss_kib(),
+    ]
+    .into_iter()
+    .flatten()
+    .max();
     drop(cell);
 
     Ok(BenchmarkScorecard {
@@ -542,25 +601,15 @@ pub fn run_benchmark_scorecard(scale: BenchScale, seed: u64) -> Result<Benchmark
     })
 }
 
-const fn max_opt_u64(first: Option<u64>, second: Option<u64>) -> Option<u64> {
-    match (first, second) {
-        (Some(lhs), Some(rhs)) => Some(if lhs >= rhs { lhs } else { rhs }),
-        (Some(val), None) | (None, Some(val)) => Some(val),
-        (None, None) => None,
-    }
-}
-
 fn verify_loaded_exactness_and_lineage(
     result: &QueryResult,
     oracle: &LoadedSalesOracle,
     expected_facts: usize,
 ) -> Result<(), String> {
-    if result.lineage_ref.trim().is_empty() {
-        return Err("benchmark QueryResult missing lineage_ref".to_owned());
-    }
-    if result.rows.len() != oracle.len() {
+    if result.lineage_ref.trim().is_empty() || result.rows.len() != oracle.len() {
         return Err(format!(
-            "benchmark bucket count mismatch: actual={} oracle={}",
+            "benchmark lineage/bucket mismatch: lineage_empty={} actual={} oracle={}",
+            result.lineage_ref.trim().is_empty(),
             result.rows.len(),
             oracle.len()
         ));
@@ -568,12 +617,12 @@ fn verify_loaded_exactness_and_lineage(
     for ((store_id, week), (sum_gm, sum_rev)) in oracle {
         let actual = bucket_decimal_exact(result, &["EGP", store_id, "costed", week])
             .ok_or_else(|| format!("missing benchmark bucket ({store_id}, {week})"))?;
-        let expected_scaled =
-            independent_ratio_scaled(*sum_gm, *sum_rev).ok_or("benchmark oracle ratio None")?;
-        let expected = decimal_from_scaled(expected_scaled)?;
+        let expected = decimal_from_scaled(
+            independent_ratio_scaled(*sum_gm, *sum_rev).ok_or("benchmark oracle ratio None")?,
+        )?;
         if actual != expected {
             return Err(format!(
-                "benchmark exactness mismatch on ({store_id},{week}): actual={} expected={}",
+                "benchmark exactness mismatch ({store_id},{week}): actual={} expected={}",
                 actual.canonical(),
                 expected.canonical()
             ));
@@ -582,15 +631,15 @@ fn verify_loaded_exactness_and_lineage(
     let total_members: usize = result
         .rows
         .values()
-        .map(|row| {
-            row.member_count
+        .map(|r| {
+            r.member_count
                 .and_then(|n| usize::try_from(n).ok())
-                .unwrap_or(row.members.len())
+                .unwrap_or(r.members.len())
         })
         .sum();
     if total_members != expected_facts {
         return Err(format!(
-            "benchmark lineage member count mismatch: actual={total_members} expected={expected_facts}"
+            "benchmark lineage count mismatch: actual={total_members} expected={expected_facts}"
         ));
     }
     Ok(())
@@ -793,13 +842,16 @@ fn run_fpabench_pnl_stream(seed: u64, cfg: FpaBenchConfig) -> Result<(u64, i128)
 }
 
 fn read_process_rss_kib() -> Option<u64> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    for line in status.lines() {
-        if let Some(rest) = line.strip_prefix("VmRSS:") {
-            return rest.split_whitespace().next()?.parse::<u64>().ok();
-        }
-    }
-    None
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("VmRSS:")?
+                .split_whitespace()
+                .next()?
+                .parse::<u64>()
+                .ok()
+        })
 }
 
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
@@ -849,7 +901,7 @@ fn benchmark_duckdb_queries(
     iterations: usize,
     exact_ref: &QueryResult,
 ) -> Result<(Option<EngineQueryTiming>, Option<u64>), String> {
-    use norn_cell::analytics::TenantId;
+    use super::layer3_parity::{eval_duckdb_question, sync_duckdb_cell};
     use norn_cell::analytics::engine::{Engine as DuckEngine, Settings as DuckSettings};
 
     let dir = tempfile::tempdir().map_err(|e| format!("duck tempdir: {e}"))?;
@@ -859,45 +911,14 @@ fn benchmark_duckdb_queries(
         threads: 1,
     })
     .map_err(|e| format!("duck init: {e}"))?;
-    let store = cell.cell()?.store();
-    let tenant = TenantId::of_scope(&cell.scope);
-    let mut frontier = duck
-        .frontier(
-            &store
-                .analytics_frontier(&tenant, "main")
-                .map_err(|e| format!("frontier: {e}"))?,
-        )
-        .map_err(|e| format!("duck frontier: {} {}", e.code, e.detail))?
-        .frontier;
-    loop {
-        let batch = store
-            .analytics_delta(&tenant, "main", frontier, 128)
-            .map_err(|e| format!("delta: {e}"))?;
-        frontier = duck
-            .sync(&batch.request)
-            .map_err(|e| format!("duck sync: {} {}", e.code, e.detail))?
-            .frontier;
-        if batch.complete {
-            break;
-        }
-    }
+    let tenant = sync_duckdb_cell(&duck, cell)?;
     let ctx = cell.query_context();
     let (timing, live_rss) = time_olap_cold_and_warm(
         "bench/duckdb",
         ComputeEngine::Duckdb,
         iterations,
         exact_ref,
-        || {
-            let prepared = store
-                .analytics_prepare(plan, ctx.clone(), &tenant)
-                .map_err(|e| format!("duck prepare: {e}"))?;
-            let response = duck
-                .evaluate(prepared.request())
-                .map_err(|e| format!("duck eval: {} {}", e.code, e.detail))?;
-            store
-                .analytics_answer(prepared, response)
-                .map_err(|e| format!("duck answer: {e}"))
-        },
+        || eval_duckdb_question(&duck, cell, &tenant, plan, ctx.clone()),
     )?;
     drop(duck);
     Ok((Some(timing), live_rss))
@@ -906,13 +927,13 @@ fn benchmark_duckdb_queries(
 #[cfg(not(feature = "duckdb"))]
 #[allow(
     clippy::unnecessary_wraps,
-    reason = "matches feature-enabled DuckDB benchmark signature"
+    reason = "matches duckdb benchmark signature"
 )]
 fn benchmark_duckdb_queries(
-    _cell: &EntityCell,
-    _plan: &norn_checker::metric::compute::QuestionPlan,
-    _iterations: usize,
-    _exact_ref: &QueryResult,
+    _: &EntityCell,
+    _: &norn_checker::metric::compute::QuestionPlan,
+    _: usize,
+    _: &QueryResult,
 ) -> Result<(Option<EngineQueryTiming>, Option<u64>), String> {
     Ok((None, None))
 }
@@ -924,7 +945,7 @@ fn benchmark_datafusion_queries(
     iterations: usize,
     exact_ref: &QueryResult,
 ) -> Result<(Option<EngineQueryTiming>, Option<u64>), String> {
-    use norn_cell::analytics::TenantId;
+    use super::layer3_parity::{eval_datafusion_question, sync_datafusion_cell};
     use norn_cell::analytics::datafusion::{Engine as DfEngine, Settings as DfSettings};
 
     let dir = tempfile::tempdir().map_err(|e| format!("df tempdir: {e}"))?;
@@ -934,45 +955,14 @@ fn benchmark_datafusion_queries(
         threads: 1,
     })
     .map_err(|e| format!("df init: {e}"))?;
-    let store = cell.cell()?.store();
-    let tenant = TenantId::of_scope(&cell.scope);
-    let mut frontier = df
-        .frontier(
-            &store
-                .analytics_frontier(&tenant, "main")
-                .map_err(|e| format!("frontier: {e}"))?,
-        )
-        .map_err(|e| format!("df frontier: {} {}", e.code, e.detail))?
-        .frontier;
-    loop {
-        let batch = store
-            .analytics_delta(&tenant, "main", frontier, 128)
-            .map_err(|e| format!("delta: {e}"))?;
-        frontier = df
-            .sync(&batch.request)
-            .map_err(|e| format!("df sync: {} {}", e.code, e.detail))?
-            .frontier;
-        if batch.complete {
-            break;
-        }
-    }
+    let tenant = sync_datafusion_cell(&df, cell)?;
     let ctx = cell.query_context();
     let (timing, live_rss) = time_olap_cold_and_warm(
         "bench/datafusion",
         ComputeEngine::DataFusion,
         iterations,
         exact_ref,
-        || {
-            let prepared = store
-                .analytics_prepare(plan, ctx.clone(), &tenant)
-                .map_err(|e| format!("df prepare: {e}"))?;
-            let response = df
-                .evaluate(prepared.request())
-                .map_err(|e| format!("df eval: {} {}", e.code, e.detail))?;
-            store
-                .analytics_answer(prepared, response)
-                .map_err(|e| format!("df answer: {e}"))
-        },
+        || eval_datafusion_question(&df, cell, &tenant, plan, ctx.clone()),
     )?;
     drop(df);
     Ok((Some(timing), live_rss))
@@ -981,13 +971,13 @@ fn benchmark_datafusion_queries(
 #[cfg(not(feature = "datafusion"))]
 #[allow(
     clippy::unnecessary_wraps,
-    reason = "matches feature-enabled DataFusion benchmark signature"
+    reason = "matches datafusion benchmark signature"
 )]
 fn benchmark_datafusion_queries(
-    _cell: &EntityCell,
-    _plan: &norn_checker::metric::compute::QuestionPlan,
-    _iterations: usize,
-    _exact_ref: &QueryResult,
+    _: &EntityCell,
+    _: &norn_checker::metric::compute::QuestionPlan,
+    _: usize,
+    _: &QueryResult,
 ) -> Result<(Option<EngineQueryTiming>, Option<u64>), String> {
     Ok((None, None))
 }

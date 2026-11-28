@@ -1,15 +1,11 @@
 //! Domain action helpers for [`super::env::EntityCell`] over
 //! `registry/packs/supply-lab/` omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
 
-use norn_cell::export::ExportRecord;
 use serde_json::json;
 
-use super::cuts::cell_id_for_entity;
 use super::env::{
-    COSTS_FEED_ID, COUNTS_FEED_ID, DEFAULT_CLOCK_MS, EntityCell, FeedRow, POS_FEED_ID,
-    RECEIPTS_FEED_ID,
+    COSTS_FEED_ID, COUNTS_FEED_ID, EntityCell, FeedRow, POS_FEED_ID, RECEIPTS_FEED_ID,
 };
-use super::prng::SECONDARY_SEED;
 
 /// Input parameters for recording a verified `supply.StoreCommercialRollup`.
 pub struct StoreKpiInput<'a> {
@@ -148,27 +144,83 @@ impl EntityCell {
         unit_cost: &str,
         received_at: &str,
     ) -> Result<(), String> {
-        let entity_id = self.entity_id.clone();
-        let currency = self.currency.clone();
-        self.ok(
-            "supply.stock_lot.record",
-            "clerk:hana",
-            json!({
-                "lot_id": lot_id,
-                "store_id": store_id,
-                "sku_id": sku_id,
-                "owner_entity_id": entity_id,
-                "custodian_id": custodian_id,
-                "received_qty": received_qty,
-                "remaining_qty": received_qty,
-                "unit": unit,
-                "received_at": received_at,
-                "as_of": received_at,
-                "cost_status": "costed",
-                "unit_cost": unit_cost,
-                "currency": currency,
-            }),
-        )
+        let payload = self.costed_lot_payload(
+            lot_id,
+            store_id,
+            sku_id,
+            custodian_id,
+            received_qty,
+            unit,
+            unit_cost,
+            received_at,
+        );
+        self.ok("supply.stock_lot.record", "clerk:hana", payload)
+    }
+
+    /// Record a costed `StockLot` with an explicit idempotency key (used for
+    /// bilateral inter-entity transfer correlation).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields plus transfer idempotency key"
+    )]
+    pub fn record_costed_lot_keyed(
+        &mut self,
+        lot_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        custodian_id: &str,
+        received_qty: &str,
+        unit: &str,
+        unit_cost: &str,
+        received_at: &str,
+        key: &str,
+    ) -> Result<(), String> {
+        let payload = self.costed_lot_payload(
+            lot_id,
+            store_id,
+            sku_id,
+            custodian_id,
+            received_qty,
+            unit,
+            unit_cost,
+            received_at,
+        );
+        self.ok_keyed("supply.stock_lot.record", "clerk:hana", payload, key)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "shared JSON payload builder for governed costed stock lot"
+    )]
+    fn costed_lot_payload(
+        &self,
+        lot_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        custodian_id: &str,
+        received_qty: &str,
+        unit: &str,
+        unit_cost: &str,
+        received_at: &str,
+    ) -> serde_json::Value {
+        json!({
+            "lot_id": lot_id,
+            "store_id": store_id,
+            "sku_id": sku_id,
+            "owner_entity_id": self.entity_id,
+            "custodian_id": custodian_id,
+            "received_qty": received_qty,
+            "remaining_qty": received_qty,
+            "unit": unit,
+            "received_at": received_at,
+            "as_of": received_at,
+            "cost_status": "costed",
+            "unit_cost": unit_cost,
+            "currency": self.currency,
+        })
     }
 
     /// Record an uncosted `StockLot` omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
@@ -264,24 +316,85 @@ impl EntityCell {
         costed_ref: &str,
         sold_at: &str,
     ) -> Result<(), String> {
-        let currency = self.currency.clone();
-        self.ok(
-            "supply.pos_sale.record",
-            "clerk:hana",
-            json!({
-                "sale_id": sale_id,
-                "store_id": store_id,
-                "sku_id": sku_id,
-                "sold_qty": sold_qty,
-                "unit": unit,
-                "net_revenue": net_revenue,
-                "applied_unit_cost": applied_unit_cost,
-                "cost_status": "costed",
-                "costed_ref": costed_ref,
-                "currency": currency,
-                "sold_at": sold_at,
-            }),
-        )
+        let payload = self.costed_sale_payload(
+            sale_id,
+            store_id,
+            sku_id,
+            sold_qty,
+            unit,
+            net_revenue,
+            applied_unit_cost,
+            costed_ref,
+            sold_at,
+        );
+        self.ok("supply.pos_sale.record", "clerk:hana", payload)
+    }
+
+    /// Record a costed `PosSale` with an explicit idempotency key (used for
+    /// bilateral inter-entity transfer correlation).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields plus transfer idempotency key"
+    )]
+    pub fn record_costed_sale_keyed(
+        &mut self,
+        sale_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        sold_qty: &str,
+        unit: &str,
+        net_revenue: &str,
+        applied_unit_cost: &str,
+        costed_ref: &str,
+        sold_at: &str,
+        key: &str,
+    ) -> Result<(), String> {
+        let payload = self.costed_sale_payload(
+            sale_id,
+            store_id,
+            sku_id,
+            sold_qty,
+            unit,
+            net_revenue,
+            applied_unit_cost,
+            costed_ref,
+            sold_at,
+        );
+        self.ok_keyed("supply.pos_sale.record", "clerk:hana", payload, key)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "shared JSON payload builder for governed costed POS sale"
+    )]
+    fn costed_sale_payload(
+        &self,
+        sale_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        sold_qty: &str,
+        unit: &str,
+        net_revenue: &str,
+        applied_unit_cost: &str,
+        costed_ref: &str,
+        sold_at: &str,
+    ) -> serde_json::Value {
+        json!({
+            "sale_id": sale_id,
+            "store_id": store_id,
+            "sku_id": sku_id,
+            "sold_qty": sold_qty,
+            "unit": unit,
+            "net_revenue": net_revenue,
+            "applied_unit_cost": applied_unit_cost,
+            "cost_status": "costed",
+            "costed_ref": costed_ref,
+            "currency": self.currency,
+            "sold_at": sold_at,
+        })
     }
 
     /// Record an uncosted `PosSale` omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
@@ -404,33 +517,101 @@ impl EntityCell {
     /// # Errors
     /// Returns an error if the action refuses.
     pub fn record_store_kpi(&mut self, kpi: &StoreKpiInput<'_>) -> Result<(), String> {
-        let currency = self.currency.clone();
+        let payload = self.store_kpi_payload(kpi);
+        self.ok("supply.store_kpi.record", "planner:omar", payload)
+    }
+
+    /// Refresh an existing `supply.StoreCommercialRollup` in-place (`update_only`).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    pub fn refresh_store_kpi(&mut self, kpi: &StoreKpiInput<'_>) -> Result<(), String> {
+        let payload = self.store_kpi_payload(kpi);
+        self.ok("supply.store_kpi.refresh", "planner:omar", payload)
+    }
+
+    fn store_kpi_payload(&self, kpi: &StoreKpiInput<'_>) -> serde_json::Value {
+        json!({
+            "rollup_id": kpi.rollup_id,
+            "store_id": kpi.store_id,
+            "sku_id": kpi.sku_id,
+            "period_week": kpi.period_week,
+            "unit": kpi.unit,
+            "currency": self.currency,
+            "cost_status": "costed",
+            "count_status": "verified",
+            "on_hand_count_id": kpi.on_hand_count_id,
+            "opening_cut_id": kpi.opening_cut_id,
+            "count_ref": kpi.count_ref,
+            "count_as_of": kpi.count_as_of,
+            "costed_ref": kpi.costed_ref,
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": kpi.period_start,
+            "period_end": kpi.period_end,
+            "sales_weeks": kpi.sales_weeks,
+            "on_hand_qty": kpi.on_hand_qty,
+            "avg_weekly_sales_qty": kpi.avg_weekly_sales_qty,
+            "period_gross_margin": kpi.period_gross_margin,
+            "opening_stock_value": kpi.opening_stock_value,
+            "closing_stock_value": kpi.closing_stock_value,
+        })
+    }
+
+    /// Register a `supply.Warehouse` in this cell.
+    ///
+    /// # Errors
+    /// Returns an error if registration fails.
+    pub fn register_warehouse(&mut self, warehouse_id: &str, name: &str) -> Result<(), String> {
         self.ok(
-            "supply.store_kpi.record",
-            "planner:omar",
+            "supply.warehouse.register",
+            "eng:dina",
             json!({
-                "rollup_id": kpi.rollup_id,
-                "store_id": kpi.store_id,
-                "sku_id": kpi.sku_id,
-                "period_week": kpi.period_week,
-                "unit": kpi.unit,
-                "currency": currency,
-                "cost_status": "costed",
-                "count_status": "verified",
-                "on_hand_count_id": kpi.on_hand_count_id,
-                "opening_cut_id": kpi.opening_cut_id,
-                "count_ref": kpi.count_ref,
-                "count_as_of": kpi.count_as_of,
-                "costed_ref": kpi.costed_ref,
-                "book_epoch": "1970-01-01T00:00:00Z",
-                "period_start": kpi.period_start,
-                "period_end": kpi.period_end,
-                "sales_weeks": kpi.sales_weeks,
-                "on_hand_qty": kpi.on_hand_qty,
-                "avg_weekly_sales_qty": kpi.avg_weekly_sales_qty,
-                "period_gross_margin": kpi.period_gross_margin,
-                "opening_stock_value": kpi.opening_stock_value,
-                "closing_stock_value": kpi.closing_stock_value,
+                "warehouse_id": warehouse_id,
+                "name": name,
+                "region": "delta",
+                "latitude": "30.044400",
+                "longitude": "31.235700",
+            }),
+        )
+    }
+
+    /// Open (`create_only`) or audit-restate (`update_only`) an existing
+    /// `supply.InventorySnapshot` position.
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields for inventory position open/restate"
+    )]
+    pub fn record_inventory_position(
+        &mut self,
+        restate: bool,
+        snapshot_id: &str,
+        warehouse_id: &str,
+        sku_id: &str,
+        on_hand_qty: &str,
+        as_of: &str,
+        count_ref: &str,
+    ) -> Result<(), String> {
+        let (action, actor, source) = if restate {
+            ("supply.position.restate", "ops:omar", "audit")
+        } else {
+            ("supply.position.open", "clerk:hana", "wms_scan")
+        };
+        self.ok(
+            action,
+            actor,
+            json!({
+                "snapshot_id": snapshot_id,
+                "warehouse_id": warehouse_id,
+                "sku_id": sku_id,
+                "on_hand_qty": on_hand_qty,
+                "unit": "each",
+                "quantity_basis": "on_hand",
+                "as_of": as_of,
+                "count_source": source,
+                "count_ref": count_ref,
             }),
         )
     }
@@ -542,349 +723,4 @@ fn baseline_feed_payloads(
             .to_string(),
         ),
     ]
-}
-
-/// Seeded two-book fixture (EGP sole proprietorship + USD partnership) with real
-/// bilateral inter-entity transfer exports and an unrelated ledger-tip export.
-pub struct TwoBookFixture {
-    pub sole_egp_book: EntityCell,
-    pub partner_usd_book: EntityCell,
-    pub seller_transfer_export: ExportRecord,
-    pub buyer_transfer_export: ExportRecord,
-    pub unrelated_tip_export: ExportRecord,
-}
-
-/// Seed two isolated single-book cells (`LE-EGP`, `LE-USD`) including a real
-/// bilateral inter-entity transfer (`SALE-USD-IE-1` <-> `LOT-EGP-IE-1`).
-///
-/// # Errors
-/// Returns an error if any governed setup commit or single-book refusal fails.
-pub fn seed_two_book_cells() -> Result<TwoBookFixture, String> {
-    let (sole_egp_book, buyer_transfer_export, unrelated_tip_export) = seed_sole_egp_book()?;
-    let (partner_usd_book, seller_transfer_export) = seed_partner_usd_book()?;
-    Ok(TwoBookFixture {
-        sole_egp_book,
-        partner_usd_book,
-        seller_transfer_export,
-        buyer_transfer_export,
-        unrelated_tip_export,
-    })
-}
-
-fn seed_sole_egp_book() -> Result<(EntityCell, ExportRecord, ExportRecord), String> {
-    let mut book = EntityCell::open(
-        &cell_id_for_entity(SECONDARY_SEED, 0),
-        "LE-EGP",
-        "EGP",
-        "org_group_egp",
-        "prod",
-        DEFAULT_CLOCK_MS,
-    )?;
-    book.register_book("Nile Sole Prop", "sole_proprietorship")?;
-    let (second_book_code, _) = book.refused(
-        "supply.legal_entity.register",
-        "eng:dina",
-        json!({
-            "entity_id": "LE-ROGUE", "legal_name": "Rogue Second Book",
-            "entity_kind": "corporation", "book_code": "BOOK-ROGUE-EGP",
-            "functional_currency": "EGP",
-        }),
-    )?;
-    if second_book_code != "action.precondition_failed" {
-        return Err(format!(
-            "second LegalEntity in one cell must refuse, got {second_book_code}"
-        ));
-    }
-    book.register_sku("SKU-DRESS", "dry_goods", "each")?;
-    book.register_sku("SKU-RING-IE", "dry_goods", "each")?;
-    book.register_store(
-        "ST-EGP-1",
-        "ST-EGP-1",
-        "CUST-CFC",
-        "mall_store",
-        Some("MALL-CFC"),
-    )?;
-    book.record_unit_cost(
-        "SKU-DRESS",
-        "COST-1",
-        "SUP-1",
-        "100",
-        "2026-07-01T00:00:00Z",
-    )?;
-    book.record_costed_lot(
-        "LOT-EGP-BASE",
-        "ST-EGP-1",
-        "SKU-DRESS",
-        "CUST-CFC",
-        "20",
-        "each",
-        "100",
-        "2026-08-10T09:00:00Z",
-    )?;
-    book.record_costed_sale(
-        "SALE-EGP-1",
-        "ST-EGP-1",
-        "SKU-DRESS",
-        "4",
-        "each",
-        "2000",
-        "100",
-        "COST-1",
-        "2026-09-02T12:00:00Z",
-    )?;
-    // Buyer leg: 2 units * 5000 EGP = 10,000 EGP (= 200 USD * 50).
-    book.record_costed_lot(
-        "LOT-EGP-IE-1",
-        "ST-EGP-1",
-        "SKU-RING-IE",
-        "CUST-CFC",
-        "2",
-        "each",
-        "5000",
-        "2026-09-02T13:00:00Z",
-    )?;
-    let buyer_export = book.export_main_record(book.head()?.commits)?;
-    book.ingest_baseline_feeds(
-        "ST-EGP-1",
-        "SKU-DRESS",
-        "100",
-        "2026-09-02T12:00:00Z",
-        "ST-EGP-1",
-    )?;
-    book.refresh_watermarks();
-    let unrelated_tip = book.export_main_record(book.head()?.commits)?;
-    Ok((book, buyer_export, unrelated_tip))
-}
-
-fn seed_partner_usd_book() -> Result<(EntityCell, ExportRecord), String> {
-    let mut book = EntityCell::open(
-        &cell_id_for_entity(SECONDARY_SEED, 1),
-        "LE-USD",
-        "USD",
-        "org_group_usd",
-        "prod",
-        DEFAULT_CLOCK_MS,
-    )?;
-    book.register_book("Delta Partnership", "partnership")?;
-    book.register_sku("SKU-RING", "dry_goods", "each")?;
-    book.register_store(
-        "ST-USD-1",
-        "ST-USD-1",
-        "CUST-CFC",
-        "mall_store",
-        Some("MALL-CFC"),
-    )?;
-    book.record_unit_cost("SKU-RING", "COST-1", "SUP-1", "80", "2026-07-01T00:00:00Z")?;
-    book.record_costed_lot(
-        "LOT-USD-BASE",
-        "ST-USD-1",
-        "SKU-RING",
-        "CUST-CFC",
-        "20",
-        "each",
-        "80",
-        "2026-08-10T09:00:00Z",
-    )?;
-    book.record_costed_sale(
-        "SALE-USD-EXT",
-        "ST-USD-1",
-        "SKU-RING",
-        "3",
-        "each",
-        "800",
-        "80",
-        "COST-1",
-        "2026-09-02T11:00:00Z",
-    )?;
-    // Seller leg: 2 units, 200 USD net revenue (total USD = 1000).
-    book.record_costed_sale(
-        "SALE-USD-IE-1",
-        "ST-USD-1",
-        "SKU-RING",
-        "2",
-        "each",
-        "200",
-        "80",
-        "COST-1",
-        "2026-09-02T12:30:00Z",
-    )?;
-    let seller_export = book.export_main_record(book.head()?.commits)?;
-    book.ingest_baseline_feeds(
-        "ST-USD-1",
-        "SKU-RING",
-        "80",
-        "2026-09-02T12:00:00Z",
-        "ST-USD-1",
-    )?;
-    book.refresh_watermarks();
-    Ok((book, seller_export))
-}
-
-/// Seeded Egyptian family-business fixture (sole proprietorship in EGP +
-/// partnership in USD sharing `MALL-CFC` custodian) with real bilateral
-/// inter-entity transfer exports (`SALE-IE-CFC-TRIM-01` <-> `LOT-IE-CFC-TRIM-01`).
-pub struct EgyptianFamilyFixture {
-    pub sole_book: EntityCell,
-    pub partner_book: EntityCell,
-    pub partner_sale_export: ExportRecord,
-    pub sole_buyer_lot_export: ExportRecord,
-    pub sole_unrelated_tip_export: ExportRecord,
-}
-
-/// Seed the Egyptian family-business multi-entity cells and bilateral transfer commits.
-///
-/// # Errors
-/// Returns an error if any governed setup commit fails.
-pub fn seed_egyptian_family_fixture(seed: u64) -> Result<EgyptianFamilyFixture, String> {
-    let (sole_book, sole_buyer_lot_export, sole_unrelated_tip_export) =
-        seed_egyptian_sole_book(seed)?;
-    let (partner_book, partner_sale_export) = seed_egyptian_partner_book(seed)?;
-    Ok(EgyptianFamilyFixture {
-        sole_book,
-        partner_book,
-        partner_sale_export,
-        sole_buyer_lot_export,
-        sole_unrelated_tip_export,
-    })
-}
-
-fn seed_egyptian_sole_book(seed: u64) -> Result<(EntityCell, ExportRecord, ExportRecord), String> {
-    let mut book = EntityCell::open(
-        &cell_id_for_entity(seed, 51),
-        "LE-NILE-SOLE",
-        "EGP",
-        "org_family_nile_sole",
-        "prod",
-        DEFAULT_CLOCK_MS,
-    )?;
-    book.register_book("Nile Apparel Sole Proprietorship", "sole_proprietorship")?;
-    book.register_sku("SKU-ABAYA", "dry_goods", "each")?;
-    book.register_sku("SKU-GOLD-TRIM", "spares", "each")?;
-    book.register_store(
-        "ST-SOLE-CFC",
-        "Nile CFC Booth",
-        "CUST-MALL-CFC-OPS",
-        "mall_store",
-        Some("MALL-CFC"),
-    )?;
-    book.record_unit_cost(
-        "SKU-ABAYA",
-        "COST-ABAYA-1",
-        "SUP-ATELIER",
-        "400",
-        "2026-07-01T00:00:00Z",
-    )?;
-    book.record_costed_lot(
-        "LOT-SOLE-1",
-        "ST-SOLE-CFC",
-        "SKU-ABAYA",
-        "CUST-MALL-CFC-OPS",
-        "100",
-        "each",
-        "400",
-        "2026-08-03T09:00:00Z",
-    )?;
-    book.record_costed_sale(
-        "SALE-SOLE-1",
-        "ST-SOLE-CFC",
-        "SKU-ABAYA",
-        "30",
-        "each",
-        "27000",
-        "400",
-        "COST-ABAYA-1",
-        "2026-09-02T14:00:00Z",
-    )?;
-    // Buyer leg: 2 units * 7275 EGP = 14,550 EGP (= 300 USD * 48.5).
-    book.record_costed_lot(
-        "LOT-IE-CFC-TRIM-01",
-        "ST-SOLE-CFC",
-        "SKU-GOLD-TRIM",
-        "CUST-MALL-CFC-OPS",
-        "2",
-        "each",
-        "7275",
-        "2026-09-02T15:30:00Z",
-    )?;
-    let buyer_export = book.export_main_record(book.head()?.commits)?;
-    book.ingest_baseline_feeds(
-        "ST-SOLE-CFC",
-        "SKU-ABAYA",
-        "400",
-        "2026-09-02T14:00:00Z",
-        "egypt-sole",
-    )?;
-    book.refresh_watermarks();
-    let unrelated_tip = book.export_main_record(book.head()?.commits)?;
-    Ok((book, buyer_export, unrelated_tip))
-}
-
-fn seed_egyptian_partner_book(seed: u64) -> Result<(EntityCell, ExportRecord), String> {
-    let mut book = EntityCell::open(
-        &cell_id_for_entity(seed, 52),
-        "LE-CAIRO-PARTNER",
-        "USD",
-        "org_family_cairo_partner",
-        "prod",
-        DEFAULT_CLOCK_MS,
-    )?;
-    book.register_book("Cairo Atelier Partnership", "partnership")?;
-    book.register_sku("SKU-GOLD-TRIM", "spares", "each")?;
-    book.register_store(
-        "ST-PART-CFC",
-        "Cairo CFC Gallery",
-        "CUST-MALL-CFC-OPS",
-        "mall_store",
-        Some("MALL-CFC"),
-    )?;
-    book.record_unit_cost(
-        "SKU-GOLD-TRIM",
-        "COST-TRIM-1",
-        "SUP-ATELIER",
-        "80",
-        "2026-07-01T00:00:00Z",
-    )?;
-    book.record_costed_lot(
-        "LOT-PART-1",
-        "ST-PART-CFC",
-        "SKU-GOLD-TRIM",
-        "CUST-MALL-CFC-OPS",
-        "40",
-        "each",
-        "80",
-        "2026-08-03T09:00:00Z",
-    )?;
-    book.record_costed_sale(
-        "SALE-PART-EXT",
-        "ST-PART-CFC",
-        "SKU-GOLD-TRIM",
-        "8",
-        "each",
-        "1200",
-        "80",
-        "COST-TRIM-1",
-        "2026-09-02T14:30:00Z",
-    )?;
-    // Seller leg: 2 units, 300 USD net revenue (total USD = 1500).
-    book.record_costed_sale(
-        "SALE-IE-CFC-TRIM-01",
-        "ST-PART-CFC",
-        "SKU-GOLD-TRIM",
-        "2",
-        "each",
-        "300",
-        "80",
-        "COST-TRIM-1",
-        "2026-09-02T15:00:00Z",
-    )?;
-    let seller_export = book.export_main_record(book.head()?.commits)?;
-    book.ingest_baseline_feeds(
-        "ST-PART-CFC",
-        "SKU-GOLD-TRIM",
-        "80",
-        "2026-09-02T15:00:00Z",
-        "egypt-partner",
-    )?;
-    book.refresh_watermarks();
-    Ok((book, seller_export))
 }

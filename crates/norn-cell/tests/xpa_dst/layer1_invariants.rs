@@ -15,21 +15,22 @@
 //!    [`super::operating_group`].
 
 use norn_cell::combined_view::CombinedViewKind;
-use norn_cell::export::ExportRecord;
 use norn_cell::{CellError, KnowledgeCutoff};
 use norn_checker::metric::compute::arithmetic::ratio;
 use norn_ir::Decimal;
 use serde_json::json;
 
-use super::actions::{StoreKpiInput, seed_two_book_cells};
+use super::actions::StoreKpiInput;
 use super::cuts::{
-    bucket_decimal_exact, cell_id_for_entity, dst_coverage_spec, evaluate_multi_cell_report,
+    TwoBookFixture, bucket_decimal_exact, cell_id_for_entity, dst_coverage_spec,
+    evaluate_multi_cell_report, seed_two_book_cells,
 };
 use super::env::{DEFAULT_CLOCK_MS, EntityCell, retail_pack};
 use super::operating_group::{
     EntityReportingSlice, FxRateEntry, InterEntityTransfer, OperatingGroupRefusal,
     OperatingGroupTier, StatutoryCloseApproval, TransferLegEvidence,
     compute_elimination_journal_pin, evaluate_operating_group_tier, slice_from_cut_snapshot,
+    transfer_lot_id, transfer_sale_id,
 };
 use super::prng::{
     PRIMARY_SEED, SplitMix64, decimal_from_scaled, decimal_to_scaled, div_i128,
@@ -589,19 +590,13 @@ pub fn verify_single_book_and_operating_group_ladder() -> Result<(), String> {
             "supply.retail.store_revenue_weekly",
         )?,
     ];
-    verify_four_tier_ladder(
-        &slices,
-        &fixture.seller_transfer_export,
-        &fixture.buyer_transfer_export,
-        &fixture.unrelated_tip_export,
-    )
+    verify_four_tier_ladder(&entity_books, &slices, &fixture)
 }
 
 fn verify_four_tier_ladder(
+    cells: &[&EntityCell],
     slices: &[EntityReportingSlice],
-    seller_transfer_export: &ExportRecord,
-    buyer_transfer_export: &ExportRecord,
-    unrelated_tip_export: &ExportRecord,
+    fixture: &TwoBookFixture,
 ) -> Result<(), String> {
     let fx_table = [FxRateEntry {
         from_currency: "USD".to_owned(),
@@ -610,45 +605,27 @@ fn verify_four_tier_ladder(
         as_of: "2026-09-06T23:59:59Z".to_owned(),
         rate_table_pin: "fx:cbe-2026-09-06".to_owned(),
     }];
-    verify_tiers_one_and_two(slices, &fx_table)?;
-    let matched = verify_tier_three(
-        slices,
-        &fx_table,
-        seller_transfer_export,
-        buyer_transfer_export,
-        unrelated_tip_export,
-    )?;
-    verify_tier_four(slices, &fx_table, &matched)
+    verify_tiers_one_and_two(cells, slices, &fx_table)?;
+    let matched = verify_tier_three(cells, slices, &fx_table, fixture)?;
+    verify_tier_four(cells, slices, &fx_table, &matched)
 }
 
 fn verify_tiers_one_and_two(
+    cells: &[&EntityCell],
     slices: &[EntityReportingSlice],
     fx_table: &[FxRateEntry],
 ) -> Result<(), String> {
-    let mut bad_slices = slices.to_vec();
-    if let Some(first) = bad_slices.first_mut() {
-        "forged-query-pin".clone_into(&mut first.query_pin);
-    }
-    let mismatched_pin = evaluate_operating_group_tier(
+    assert_tampered_slices_refused(cells, slices)?;
+    let side_by_side_proj = evaluate_operating_group_tier(
         OperatingGroupTier::SideBySide,
-        &bad_slices,
+        cells,
+        slices,
         None,
         &[],
         &[],
         None,
-    );
-    if !matches!(
-        mismatched_pin,
-        Err(OperatingGroupRefusal::InvalidCellCutPin { .. })
-    ) {
-        return Err(format!(
-            "mismatched query_pin must refuse, got {mismatched_pin:?}"
-        ));
-    }
-
-    let side_by_side_proj =
-        evaluate_operating_group_tier(OperatingGroupTier::SideBySide, slices, None, &[], &[], None)
-            .map_err(|e| format!("tier 1 failed: {e:?}"))?;
+    )
+    .map_err(|e| format!("tier 1 failed: {e:?}"))?;
     if side_by_side_proj.is_consolidated_financial_statement
         || side_by_side_proj
             .per_currency_revenue
@@ -668,24 +645,23 @@ fn verify_tiers_one_and_two(
         ));
     }
 
-    let missing_fx = evaluate_operating_group_tier(
-        OperatingGroupTier::FxTranslated,
-        slices,
-        Some("EGP"),
-        &[],
-        &[],
-        None,
-    );
     if !matches!(
-        missing_fx,
+        evaluate_operating_group_tier(
+            OperatingGroupTier::FxTranslated,
+            cells,
+            slices,
+            Some("EGP"),
+            &[],
+            &[],
+            None,
+        ),
         Err(OperatingGroupRefusal::MissingFxTable { .. })
     ) {
-        return Err(format!(
-            "expected MissingFxTable refusal, got {missing_fx:?}"
-        ));
+        return Err("expected MissingFxTable refusal".to_owned());
     }
     let fx_translated_proj = evaluate_operating_group_tier(
         OperatingGroupTier::FxTranslated,
+        cells,
         slices,
         Some("EGP"),
         fx_table,
@@ -708,34 +684,77 @@ fn verify_tiers_one_and_two(
     Ok(())
 }
 
+fn assert_tampered_slices_refused(
+    cells: &[&EntityCell],
+    slices: &[EntityReportingSlice],
+) -> Result<(), String> {
+    let mut bad_pin_slices = slices.to_vec();
+    if let Some(first) = bad_pin_slices.first_mut() {
+        "forged-query-pin".clone_into(&mut first.query_pin);
+    }
+    if !matches!(
+        evaluate_operating_group_tier(
+            OperatingGroupTier::SideBySide,
+            cells,
+            &bad_pin_slices,
+            None,
+            &[],
+            &[],
+            None,
+        ),
+        Err(OperatingGroupRefusal::InvalidCellCutPin { .. })
+    ) {
+        return Err("mismatched query_pin must refuse InvalidCellCutPin".to_owned());
+    }
+    let mut mutated_row_slices = slices.to_vec();
+    if let Some(first) = mutated_row_slices.first_mut()
+        && let Some(row) = first.revenue_answer.rows.values_mut().next()
+    {
+        row.value = Some(Decimal::parse("999999").map_err(|e| format!("{e}"))?);
+    }
+    if !matches!(
+        evaluate_operating_group_tier(
+            OperatingGroupTier::SideBySide,
+            cells,
+            &mutated_row_slices,
+            None,
+            &[],
+            &[],
+            None,
+        ),
+        Err(OperatingGroupRefusal::InvalidCellCutPin { .. })
+    ) {
+        return Err("mutated QueryResult row value must refuse InvalidCellCutPin".to_owned());
+    }
+    Ok(())
+}
+
 fn verify_tier_three(
+    cells: &[&EntityCell],
     slices: &[EntityReportingSlice],
     fx_table: &[FxRateEntry],
-    seller_export: &ExportRecord,
-    buyer_export: &ExportRecord,
-    unrelated_tip_export: &ExportRecord,
+    fixture: &TwoBookFixture,
 ) -> Result<Vec<InterEntityTransfer>, String> {
     let valid_seller_leg = TransferLegEvidence {
-        export_record: seller_export.clone(),
+        export_record: fixture.seller_transfer_export.clone(),
         object_type: "supply.PosSale".to_owned(),
-        object_id: "SALE-USD-IE-1".to_owned(),
+        object_id: transfer_sale_id("IE-OK-1"),
     };
     let valid_buyer_leg = TransferLegEvidence {
-        export_record: buyer_export.clone(),
+        export_record: fixture.buyer_transfer_export.clone(),
         object_type: "supply.StockLot".to_owned(),
-        object_id: "LOT-EGP-IE-1".to_owned(),
+        object_id: transfer_lot_id("IE-OK-1"),
     };
     verify_tier_three_refusals(
+        cells,
         slices,
         fx_table,
-        seller_export,
-        buyer_export,
-        unrelated_tip_export,
+        fixture,
         &valid_seller_leg,
         &valid_buyer_leg,
     )?;
 
-    let matched = vec![InterEntityTransfer {
+    let single_xfer = InterEntityTransfer {
         transfer_id: "IE-OK-1".to_owned(),
         seller_entity_id: "LE-USD".to_owned(),
         buyer_entity_id: "LE-EGP".to_owned(),
@@ -743,9 +762,21 @@ fn verify_tier_three(
         settlement_fx_rate: None,
         seller_leg: Some(valid_seller_leg),
         buyer_leg: Some(valid_buyer_leg),
-    }];
+    };
+    // Submitting the exact same transfer leg pair twice MUST refuse duplicate_transfer_leg!
+    let duplicate_pair = [single_xfer.clone(), single_xfer.clone()];
+    assert_transfers_refused(
+        "duplicate transfer leg pair",
+        cells,
+        slices,
+        fx_table,
+        &duplicate_pair,
+        Some("duplicate_transfer_leg"),
+    )?;
+    let matched = vec![single_xfer];
     let netted_proj = evaluate_operating_group_tier(
         OperatingGroupTier::InterEntityNetted,
+        cells,
         slices,
         Some("EGP"),
         fx_table,
@@ -766,19 +797,13 @@ fn verify_tier_three(
     Ok(matched)
 }
 
-fn verify_tier_three_refusals(
-    slices: &[EntityReportingSlice],
-    fx_table: &[FxRateEntry],
-    seller_export: &ExportRecord,
-    buyer_export: &ExportRecord,
-    unrelated_tip_export: &ExportRecord,
-    valid_seller_leg: &TransferLegEvidence,
-    valid_buyer_leg: &TransferLegEvidence,
-) -> Result<(), String> {
-    let make_xfer = |id: &str,
-                     rate: Option<FxRateEntry>,
-                     seller_leg: TransferLegEvidence,
-                     buyer_leg: TransferLegEvidence| InterEntityTransfer {
+fn two_book_xfer(
+    id: &str,
+    rate: Option<FxRateEntry>,
+    seller_leg: TransferLegEvidence,
+    buyer_leg: TransferLegEvidence,
+) -> InterEntityTransfer {
+    InterEntityTransfer {
         transfer_id: id.to_owned(),
         seller_entity_id: "LE-USD".to_owned(),
         buyer_entity_id: "LE-EGP".to_owned(),
@@ -786,97 +811,126 @@ fn verify_tier_three_refusals(
         settlement_fx_rate: rate,
         seller_leg: Some(seller_leg),
         buyer_leg: Some(buyer_leg),
-    };
-    let mut tampered = seller_export.clone();
-    "sha256:forged-pin".clone_into(&mut tampered.receipt.hash);
-    assert_transfer_refused(
-        "tampered receipt hash",
-        slices,
-        fx_table,
-        &make_xfer(
-            "IE-FORGED-1",
-            None,
-            TransferLegEvidence {
-                export_record: tampered,
-                object_type: "supply.PosSale".to_owned(),
-                object_id: "SALE-USD-IE-1".to_owned(),
-            },
-            valid_buyer_leg.clone(),
-        ),
-    )?;
-    assert_transfer_refused(
-        "unrelated ledger-tip export",
-        slices,
-        fx_table,
-        &make_xfer(
-            "IE-TIP-PLACEHOLDER",
-            None,
-            valid_seller_leg.clone(),
-            TransferLegEvidence {
-                export_record: unrelated_tip_export.clone(),
-                object_type: "supply.StockLot".to_owned(),
-                object_id: "LOT-EGP-IE-1".to_owned(),
-            },
-        ),
-    )?;
-    assert_transfer_refused(
-        "wrong-cell export record",
-        slices,
-        fx_table,
-        &make_xfer(
-            "IE-WRONG-CELL",
-            None,
-            TransferLegEvidence {
-                export_record: buyer_export.clone(),
-                object_type: "supply.PosSale".to_owned(),
-                object_id: "SALE-USD-IE-1".to_owned(),
-            },
-            valid_buyer_leg.clone(),
-        ),
-    )?;
-    assert_transfer_refused(
-        "mismatched bilateral amounts",
-        slices,
-        fx_table,
-        &make_xfer(
-            "IE-MISMATCH-AMT",
-            Some(FxRateEntry {
-                from_currency: "USD".to_owned(),
-                to_currency: "EGP".to_owned(),
-                rate_scaled: scaled(40),
-                as_of: "2026-09-02T12:30:00Z".to_owned(),
-                rate_table_pin: "fx:wrong-spot".to_owned(),
-            }),
-            valid_seller_leg.clone(),
-            valid_buyer_leg.clone(),
-        ),
-    )
+    }
 }
 
-fn assert_transfer_refused(
-    label: &str,
+fn verify_tier_three_refusals(
+    cells: &[&EntityCell],
     slices: &[EntityReportingSlice],
     fx_table: &[FxRateEntry],
-    transfer: &InterEntityTransfer,
+    fixture: &TwoBookFixture,
+    valid_seller_leg: &TransferLegEvidence,
+    valid_buyer_leg: &TransferLegEvidence,
 ) -> Result<(), String> {
-    let outcome = evaluate_operating_group_tier(
-        OperatingGroupTier::InterEntityNetted,
-        slices,
-        Some("EGP"),
-        fx_table,
-        std::slice::from_ref(transfer),
-        None,
-    );
-    if !matches!(
-        outcome,
-        Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer { .. })
-    ) {
-        return Err(format!("{label} must refuse, got {outcome:?}"));
+    let leg = |rec: &norn_cell::export::ExportRecord, kind: &str, id: &str| TransferLegEvidence {
+        export_record: rec.clone(),
+        object_type: kind.to_owned(),
+        object_id: id.to_owned(),
+    };
+    let mut tampered = fixture.seller_transfer_export.clone();
+    "sha256:forged-pin".clone_into(&mut tampered.receipt.hash);
+    let wrong_spot = FxRateEntry {
+        from_currency: "USD".to_owned(),
+        to_currency: "EGP".to_owned(),
+        rate_scaled: scaled(40),
+        as_of: "2026-09-02T12:30:00Z".to_owned(),
+        rate_table_pin: "fx:wrong-spot".to_owned(),
+    };
+    let s_id = transfer_sale_id("IE-OK-1");
+    let l_id = transfer_lot_id("IE-OK-1");
+    let cases = [
+        (
+            "tampered receipt hash",
+            two_book_xfer(
+                "IE-OK-1",
+                None,
+                leg(&tampered, "supply.PosSale", &s_id),
+                valid_buyer_leg.clone(),
+            ),
+        ),
+        (
+            "unrelated ledger-tip export",
+            two_book_xfer(
+                "IE-OK-1",
+                None,
+                valid_seller_leg.clone(),
+                leg(&fixture.unrelated_tip_export, "supply.StockLot", &l_id),
+            ),
+        ),
+        (
+            "wrong-cell export record",
+            two_book_xfer(
+                "IE-OK-1",
+                None,
+                leg(&fixture.buyer_transfer_export, "supply.PosSale", &s_id),
+                valid_buyer_leg.clone(),
+            ),
+        ),
+        (
+            "unrelated same-amount sale & lot",
+            two_book_xfer(
+                "IE-UNRELATED-AMT",
+                None,
+                leg(
+                    &fixture.unrelated_same_amt_sale_export,
+                    "supply.PosSale",
+                    "SALE-USD-EXT-A",
+                ),
+                leg(
+                    &fixture.unrelated_same_amt_lot_export,
+                    "supply.StockLot",
+                    "LOT-EGP-UNRELATED",
+                ),
+            ),
+        ),
+        (
+            "mismatched bilateral amounts",
+            two_book_xfer(
+                "IE-OK-1",
+                Some(wrong_spot),
+                valid_seller_leg.clone(),
+                valid_buyer_leg.clone(),
+            ),
+        ),
+    ];
+    for (label, case) in cases {
+        assert_transfers_refused(label, cells, slices, fx_table, &[case], None)?;
     }
     Ok(())
 }
 
+fn assert_transfers_refused(
+    label: &str,
+    cells: &[&EntityCell],
+    slices: &[EntityReportingSlice],
+    fx_table: &[FxRateEntry],
+    transfers: &[InterEntityTransfer],
+    expected_substr: Option<&str>,
+) -> Result<(), String> {
+    let outcome = evaluate_operating_group_tier(
+        OperatingGroupTier::InterEntityNetted,
+        cells,
+        slices,
+        Some("EGP"),
+        fx_table,
+        transfers,
+        None,
+    );
+    match outcome {
+        Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer { reason, .. }) => {
+            if let Some(sub) = expected_substr
+                && !reason.contains(sub)
+            {
+                return Err(format!("{label}: expected `{sub}` in `{reason}`"));
+            }
+            Ok(())
+        }
+        other => Err(format!("{label} must refuse, got {other:?}")),
+    }
+}
+
 fn verify_tier_four(
+    cells: &[&EntityCell],
     slices: &[EntityReportingSlice],
     fx_table: &[FxRateEntry],
     matched: &[InterEntityTransfer],
@@ -887,21 +941,19 @@ fn verify_tier_four(
         elimination_journal_pin: "elim:fabricated-string".to_owned(),
         approved_at: "2026-09-07T09:00:00Z".to_owned(),
     };
-    let bad_stat = evaluate_operating_group_tier(
-        OperatingGroupTier::StatutoryConsolidated,
-        slices,
-        Some("EGP"),
-        fx_table,
-        matched,
-        Some(&bogus_approval),
-    );
     if !matches!(
-        bad_stat,
+        evaluate_operating_group_tier(
+            OperatingGroupTier::StatutoryConsolidated,
+            cells,
+            slices,
+            Some("EGP"),
+            fx_table,
+            matched,
+            Some(&bogus_approval),
+        ),
         Err(OperatingGroupRefusal::MissingStatutoryApproval { .. })
     ) {
-        return Err(format!(
-            "fabricated elimination_journal_pin must refuse, got {bad_stat:?}"
-        ));
+        return Err("fabricated elimination_journal_pin must refuse".to_owned());
     }
 
     let authentic_pin = compute_elimination_journal_pin("2026-08-31", slices, matched)
@@ -914,6 +966,7 @@ fn verify_tier_four(
     };
     let statutory_proj = evaluate_operating_group_tier(
         OperatingGroupTier::StatutoryConsolidated,
+        cells,
         slices,
         Some("EGP"),
         fx_table,

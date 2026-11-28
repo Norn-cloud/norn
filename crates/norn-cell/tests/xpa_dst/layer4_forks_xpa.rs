@@ -18,7 +18,6 @@ use std::collections::BTreeMap;
 use norn_cell::compute::{
     ForkQuestionResult, WorldCompareDelta, compare_forks, compare_main_and_fork,
 };
-use norn_cell::export::ExportRecord;
 use norn_cell::{
     CellError, ForkActionCall, ForkMergeRefusalReason, ForkScenario, execute_action_in_fork,
     promote_decision_fork, verify_fork_commit_evidence, verify_main_export_record,
@@ -28,15 +27,15 @@ use norn_ir::{Decimal, RuntimeValue, UtcTimestamp};
 use norn_kernel::{Entropy, LogicalTime, ScenarioClock, World, WorldId};
 use serde_json::{Value, json};
 
-use super::actions::seed_egyptian_family_fixture;
 use super::cuts::{
-    bucket_decimal_exact, cell_id_for_entity, dst_coverage_spec, evaluate_multi_cell_report,
+    EgyptianFamilyFixture, bucket_decimal_exact, cell_id_for_entity, dst_coverage_spec,
+    evaluate_multi_cell_report, seed_egyptian_family_fixture,
 };
 use super::env::{AllowAll, DEFAULT_CLOCK_MS, EntityCell, RetailCell};
 use super::operating_group::{
     EntityReportingSlice, FxRateEntry, InterEntityTransfer, OperatingGroupRefusal,
     OperatingGroupTier, TransferLegEvidence, evaluate_operating_group_tier,
-    slice_from_cut_snapshot,
+    slice_from_cut_snapshot, transfer_leg_key, transfer_lot_id, transfer_sale_id,
 };
 use super::prng::{DAY_MS, SplitMix64};
 
@@ -727,23 +726,25 @@ pub fn run_egyptian_family_business_scenario(seed: u64) -> Result<(), String> {
         as_of: "2026-09-06T23:59:59Z".to_owned(),
         rate_table_pin: "fx:cbe:2026-09-06".to_owned(),
     }];
-    verify_egyptian_sbs_and_fx(&slices, &fx_rates)?;
-    verify_egyptian_bilateral_elimination(
-        &slices,
-        &fx_rates,
-        &fixture.partner_sale_export,
-        &fixture.sole_buyer_lot_export,
-        &fixture.sole_unrelated_tip_export,
-    )
+    verify_egyptian_sbs_and_fx(&entity_books, &slices, &fx_rates)?;
+    verify_egyptian_bilateral_elimination(seed, &entity_books, &slices, &fx_rates, &fixture)
 }
 
 fn verify_egyptian_sbs_and_fx(
+    cells: &[&EntityCell],
     slices: &[EntityReportingSlice],
     fx_rates: &[FxRateEntry],
 ) -> Result<(), String> {
-    let side_by_side =
-        evaluate_operating_group_tier(OperatingGroupTier::SideBySide, slices, None, &[], &[], None)
-            .map_err(|e| format!("side_by_side: {e:?}"))?;
+    let side_by_side = evaluate_operating_group_tier(
+        OperatingGroupTier::SideBySide,
+        cells,
+        slices,
+        None,
+        &[],
+        &[],
+        None,
+    )
+    .map_err(|e| format!("side_by_side: {e:?}"))?;
     if side_by_side
         .per_currency_revenue
         .get("EGP")
@@ -761,6 +762,7 @@ fn verify_egyptian_sbs_and_fx(
     }
     let fx_translated = evaluate_operating_group_tier(
         OperatingGroupTier::FxTranslated,
+        cells,
         slices,
         Some("EGP"),
         fx_rates,
@@ -781,11 +783,11 @@ fn verify_egyptian_sbs_and_fx(
 }
 
 fn verify_egyptian_bilateral_elimination(
+    seed: u64,
+    cells: &[&EntityCell],
     slices: &[EntityReportingSlice],
     fx_rates: &[FxRateEntry],
-    partner_sale_export: &ExportRecord,
-    sole_buyer_lot_export: &ExportRecord,
-    sole_unrelated_tip_export: &ExportRecord,
+    fixture: &EgyptianFamilyFixture,
 ) -> Result<(), String> {
     let matched = InterEntityTransfer {
         transfer_id: "IE-CFC-TRIM-01".to_owned(),
@@ -794,18 +796,19 @@ fn verify_egyptian_bilateral_elimination(
         currency: "USD".to_owned(),
         settlement_fx_rate: None,
         seller_leg: Some(TransferLegEvidence {
-            export_record: partner_sale_export.clone(),
+            export_record: fixture.partner_sale_export.clone(),
             object_type: "supply.PosSale".to_owned(),
-            object_id: "SALE-IE-CFC-TRIM-01".to_owned(),
+            object_id: transfer_sale_id("IE-CFC-TRIM-01"),
         }),
         buyer_leg: Some(TransferLegEvidence {
-            export_record: sole_buyer_lot_export.clone(),
+            export_record: fixture.sole_buyer_lot_export.clone(),
             object_type: "supply.StockLot".to_owned(),
-            object_id: "LOT-IE-CFC-TRIM-01".to_owned(),
+            object_id: transfer_lot_id("IE-CFC-TRIM-01"),
         }),
     };
     let netted = evaluate_operating_group_tier(
         OperatingGroupTier::InterEntityNetted,
+        cells,
         slices,
         Some("EGP"),
         fx_rates,
@@ -829,32 +832,120 @@ fn verify_egyptian_bilateral_elimination(
         return Err(format!("unexpected inter_entity_netted: {netted:?}"));
     }
 
-    for (label, bad_xfer) in [
+    let shadow_buyer_export = build_rogue_shadow_buyer_export(seed)?;
+    assert_egyptian_transfer_refusals(
+        cells,
+        slices,
+        fx_rates,
+        fixture,
+        matched,
+        shadow_buyer_export,
+    )
+}
+
+fn build_rogue_shadow_buyer_export(seed: u64) -> Result<norn_cell::export::ExportRecord, String> {
+    let mut rogue_buyer = EntityCell::open(
+        &cell_id_for_entity(seed, 51),
+        "LE-NILE-SOLE",
+        "EGP",
+        "org_family_nile_sole",
+        "prod",
+        DEFAULT_CLOCK_MS,
+    )?;
+    rogue_buyer.register_book("Rogue Shadow Sole Book", "sole_proprietorship")?;
+    rogue_buyer.register_sku("SKU-GOLD-TRIM", "spares", "each")?;
+    rogue_buyer.register_store(
+        "ST-SOLE-CFC",
+        "Shadow CFC Booth",
+        "CUST-MALL-CFC-OPS",
+        "mall_store",
+        Some("MALL-CFC"),
+    )?;
+    rogue_buyer.record_costed_lot_keyed(
+        &transfer_lot_id("IE-CFC-TRIM-01"),
+        "ST-SOLE-CFC",
+        "SKU-GOLD-TRIM",
+        "CUST-MALL-CFC-OPS",
+        "2",
+        "each",
+        "7275",
+        "2026-09-02T15:30:00Z",
+        &transfer_leg_key("IE-CFC-TRIM-01", "buyer"),
+    )?;
+    rogue_buyer.export_main_record(rogue_buyer.head()?.commits)
+}
+
+fn assert_egyptian_transfer_refusals(
+    cells: &[&EntityCell],
+    slices: &[EntityReportingSlice],
+    fx_rates: &[FxRateEntry],
+    fixture: &EgyptianFamilyFixture,
+    matched: InterEntityTransfer,
+    shadow_buyer_export: norn_cell::export::ExportRecord,
+) -> Result<(), String> {
+    let unrelated_same_amt = InterEntityTransfer {
+        transfer_id: "IE-UNRELATED-CFC".to_owned(),
+        seller_entity_id: "LE-CAIRO-PARTNER".to_owned(),
+        buyer_entity_id: "LE-NILE-SOLE".to_owned(),
+        currency: "USD".to_owned(),
+        settlement_fx_rate: None,
+        seller_leg: Some(TransferLegEvidence {
+            export_record: fixture.partner_unrelated_sale_export.clone(),
+            object_type: "supply.PosSale".to_owned(),
+            object_id: "SALE-PART-EXT-A".to_owned(),
+        }),
+        buyer_leg: Some(TransferLegEvidence {
+            export_record: fixture.sole_unrelated_lot_export.clone(),
+            object_type: "supply.StockLot".to_owned(),
+            object_id: "LOT-SOLE-UNRELATED".to_owned(),
+        }),
+    };
+    for (label, bad_batch) in [
         (
             "unilateral transfer",
-            InterEntityTransfer {
+            vec![InterEntityTransfer {
                 buyer_leg: None,
                 ..matched.clone()
-            },
+            }],
         ),
         (
             "unrelated ledger-tip export",
-            InterEntityTransfer {
+            vec![InterEntityTransfer {
                 buyer_leg: Some(TransferLegEvidence {
-                    export_record: sole_unrelated_tip_export.clone(),
+                    export_record: fixture.sole_unrelated_tip_export.clone(),
                     object_type: "supply.StockLot".to_owned(),
-                    object_id: "LOT-IE-CFC-TRIM-01".to_owned(),
+                    object_id: transfer_lot_id("IE-CFC-TRIM-01"),
                 }),
-                ..matched
-            },
+                ..matched.clone()
+            }],
+        ),
+        (
+            "isolated shadow-DB export with matching cell_id not in owning ledger",
+            vec![InterEntityTransfer {
+                buyer_leg: Some(TransferLegEvidence {
+                    export_record: shadow_buyer_export,
+                    object_type: "supply.StockLot".to_owned(),
+                    object_id: transfer_lot_id("IE-CFC-TRIM-01"),
+                }),
+                ..matched.clone()
+            }],
+        ),
+        (
+            "unrelated same-amount sale & lot without shared transfer identity",
+            vec![unrelated_same_amt],
+        ),
+        (
+            "duplicate transfer pair submission",
+            vec![matched.clone(), matched],
         ),
     ] {
         let res = evaluate_operating_group_tier(
             OperatingGroupTier::InterEntityNetted,
+            cells,
             slices,
             Some("EGP"),
             fx_rates,
-            &[bad_xfer],
+            &bad_batch,
             None,
         );
         if !matches!(
