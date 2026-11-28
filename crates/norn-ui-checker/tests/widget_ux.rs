@@ -4126,7 +4126,14 @@ proptest::proptest! {
         });
         let list_valid = size > 0 && max_size > 0 && size <= max_size;
         let list_found = widget_findings(list_widget);
-        proptest::prop_assert_eq!(list_found.is_empty(), list_valid, "list bounds ({size}, {max_size}): {list_found:#?}");
+        proptest::prop_assert_eq!(
+            list_found.is_empty(),
+            list_valid,
+            "list bounds ({}, {}): {:#?}",
+            size,
+            max_size,
+            list_found
+        );
 
         let traversal_widget = widget_with(|ux| {
             set_key(ux, "/dataBindings/1/query", "maxRows", json!(max_rows));
@@ -4137,7 +4144,11 @@ proptest::proptest! {
         proptest::prop_assert_eq!(
             traversal_found.is_empty(),
             traversal_valid,
-            "traversal bounds ({size}, {max_size}, {max_rows}): {traversal_found:#?}"
+            "traversal bounds ({}, {}, {}): {:#?}",
+            size,
+            max_size,
+            max_rows,
+            traversal_found
         );
     }
 
