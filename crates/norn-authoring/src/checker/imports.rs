@@ -129,7 +129,7 @@ impl FileWalk<'_> {
         };
         let file = target_sf.file_name();
         let in_node_modules = file.split(['/', '\\']).any(|seg| seg == "node_modules");
-        let is_ts_source = file.ends_with(".ts") || file.ends_with(".mts");
+        let is_ts_source = file.as_bytes().ends_with(b".ts") || file.as_bytes().ends_with(b".mts");
         if target_sf.is_declaration_file()
             || self.program.is_source_file_from_external_library(target_sf)
             || in_node_modules
@@ -218,7 +218,7 @@ pub(super) fn import_diagnostics(
             code: "NORN-FLOW-IMPORT".to_owned(),
             start,
             end,
-            construct: node_text(root, specifier).to_owned(),
+            construct: node_text(root, specifier),
             message: format!(
                 "imported module fails the profile: {found} — {fix} [{}]",
                 owner.profile.profile

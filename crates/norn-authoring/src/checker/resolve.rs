@@ -116,13 +116,13 @@ pub(crate) fn node_end(node: P<Node>) -> u32 {
     node.end().source_offset().unwrap_or(0)
 }
 
-pub(crate) fn slice_text(sf: P<SourceFile>, start: u32, end: u32) -> &'static str {
+pub(crate) fn slice_text(sf: P<SourceFile>, start: u32, end: u32) -> String {
     let start_idx = usize::try_from(start).unwrap_or(usize::MAX);
     let end_idx = usize::try_from(end).unwrap_or(usize::MAX);
-    sf.text().get(start_idx..end_idx).unwrap_or("")
+    sf.text().get(start_idx..end_idx).unwrap_or("").to_owned()
 }
 
-pub(crate) fn node_text(sf: P<SourceFile>, node: P<Node>) -> &'static str {
+pub(crate) fn node_text(sf: P<SourceFile>, node: P<Node>) -> String {
     slice_text(sf, node_start(sf, node), node_end(node))
 }
 
@@ -274,7 +274,7 @@ impl FileWalk<'_> {
         self.program.is_source_file_default_library(sf.path())
     }
 
-    pub(super) fn where_declared(&self, declaration: Option<P<Node>>) -> String {
+    pub(super) fn where_declared(declaration: Option<P<Node>>) -> String {
         let Some(decl) = declaration else {
             return "an unknown declaration".to_owned();
         };

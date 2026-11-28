@@ -256,7 +256,8 @@ impl<'a> SyntaxCompiler<'a> {
         scanner.set_skip_trivia(true);
         scanner.set_script_target(ScriptTarget::ES2022);
         scanner.set_language_variant(LanguageVariant::Standard);
-        scanner.set_text(node_text(sf, node));
+        let text = node_text(sf, node);
+        scanner.set_text(&text);
         let mut tokens = Vec::new();
         loop {
             let kind = scanner.scan();

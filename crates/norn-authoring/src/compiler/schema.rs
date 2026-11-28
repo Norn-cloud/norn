@@ -334,7 +334,8 @@ impl<'a> SchemaProjection<'a> {
                 }
             }
         }
-        let text = tsrs_ast::get_source_file_of_node(expr).map_or("", |sf| node_text(sf, expr));
+        let text = tsrs_ast::get_source_file_of_node(expr)
+            .map_or_else(String::new, |sf| node_text(sf, expr));
         Err(CompileError::new(
             "NORN-FLOW-VALUE",
             format!(
@@ -613,11 +614,9 @@ impl<'a> SchemaProjection<'a> {
             }),
             _ => {
                 let label = id.unwrap_or_else(|| {
-                    tsrs_ast::get_source_file_of_node(call)
-                        .map_or("", |sf| {
-                            node_text(sf, call.as_call_expression().expression())
-                        })
-                        .to_owned()
+                    tsrs_ast::get_source_file_of_node(call).map_or_else(String::new, |sf| {
+                        node_text(sf, call.as_call_expression().expression())
+                    })
                 });
                 Err(projection_err(
                     format!("{label} is not a schema in the structural subset"),
@@ -777,7 +776,8 @@ impl<'a> SchemaProjection<'a> {
         if expr.kind() != Kind::NumericLiteral {
             return Err(CompileError::new("NORN-FLOW-LITERAL", msg, expr));
         }
-        let raw = tsrs_ast::get_source_file_of_node(expr).map_or("", |sf| node_text(sf, expr));
+        let raw = tsrs_ast::get_source_file_of_node(expr)
+            .map_or_else(String::new, |sf| node_text(sf, expr));
         let valid_plain = raw == "0"
             || (raw
                 .bytes()

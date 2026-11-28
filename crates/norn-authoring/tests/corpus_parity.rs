@@ -38,7 +38,7 @@ fn list_ts_fixtures(dir: &Path) -> Result<Vec<String>, Box<dyn std::error::Error
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if name.ends_with(".ts") {
+        if name.as_bytes().ends_with(b".ts") {
             names.push(name);
         }
     }
@@ -60,7 +60,7 @@ fn mount_corpus_dir(
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if name.ends_with(".ts") {
+        if name.as_bytes().ends_with(b".ts") {
             entries.push((name, entry.path()));
         }
     }
@@ -178,7 +178,7 @@ fn verify_reject_corpus(
         assert_eq!(actual, expected, "reject fixture `{fixture}` mismatch");
     }
     for construct in &profile.rejected_constructs {
-        assert!(!construct.fixtures.is_empty());
+        assert_ne!(construct.fixtures, Vec::<String>::new());
         for fixture in &construct.fixtures {
             let report = by_fixture
                 .get(fixture)
@@ -299,6 +299,10 @@ fn export_path_probes_resolve_to_recorded_identities() -> Result<(), Box<dyn std
     for (idx, &(probe, _)) in probes.iter().enumerate() {
         lines.push(format!("export const p{idx} = {probe}"));
     }
+    let expected: Vec<Option<String>> = probes
+        .iter()
+        .map(|&(_, symbol)| Some(symbol.to_owned()))
+        .collect();
     lines.push(String::new());
     let source = lines.join("\n");
 
@@ -310,10 +314,6 @@ fn export_path_probes_resolve_to_recorded_identities() -> Result<(), Box<dyn std
         .with_effect_dist_prefix(PINNED_EFFECT_DIST_PREFIX);
     let resolved = checker.resolve_initializers(&program, "/probe.ts")?;
     let actual: Vec<Option<String>> = resolved.into_iter().map(|(_, id)| id).collect();
-    let expected: Vec<Option<String>> = probes
-        .iter()
-        .map(|&(_, symbol)| Some(symbol.to_owned()))
-        .collect();
     assert_eq!(actual, expected);
     Ok(())
 }

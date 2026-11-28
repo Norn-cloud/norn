@@ -95,7 +95,7 @@ impl SyntaxCompiler<'_> {
             let as_name = param.map(|p| {
                 let sf = get_source_file_of_node(p).unwrap_or(self.source);
                 let text = node_text(sf, p.as_parameter_declaration().name());
-                self.fresh(text)
+                self.fresh(&text)
             });
             let next_env = match &as_name {
                 Some(name) => {

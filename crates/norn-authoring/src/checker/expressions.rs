@@ -300,7 +300,7 @@ impl FileWalk<'_> {
                     .parent()
                     .is_some_and(|parent| !parent.flags().intersects(NodeFlags::Const))
             {
-                let where_decl = self.where_declared(Some(decl_node));
+                let where_decl = Self::where_declared(Some(decl_node));
                 self.report(
                     ident,
                     "NORN-FLOW-CAPTURE",
@@ -309,7 +309,7 @@ impl FileWalk<'_> {
                 return;
             }
             if decl_node.kind() == Kind::FunctionDeclaration {
-                let where_decl = self.where_declared(Some(decl_node));
+                let where_decl = Self::where_declared(Some(decl_node));
                 self.report(
                     ident,
                     "NORN-FLOW-CAPTURE",
@@ -328,8 +328,8 @@ impl FileWalk<'_> {
             return;
         };
         if decl.kind() == Kind::ClassDeclaration {
-            let where_decl = self.where_declared(Some(decl));
-            let text = node_text(self.sf, node).to_owned();
+            let where_decl = Self::where_declared(Some(decl));
+            let text = node_text(self.sf, node);
             self.report(
                 node,
                 "NORN-FLOW-VALUE",
@@ -347,7 +347,7 @@ impl FileWalk<'_> {
                         "data provenance exceeds 128 referenced declarations".to_owned(),
                     )
                 } else {
-                    let where_decl = self.where_declared(Some(decl));
+                    let where_decl = Self::where_declared(Some(decl));
                     let text = node_text(self.sf, node);
                     (
                         "NORN-FLOW-VALUE",
@@ -483,9 +483,9 @@ impl FileWalk<'_> {
             self.admitted_value(expr, &resolved, ctx);
             return;
         }
-        let text = node_text(self.sf, expr).to_owned();
+        let text = node_text(self.sf, expr);
         if self.owner.spelled_like_admitted(&text, false) {
-            let where_decl = self.where_declared(resolved.declaration);
+            let where_decl = Self::where_declared(resolved.declaration);
             self.report(
                 expr,
                 "NORN-FLOW-SYMBOL",
@@ -638,7 +638,7 @@ impl FileWalk<'_> {
             );
             return;
         }
-        let op_text = node_text(self.sf, bin.operator_token()).to_owned();
+        let op_text = node_text(self.sf, bin.operator_token());
         self.report(
             expr,
             "NORN-FLOW-EXPRESSION",

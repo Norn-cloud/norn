@@ -241,7 +241,7 @@ impl DefinitionCompiler<'_> {
                 ));
             };
             let text = node_text(sf, literal);
-            if !is_unsigned_decimal_text(text) {
+            if !is_unsigned_decimal_text(&text) {
                 return Err(CompileError::new(
                     "NORN-FLOW-LITERAL",
                     "write a numeric default as a plain decimal literal (no exponent, separators, or radix prefix)",
@@ -251,7 +251,7 @@ impl DefinitionCompiler<'_> {
             return Ok(Value::String(if negative {
                 format!("-{text}")
             } else {
-                text.to_owned()
+                text
             }));
         }
         if e.kind() == Kind::NullKeyword {

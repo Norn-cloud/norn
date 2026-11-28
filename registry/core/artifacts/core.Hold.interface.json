@@ -35,6 +35,61 @@
           "message": "A hold must carry either a unit or a currency, never both or neither."
         }
       ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "consumed"
+            },
+            {
+              "outcome": "compensated",
+              "state": "released"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "expired"
+            }
+          ],
+          "immutable": [
+            "released",
+            "consumed",
+            "expired"
+          ],
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "released",
+            "consumed",
+            "expired"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "consume",
+              "to": "consumed"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "release",
+              "to": "released"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "expire",
+              "to": "expired"
+            }
+          ]
+        }
+      ],
       "links": [
         {
           "cardinality": {

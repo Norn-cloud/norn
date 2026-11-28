@@ -541,8 +541,7 @@ fn core_commitment_source(base: &[Value], extra_invariants: &Value) -> Definitio
                         { "id": "promise", "from": ["requested"], "to": "promised" },
                         { "id": "fulfil", "from": ["promised"], "to": "fulfilled" },
                         { "id": "cancel", "from": ["requested", "promised"], "to": "cancelled" },
-                        { "id": "breach_due", "from": ["requested", "promised"], "to": "breached",
-                          "trigger": { "kind": "timer", "millis": "86400000" }, "mode": "fact" }
+                        { "id": "breach", "from": ["requested", "promised"], "to": "breached" }
                     ]
                 }]
             }

@@ -115,7 +115,7 @@ pub(crate) fn diagnostic_for_node(node: P<Node>, code: &str, message: &str) -> P
         code: code.to_owned(),
         start: pos_of(sf, start_off),
         end: pos_of(sf, end_off),
-        construct: format_construct(node_text(sf, node)),
+        construct: format_construct(&node_text(sf, node)),
         message: message.to_owned(),
     }
 }
