@@ -603,7 +603,15 @@ pub(crate) fn compile_source_to_json(
     tool_root: Option<&Path>,
 ) -> Result<String, AuthoringFailure> {
     let mut budget = InvocationBudget::new();
-    compile_path_to_json(path, org, env, forbid_unsafe_zen, tool_root, &mut budget)
+    compile_path_to_json(
+        path,
+        org,
+        env,
+        forbid_unsafe_zen,
+        tool_root,
+        None,
+        &mut budget,
+    )
 }
 
 /// Executes `norn compile`.
@@ -748,7 +756,7 @@ fn compile_check_source_pinned(
                 None
             };
             let ancestor_scope = if req.org.is_none() && req.env.is_none() {
-                match app_root {
+                match app_root.as_ref() {
                     Some(AppRootMatch::Ancestor(dir)) => {
                         read_norn_scope_from_dir(dir, budget).map_err(AuthoringFailure::Io)?
                     }
@@ -798,7 +806,7 @@ fn compile_check_source_pinned(
             opened,
         } => {
             let inherited_scope = if req.org.is_none() && req.env.is_none() {
-                match app_root {
+                match app_root.as_ref() {
                     Some(matched) => read_norn_scope_from_dir(matched.as_dir(&parent_dir), budget)
                         .map_err(AuthoringFailure::Io)?,
                     None => None,
