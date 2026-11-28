@@ -413,6 +413,21 @@
     "core.identity.reuse": {
       "message": "this identity was deleted; restore it explicitly or use a new identity"
     },
+    "core.laws.constitutional_defeat": {
+      "message": "downstream declaration attempts to weaken, shadow, except, or defeat a core constitutional law"
+    },
+    "core.laws.enrollment_gap": {
+      "message": "specializing concept failed to enroll an applicable core constitutional law in its effective law closure"
+    },
+    "core.laws.missing_required_link_binding": {
+      "message": "create action for a core-specializing concept omits a required core link binding"
+    },
+    "core.laws.preservation_unknown": {
+      "message": "finite core-law preservation check exhausted its bounded exploration budget"
+    },
+    "core.laws.preservation_violated": {
+      "message": "writer or lifecycle transition violates an inherited core constitutional law"
+    },
     "core.laws.stale_evidence": {
       "message": "evidence identity differs from the current generated goal or independently retained result pin"
     },

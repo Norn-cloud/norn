@@ -1,0 +1,7 @@
+{
+  "code": "core.laws.constitutional_defeat",
+  "message": "downstream declaration attempts to weaken, shadow, except, or defeat a core constitutional law",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

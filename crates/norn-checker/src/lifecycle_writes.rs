@@ -94,6 +94,8 @@ use crate::entity_scopes::ScopedViews;
 use crate::envelope::invalid_diagnostic;
 use crate::{Diagnostic, DiagnosticCode, LifecycleWrite, Span, check_lifecycle_writes};
 
+pub(crate) use fact_literals::{LiteralFactWrite, extract_literal_fact_writes};
+
 /// Stable codes of lifecycle writes.
 pub mod codes {
     /// A decide graph's `facts` item schema is not the canonical fact change.
