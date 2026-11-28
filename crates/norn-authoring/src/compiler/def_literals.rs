@@ -189,12 +189,11 @@ impl DefinitionCompiler<'_> {
         depth: usize,
     ) -> Result<Value, CompileError> {
         Self::charge_literal(expansion, 1, 2, e)?;
-        let mut obj = Map::new();
-        let next_depth = depth.saturating_add(1);
+        let mut surviving: BTreeMap<&str, (P<Node>, P<Node>)> = BTreeMap::new();
         for &prop in e.as_object_literal_expression().properties.nodes() {
             self.guard(prop)?;
             let (key_node, value) = Self::plain_member_nodes(prop)?;
-            let key = key_node.text();
+            let key = key_node.get().text();
             if key == "__proto__" {
                 return Err(CompileError::new(
                     "NORN-FLOW-LITERAL",
@@ -202,6 +201,12 @@ impl DefinitionCompiler<'_> {
                     prop,
                 ));
             }
+            Self::charge_literal(expansion, 1, 0, prop)?;
+            surviving.insert(key, (prop, value));
+        }
+        let mut obj = Map::new();
+        let next_depth = depth.saturating_add(1);
+        for (key, (prop, value)) in surviving {
             Self::charge_literal(
                 expansion,
                 1,

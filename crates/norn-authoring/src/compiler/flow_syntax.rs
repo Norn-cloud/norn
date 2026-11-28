@@ -85,7 +85,7 @@ struct DecisionWalk<'a, 'h> {
     rows: &'a mut Vec<DecisionRow>,
     steps: usize,
     env: Env,
-    conditions: Vec<Expr>,
+    conditions: Vec<(Expr, usize)>,
     checker: &'a mut Checker,
     expansion: &'a mut ExpansionBudget,
     hooks: Option<&'a mut (dyn DecisionHooks + 'h)>,
@@ -549,7 +549,13 @@ impl<'a> SyntaxCompiler<'a> {
                 walk.fn_node,
             ));
         }
-        self.check_decision_work(statement, walk.conditions.len(), walk)?;
+        let clone_work: usize = walk
+            .conditions
+            .iter()
+            .map(|(_, w)| *w)
+            .fold(0_usize, usize::saturating_add)
+            .saturating_add(walk.conditions.len());
+        self.check_decision_work(statement, clone_work, walk)?;
         let condition = build_conjunction(&walk.conditions);
         let value = self.data(
             ret_expr,
@@ -608,11 +614,12 @@ impl<'a> SyntaxCompiler<'a> {
         } else {
             &single_then
         };
-        walk.conditions.push(test);
+        let test_work = test.clone_work();
+        walk.conditions.push((test, test_work));
         let then_res = self.visit_decision_statements(then_stmts, branch_tails, next_depth, walk);
         let popped_test = walk.conditions.pop();
         then_res?;
-        let Some(neg_target) = popped_test else {
+        let Some((neg_target, neg_work)) = popped_test else {
             return Err(CompileError::new(
                 "NORN-FLOW-UNBOUNDED",
                 "decision condition stack corrupted",
@@ -620,7 +627,8 @@ impl<'a> SyntaxCompiler<'a> {
             ));
         };
         self.check_decision_work(statement, 1, walk)?;
-        walk.conditions.push(Expr::not(neg_target));
+        walk.conditions
+            .push((Expr::not(neg_target), neg_work.saturating_add(1)));
         if let Some(else_stmt) = if_stmt.else_statement {
             let single_else = [else_stmt];
             let else_stmts: &[P<Node>] = if else_stmt.kind() == Kind::Block {
@@ -713,10 +721,10 @@ impl<'a> SyntaxCompiler<'a> {
     }
 }
 
-fn build_conjunction(conditions: &[Expr]) -> Option<Expr> {
+fn build_conjunction(conditions: &[(Expr, usize)]) -> Option<Expr> {
     let mut iter = conditions.iter();
-    let first = iter.next()?.clone();
-    Some(iter.fold(first, |acc, clause| Expr::and(acc, clause.clone())))
+    let first = iter.next()?.0.clone();
+    Some(iter.fold(first, |acc, (clause, _)| Expr::and(acc, clause.clone())))
 }
 
 pub(crate) fn json_scalar_to_string(value: &Value) -> String {

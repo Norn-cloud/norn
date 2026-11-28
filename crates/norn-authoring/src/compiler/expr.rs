@@ -350,6 +350,53 @@ impl Expr {
         Self::Literal(value)
     }
 
+    /// Counts the exact node and leaf work required to deep-clone this expression tree.
+    #[must_use]
+    pub(crate) fn clone_work(&self) -> usize {
+        let mut work = 0_usize;
+        let mut stack = vec![self];
+        while let Some(node) = stack.pop() {
+            work = work.saturating_add(1);
+            match node {
+                Self::Binary { left, right, .. }
+                | Self::Compare { left, right, .. }
+                | Self::Logical { left, right, .. } => {
+                    stack.push(left);
+                    stack.push(right);
+                }
+                Self::Call { args, .. } | Self::List(args) => stack.extend(args),
+                Self::Closure { list, body, .. } => {
+                    stack.push(list);
+                    stack.push(body);
+                }
+                Self::Conditional { condition, yes, no } => {
+                    stack.push(condition);
+                    stack.push(yes);
+                    stack.push(no);
+                }
+                Self::Coalesce { value, fallback } => {
+                    stack.push(value);
+                    stack.push(fallback);
+                }
+                Self::Bound { path, .. } | Self::Input { path, .. } => {
+                    work = work.saturating_add(path.len());
+                }
+                Self::Literal(val) => {
+                    if let Value::String(s) = val {
+                        work = work.saturating_add(s.len().div_ceil(64));
+                    }
+                }
+                Self::Not(inner) => stack.push(inner),
+                Self::Record(entries) => {
+                    for (_, value) in entries {
+                        stack.push(value);
+                    }
+                }
+            }
+        }
+        work
+    }
+
     /// Constructs a named binding reference with optional property path.
     #[must_use]
     pub(crate) fn input(name: impl Into<String>, path: Vec<String>) -> Self {

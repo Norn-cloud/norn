@@ -426,3 +426,53 @@ effectiveFrom: \"2026-01-01T00:00:00Z\", review: { state: \"active\" }, scopeReq
     }
     Ok(())
 }
+
+#[test]
+fn regression_decision_large_predicate_clone_work_bounded() -> Result<(), Box<dyn std::error::Error>>
+{
+    let profile = Profile::load()?;
+    let checker = ProfileChecker::new(profile.clone());
+    let (_, mut vfs) = mount_pinned_packages(&profile)?;
+
+    let mut big_pred_src = String::from(
+        "import { Schema } from \"effect\"\nimport { Norn } from \"@norn/authoring\"\n\
+export const BigPred = Norn.decision({ id: \"demo.rule.big_pred\", title: \"BigPred\", version: \"1.0.0\", \
+contract: \"sub_decision\", scopeRequired: [\"orgId\"], \
+input: Schema.Struct({ x: Schema.Int }), output: Schema.Struct({ y: Schema.Int }) }, input => {\n\
+  const p = input.x === 1 || input.x === 2 || input.x === 3 || input.x === 4 || input.x === 5 || input.x === 6 || input.x === 7 || input.x === 8\n",
+    );
+    for i in 0_usize..20 {
+        writeln!(
+            big_pred_src,
+            "  if (p && input.x === {i}) return {{ y: {i} }}"
+        )?;
+    }
+    big_pred_src.push_str("  return { y: 99 }\n})\n");
+
+    let path = "/reg/big_pred.ts";
+    vfs.add_file(path, big_pred_src)?;
+    let program = AuthoringProgram::new(vfs, &[path], profile)?
+        .with_effect_dist_prefix(PINNED_EFFECT_DIST_PREFIX);
+    let out =
+        compile_definitions_program(&checker, &program, &[path], |_| DefinitionsCompileOptions {
+            envelope: EnvelopeOptions {
+                scope: demo_scope(),
+                source_path: "reg/big_pred.ts".to_owned(),
+                registry_package_path: None,
+            },
+            limits: CompilerLimits {
+                max_expansion_work: 1_500,
+                ..CompilerLimits::default()
+            },
+            ..DefinitionsCompileOptions::default()
+        })?;
+
+    let Some(DefinitionsCompileOutcome::Err { diagnostics }) = out.first() else {
+        return Err("expected large-predicate conjunction chain to trip clone-work budget".into());
+    };
+    assert!(
+        diagnostics.iter().any(|d| d.code == "NORN-FLOW-UNBOUNDED"),
+        "expected NORN-FLOW-UNBOUNDED for large-predicate clone work, got: {diagnostics:?}"
+    );
+    Ok(())
+}
