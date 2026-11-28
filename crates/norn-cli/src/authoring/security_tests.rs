@@ -324,7 +324,7 @@ fn zero_ci_ancestor_search_fails_closed_on_depth_limit_and_non_regular_manifest(
 }
 
 #[test]
-fn bounded_json_writer_aborts_mid_serialization_before_exceeding_limit() -> TestResult {
+fn bounded_json_writer_aborts_mid_serialization_before_exceeding_limit() {
     let mut budget = InvocationBudget::with_limits(100, 100, 1024, 4096, 32);
     let mut buf = Vec::new();
     let oversized = json!({
@@ -358,7 +358,6 @@ fn bounded_json_writer_aborts_mid_serialization_before_exceeding_limit() -> Test
             .is_err_and(|msg| msg.contains("output limit")),
         "expected BoundedJsonArray overflow error, got: {array_err:?}"
     );
-    Ok(())
 }
 
 #[test]
