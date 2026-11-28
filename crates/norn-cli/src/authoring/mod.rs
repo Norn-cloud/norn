@@ -6,6 +6,7 @@ mod atomic_io;
 mod fmt;
 mod fs_io;
 mod py;
+mod retained;
 #[cfg(test)]
 mod security_tests;
 #[cfg(test)]
@@ -22,12 +23,16 @@ use serde_json::{Value, json};
 
 use self::atomic_io::write_file_atomic;
 use self::fs_io::{
-    EntryKind, InvocationBudget, LoadedFile, SourceLang, classify_source_file, display_posix_path,
-    inspect_path_no_follow, is_declaration_file, is_json_file, validate_safe_relative,
+    BoundedJsonArray, InvocationBudget, LoadedFile, SourceLang, classify_source_file,
+    display_posix_path, is_declaration_file, is_json_file, read_opened_file_budgeted,
+    validate_safe_relative,
 };
-use self::trusted_dir::{TrustedDir, open_regular_file_pinned};
-use self::ts::TsCompileTarget;
-use self::zero_ci::{ZeroCiOutcome, check_zero_ci_app_dir};
+use self::retained::validate_retained_definition;
+use self::trusted_dir::{PinnedSourceTarget, TrustedDir, open_source_target_pinned};
+use self::ts::{TsCompileOptions, TsCompileTarget};
+use self::zero_ci::{
+    AppRootMatch, ZeroCiOutcome, check_zero_ci_app_root, find_norn_app_root_from_dir,
+};
 
 const MAX_CHECK_CONTEXT_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -235,11 +240,12 @@ fn validate_non_empty_scope(label: &str, value: &str) -> Result<(), AuthoringFai
     Ok(())
 }
 
-fn append_unique_value(
-    artifact: Value,
+fn stream_unique_json_artifact(
+    artifact: &Value,
     source_label: &str,
     seen_ids: &mut BTreeSet<String>,
-    out: &mut Vec<Value>,
+    out: &mut BoundedJsonArray,
+    budget: &mut InvocationBudget,
 ) -> Result<(), AuthoringFailure> {
     if let Some(id) = artifact.get("artifactId").and_then(Value::as_str)
         && !seen_ids.insert(id.to_owned())
@@ -255,27 +261,8 @@ fn append_unique_value(
         .to_string();
         return Err(AuthoringFailure::Diagnostics(refused));
     }
-    out.push(artifact);
-    Ok(())
-}
-
-fn parse_compiled_array(
-    batch_json: &str,
-    source_label: &str,
-    seen_ids: &mut BTreeSet<String>,
-    out: &mut Vec<Value>,
-) -> Result<(), AuthoringFailure> {
-    let parsed: Value =
-        serde_json::from_str(batch_json).map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    let Value::Array(items) = parsed else {
-        return Err(AuthoringFailure::Io(
-            "compiled batch did not produce a JSON array".to_owned(),
-        ));
-    };
-    for item in items {
-        append_unique_value(item, source_label, seen_ids, out)?;
-    }
-    Ok(())
+    out.push_value("compiled json artifact", artifact, budget)
+        .map_err(AuthoringFailure::Io)
 }
 
 fn classify_json_source(
@@ -304,25 +291,7 @@ fn classify_json_source(
     if let Some(kind) = obj.get("kind").and_then(Value::as_str)
         && matches!(kind, "approval" | "question" | "dashboard")
     {
-        let Some(id) = obj
-            .get("id")
-            .and_then(Value::as_str)
-            .filter(|val| !val.is_empty())
-        else {
-            return Err(AuthoringFailure::Io(format!(
-                "{shown}: retained {kind} definition must have a non-empty string `id`"
-            )));
-        };
-        if !obj.get("payload").is_some_and(Value::is_object) {
-            return Err(AuthoringFailure::Io(format!(
-                "{shown}: retained {kind} definition `{id}` must have an object `payload`"
-            )));
-        }
-        if !seen_retained_ids.insert(id.to_owned()) {
-            return Err(AuthoringFailure::Io(format!(
-                "{shown}: duplicate retained definition id `{id}`"
-            )));
-        }
+        validate_retained_definition(&shown, obj, kind, seen_retained_ids)?;
         return Ok(JsonSourceEntry::RetainedDefinition);
     }
     Err(AuthoringFailure::Io(format!(
@@ -330,15 +299,20 @@ fn classify_json_source(
     )))
 }
 
+struct DirCompileState<'a> {
+    seen_ids: &'a mut BTreeSet<String>,
+    seen_retained_ids: &'a mut BTreeSet<String>,
+    out: &'a mut BoundedJsonArray,
+    budget: &'a mut InvocationBudget,
+}
+
 fn compile_source_dir_entries(
     source_dir: &TrustedDir,
     opts: &CompileDirOptions<'_>,
-    seen_ids: &mut BTreeSet<String>,
-    seen_retained_ids: &mut BTreeSet<String>,
-    budget: &mut InvocationBudget,
-) -> Result<Vec<Value>, AuthoringFailure> {
+    state: &mut DirCompileState<'_>,
+) -> Result<(), AuthoringFailure> {
     let top_files = source_dir
-        .read_top_level_files(budget)
+        .read_top_level_files(state.budget)
         .map_err(AuthoringFailure::Io)?;
     let mut typescript_rels = Vec::new();
     let mut python_files = Vec::new();
@@ -368,46 +342,54 @@ fn compile_source_dir_entries(
         }
     }
 
-    let mut artifacts = Vec::new();
+    let before_count = state.out.len();
     let mut retained_count = 0_usize;
-    let dir_label = display_posix_path(source_dir.display_path());
     if !typescript_rels.is_empty() {
-        let typescript_batch_json = ts::compile_ts_targets(
+        let ts_opts = TsCompileOptions {
+            org: opts.org,
+            env: opts.env,
+            forbid_unsafe_zen: opts.forbid_unsafe_zen,
+            tool_root: opts.tool_root,
+        };
+        ts::compile_ts_targets_into(
             TsCompileTarget::Directory {
                 root_dir: source_dir,
                 root_rel_paths: typescript_rels,
             },
-            opts.org,
-            opts.env,
-            opts.forbid_unsafe_zen,
-            opts.tool_root,
-            budget,
+            &ts_opts,
+            state.seen_ids,
+            state.out,
+            state.budget,
         )?;
-        parse_compiled_array(&typescript_batch_json, &dir_label, seen_ids, &mut artifacts)?;
     }
     if !python_files.is_empty() {
-        let python_batch_json =
-            py::compile_python_files(&python_files, opts.org, opts.env, budget)?;
-        parse_compiled_array(&python_batch_json, &dir_label, seen_ids, &mut artifacts)?;
+        py::compile_python_files_into(
+            &python_files,
+            opts.org,
+            opts.env,
+            state.seen_ids,
+            state.out,
+            state.budget,
+        )?;
     }
     for json_file in &json_files {
-        match classify_json_source(json_file, seen_retained_ids)? {
+        match classify_json_source(json_file, state.seen_retained_ids)? {
             JsonSourceEntry::Artifact(val) => {
                 let label = display_posix_path(&json_file.display_path);
-                append_unique_value(val, &label, seen_ids, &mut artifacts)?;
+                stream_unique_json_artifact(&val, &label, state.seen_ids, state.out, state.budget)?;
             }
             JsonSourceEntry::RetainedDefinition => {
                 retained_count = retained_count.saturating_add(1);
             }
         }
     }
-    if artifacts.is_empty() && retained_count == 0 && !opts.allow_empty {
+    if state.out.len() == before_count && retained_count == 0 && !opts.allow_empty {
         return Err(AuthoringFailure::Io(format!(
             "{}: no .ts, .py, or .json authoring artifacts found",
             source_dir.display_path().display()
         )));
     }
-    Ok(artifacts)
+    Ok(())
 }
 
 fn compile_manifest_project(
@@ -429,34 +411,104 @@ fn compile_manifest_project(
         tool_root: opts.tool_root,
         allow_empty: true,
     };
-    let mut all_artifacts = Vec::new();
+    let mut out = BoundedJsonArray::new();
     let mut seen_ids = BTreeSet::new();
     let mut seen_retained_ids = BTreeSet::new();
+    let mut state = DirCompileState {
+        seen_ids: &mut seen_ids,
+        seen_retained_ids: &mut seen_retained_ids,
+        out: &mut out,
+        budget,
+    };
     for rel_source in &manifest.sources {
         let source_dir = app_root
             .open_subdir_rel(rel_source)
             .map_err(AuthoringFailure::Io)?;
-        let batch = compile_source_dir_entries(
-            &source_dir,
-            &dir_opts,
-            &mut seen_ids,
-            &mut seen_retained_ids,
-            budget,
-        )?;
-        all_artifacts.extend(batch);
+        compile_source_dir_entries(&source_dir, &dir_opts, &mut state)?;
     }
-    if all_artifacts.is_empty() {
+    if out.is_empty() {
         return Err(AuthoringFailure::Io(format!(
             "{}: norn.json sources contain no authoring artifacts",
             app_root.display_path().display()
         )));
     }
-    let rendered = norn_authoring::canonical_json(&Value::Array(all_artifacts))
-        .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    budget
-        .charge_output_bytes("merged project artifacts", rendered.len())
-        .map_err(AuthoringFailure::Io)?;
-    Ok(rendered)
+    out.finish("merged project artifacts", budget)
+        .map_err(AuthoringFailure::Io)
+}
+
+fn compile_single_file_pinned(
+    parent_dir: &TrustedDir,
+    file_name: &str,
+    display_path: &Path,
+    opened: std::fs::File,
+    opts: &CompileDirOptions<'_>,
+    budget: &mut InvocationBudget,
+) -> Result<String, AuthoringFailure> {
+    match classify_source_file(display_path) {
+        Some(SourceLang::Python) => {
+            budget
+                .charge_accepted_file(display_path)
+                .map_err(AuthoringFailure::Io)?;
+            let content = read_opened_file_budgeted(opened, display_path, budget)
+                .map_err(AuthoringFailure::Io)?;
+            let loaded = LoadedFile {
+                display_path: display_path.to_path_buf(),
+                rel_path: PathBuf::from(file_name),
+                content,
+            };
+            py::compile_python_files(&[loaded], opts.org, opts.env, budget)
+        }
+        Some(SourceLang::TypeScript) => {
+            budget
+                .charge_accepted_file(display_path)
+                .map_err(AuthoringFailure::Io)?;
+            let content = read_opened_file_budgeted(opened, display_path, budget)
+                .map_err(AuthoringFailure::Io)?;
+            let ts_opts = TsCompileOptions {
+                org: opts.org,
+                env: opts.env,
+                forbid_unsafe_zen: opts.forbid_unsafe_zen,
+                tool_root: opts.tool_root,
+            };
+            ts::compile_ts_targets(
+                TsCompileTarget::SingleFile {
+                    parent_dir,
+                    file_name,
+                    display_path,
+                    content,
+                },
+                &ts_opts,
+                budget,
+            )
+        }
+        None => Err(AuthoringFailure::Io(format!(
+            "{}: expected a .ts or .py authoring source file",
+            display_path.display()
+        ))),
+    }
+}
+
+fn compile_directory_pinned(
+    root_dir: &TrustedDir,
+    manifest: Option<&NornAppManifest>,
+    opts: &CompileDirOptions<'_>,
+    budget: &mut InvocationBudget,
+) -> Result<String, AuthoringFailure> {
+    if let Some(app_manifest) = manifest {
+        return compile_manifest_project(root_dir, app_manifest, opts, budget);
+    }
+    let mut out = BoundedJsonArray::new();
+    let mut seen_ids = BTreeSet::new();
+    let mut seen_retained_ids = BTreeSet::new();
+    let mut state = DirCompileState {
+        seen_ids: &mut seen_ids,
+        seen_retained_ids: &mut seen_retained_ids,
+        out: &mut out,
+        budget,
+    };
+    compile_source_dir_entries(root_dir, opts, &mut state)?;
+    out.finish("compiled directory artifacts", budget)
+        .map_err(AuthoringFailure::Io)
 }
 
 fn compile_path_to_json(
@@ -469,69 +521,31 @@ fn compile_path_to_json(
 ) -> Result<String, AuthoringFailure> {
     validate_non_empty_scope("--org", org)?;
     validate_non_empty_scope("--env", env)?;
-    match inspect_path_no_follow(path).map_err(AuthoringFailure::Io)? {
-        EntryKind::File => match classify_source_file(path) {
-            Some(SourceLang::Python) => {
-                let (_parent_dir, file_name, content) =
-                    open_regular_file_pinned(path, budget).map_err(AuthoringFailure::Io)?;
-                let loaded = LoadedFile {
-                    display_path: path.to_path_buf(),
-                    rel_path: PathBuf::from(file_name),
-                    content,
-                };
-                py::compile_python_files(&[loaded], org, env, budget)
-            }
-            Some(SourceLang::TypeScript) => {
-                let (parent_dir, file_name, content) =
-                    open_regular_file_pinned(path, budget).map_err(AuthoringFailure::Io)?;
-                ts::compile_ts_targets(
-                    TsCompileTarget::SingleFile {
-                        parent_dir: &parent_dir,
-                        file_name: &file_name,
-                        display_path: path,
-                        content,
-                    },
-                    org,
-                    env,
-                    forbid_unsafe_zen,
-                    tool_root,
-                    budget,
-                )
-            }
-            None => Err(AuthoringFailure::Io(format!(
-                "{}: expected a .ts or .py authoring source file",
-                path.display()
-            ))),
-        },
-        EntryKind::Directory => {
-            let root_dir = TrustedDir::open(path).map_err(AuthoringFailure::Io)?;
-            let opts = CompileDirOptions {
-                org,
-                env,
-                forbid_unsafe_zen,
-                tool_root,
-                allow_empty: false,
-            };
-            if let Some(manifest) =
-                read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?
-            {
-                return compile_manifest_project(&root_dir, &manifest, &opts, budget);
-            }
-            let mut seen_ids = BTreeSet::new();
-            let mut seen_retained_ids = BTreeSet::new();
-            let artifacts = compile_source_dir_entries(
-                &root_dir,
-                &opts,
-                &mut seen_ids,
-                &mut seen_retained_ids,
-                budget,
-            )?;
-            let rendered = norn_authoring::canonical_json(&Value::Array(artifacts))
-                .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-            budget
-                .charge_output_bytes("compiled directory artifacts", rendered.len())
-                .map_err(AuthoringFailure::Io)?;
-            Ok(rendered)
+    let opts = CompileDirOptions {
+        org,
+        env,
+        forbid_unsafe_zen,
+        tool_root,
+        allow_empty: false,
+    };
+    match open_source_target_pinned(path).map_err(AuthoringFailure::Io)? {
+        PinnedSourceTarget::File {
+            parent_dir,
+            file_name,
+            display_path,
+            opened,
+        } => compile_single_file_pinned(
+            &parent_dir,
+            &file_name,
+            &display_path,
+            opened,
+            &opts,
+            budget,
+        ),
+        PinnedSourceTarget::Directory(root_dir) => {
+            let manifest =
+                read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?;
+            compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)
         }
     }
 }
@@ -615,15 +629,19 @@ fn resolve_check_scope(
     }
 }
 
-fn compile_check_source_artifacts(
+fn compile_check_source_pinned(
+    target: PinnedSourceTarget,
+    app_root: Option<&AppRootMatch>,
     req: &CheckSourceRequest<'_>,
     budget: &mut InvocationBudget,
 ) -> Result<String, AuthoringFailure> {
-    match inspect_path_no_follow(req.source).map_err(AuthoringFailure::Io)? {
-        EntryKind::Directory => {
-            let root_dir = TrustedDir::open(req.source).map_err(AuthoringFailure::Io)?;
-            let manifest =
-                read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?;
+    match target {
+        PinnedSourceTarget::Directory(root_dir) => {
+            let manifest = if matches!(app_root, Some(AppRootMatch::SameAsStart)) {
+                read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?
+            } else {
+                None
+            };
             let (resolved_org, resolved_env) =
                 resolve_check_scope(req, manifest.as_ref()).map_err(AuthoringFailure::Io)?;
             validate_non_empty_scope("--org", &resolved_org)?;
@@ -635,34 +653,31 @@ fn compile_check_source_artifacts(
                 tool_root: req.tool_root,
                 allow_empty: false,
             };
-            if let Some(app_manifest) = manifest {
-                return compile_manifest_project(&root_dir, &app_manifest, &opts, budget);
-            }
-            let mut seen_ids = BTreeSet::new();
-            let mut seen_retained_ids = BTreeSet::new();
-            let artifacts = compile_source_dir_entries(
-                &root_dir,
-                &opts,
-                &mut seen_ids,
-                &mut seen_retained_ids,
-                budget,
-            )?;
-            let rendered = norn_authoring::canonical_json(&Value::Array(artifacts))
-                .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-            budget
-                .charge_output_bytes("compiled directory artifacts", rendered.len())
-                .map_err(AuthoringFailure::Io)?;
-            Ok(rendered)
+            compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)
         }
-        EntryKind::File => {
+        PinnedSourceTarget::File {
+            parent_dir,
+            file_name,
+            display_path,
+            opened,
+        } => {
             let (resolved_org, resolved_env) =
                 resolve_check_scope(req, None).map_err(AuthoringFailure::Io)?;
-            compile_path_to_json(
-                req.source,
-                &resolved_org,
-                &resolved_env,
-                req.forbid_unsafe_zen,
-                req.tool_root,
+            validate_non_empty_scope("--org", &resolved_org)?;
+            validate_non_empty_scope("--env", &resolved_env)?;
+            let opts = CompileDirOptions {
+                org: &resolved_org,
+                env: &resolved_env,
+                forbid_unsafe_zen: req.forbid_unsafe_zen,
+                tool_root: req.tool_root,
+                allow_empty: false,
+            };
+            compile_single_file_pinned(
+                &parent_dir,
+                &file_name,
+                &display_path,
+                opened,
+                &opts,
                 budget,
             )
         }
@@ -671,17 +686,32 @@ fn compile_check_source_artifacts(
 
 /// Executes `norn check --source <PATH> [--org <ID> --env <ID>] [--context <FILE>]`.
 pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutput {
-    match check_zero_ci_app_dir(req.source) {
-        ZeroCiOutcome::Clean => {}
-        ZeroCiOutcome::Refused(report) => return CommandOutput::refused(report),
-        ZeroCiOutcome::IoError(err) => return CommandOutput::usage_or_io_error(err),
+    let target = match open_source_target_pinned(req.source) {
+        Ok(pinned) => pinned,
+        Err(err) => return CommandOutput::usage_or_io_error(err),
+    };
+    let start_dir = match &target {
+        PinnedSourceTarget::Directory(dir) => dir,
+        PinnedSourceTarget::File { parent_dir, .. } => parent_dir,
+    };
+    let app_root = match find_norn_app_root_from_dir(start_dir) {
+        Ok(matched) => matched,
+        Err(err) => return CommandOutput::usage_or_io_error(err),
+    };
+    if let Some(matched) = app_root.as_ref() {
+        match check_zero_ci_app_root(matched.as_dir(start_dir)) {
+            ZeroCiOutcome::Clean => {}
+            ZeroCiOutcome::Refused(report) => return CommandOutput::refused(report),
+            ZeroCiOutcome::IoError(err) => return CommandOutput::usage_or_io_error(err),
+        }
     }
 
     let mut budget = InvocationBudget::new();
-    let artifacts_json = match compile_check_source_artifacts(req, &mut budget) {
-        Ok(json_text) => json_text,
-        Err(failure) => return failure.into_output(),
-    };
+    let artifacts_json =
+        match compile_check_source_pinned(target, app_root.as_ref(), req, &mut budget) {
+            Ok(json_text) => json_text,
+            Err(failure) => return failure.into_output(),
+        };
 
     let context_json = match req.context {
         Some(ctx_path) => match crate::cell::read_regular_file_bounded(

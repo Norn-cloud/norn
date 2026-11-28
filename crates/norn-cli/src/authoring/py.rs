@@ -2,17 +2,19 @@
 //!
 //! All Python modules are read through trusted FD-pinned descriptors before reaching
 //! [`compile_python_files`], which elaborates in-memory sources via `elaborate_source`
-//! without ever reopening pathnames.
+//! and streams each artifact directly through [`BoundedJsonWriter`] without ever
+//! reopening pathnames or accumulating unbounded serialized JSON.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write as _;
 
-use norn_authoring_py::{
-    CODE_IO, EnvelopeOptions, JsonValue, PyAuthoringError, canonical_json, elaborate_source,
-};
+use norn_authoring_py::{CODE_IO, EnvelopeOptions, JsonValue, PyAuthoringError, elaborate_source};
 use serde_json::json;
 
 use super::AuthoringFailure;
-use super::fs_io::{InvocationBudget, LoadedFile, display_posix_path};
+use super::fs_io::{
+    BoundedJsonArray, BoundedJsonWriter, InvocationBudget, LoadedFile, display_posix_path,
+};
 
 fn format_py_error_json(error: &PyAuthoringError) -> String {
     let diag = match error.span() {
@@ -45,19 +47,61 @@ fn artifact_id_of(artifact: &JsonValue) -> Option<&str> {
     Some(id.as_str())
 }
 
-/// Elaborates pre-loaded Python authoring sources in-process into a canonical JSON artifact array.
-pub(crate) fn compile_python_files(
+fn write_py_json_value(
+    value: &JsonValue,
+    writer: &mut BoundedJsonWriter<'_>,
+) -> Result<(), String> {
+    match value {
+        JsonValue::Null => writer.write_all(b"null").map_err(|err| err.to_string()),
+        JsonValue::Bool(true) => writer.write_all(b"true").map_err(|err| err.to_string()),
+        JsonValue::Bool(false) => writer.write_all(b"false").map_err(|err| err.to_string()),
+        JsonValue::Number(raw) => writer
+            .write_all(raw.as_bytes())
+            .map_err(|err| err.to_string()),
+        JsonValue::String(text) => {
+            serde_json::to_writer(&mut *writer, text).map_err(|err| err.to_string())
+        }
+        JsonValue::Array(items) => {
+            writer.write_all(b"[").map_err(|err| err.to_string())?;
+            for (idx, item) in items.iter().enumerate() {
+                if idx > 0 {
+                    writer.write_all(b",").map_err(|err| err.to_string())?;
+                }
+                write_py_json_value(item, writer)?;
+            }
+            writer.write_all(b"]").map_err(|err| err.to_string())
+        }
+        JsonValue::Object(map) => {
+            let mut entries: Vec<(&str, &JsonValue)> =
+                map.iter().map(|(key, val)| (key.as_str(), val)).collect();
+            entries.sort_by(|left, right| left.0.encode_utf16().cmp(right.0.encode_utf16()));
+            writer.write_all(b"{").map_err(|err| err.to_string())?;
+            for (idx, (key, val)) in entries.into_iter().enumerate() {
+                if idx > 0 {
+                    writer.write_all(b",").map_err(|err| err.to_string())?;
+                }
+                serde_json::to_writer(&mut *writer, key).map_err(|err| err.to_string())?;
+                writer.write_all(b":").map_err(|err| err.to_string())?;
+                write_py_json_value(val, writer)?;
+            }
+            writer.write_all(b"}").map_err(|err| err.to_string())
+        }
+    }
+}
+
+/// Elaborates pre-loaded Python authoring sources in-process, streaming each artifact
+/// incrementally into `out` under `budget`.
+pub(crate) fn compile_python_files_into(
     files: &[LoadedFile],
     org: &str,
     env: &str,
+    seen_ids: &mut BTreeSet<String>,
+    out: &mut BoundedJsonArray,
     budget: &mut InvocationBudget,
-) -> Result<String, AuthoringFailure> {
+) -> Result<(), AuthoringFailure> {
     let mut scope = BTreeMap::new();
     scope.insert("environmentId".to_owned(), env.to_owned());
     scope.insert("orgId".to_owned(), org.to_owned());
-
-    let mut all_artifacts: Vec<JsonValue> = Vec::new();
-    let mut seen_ids: BTreeSet<String> = BTreeSet::new();
 
     for file in files {
         let source_path = display_posix_path(&file.display_path);
@@ -84,14 +128,28 @@ pub(crate) fn compile_python_files(
                 .to_string();
                 return Err(AuthoringFailure::Diagnostics(refused));
             }
-            all_artifacts.push(artifact);
+            out.push_prefix("python compile output", budget)
+                .map_err(AuthoringFailure::Io)?;
+            {
+                let mut writer = out.writer("python compile output", budget);
+                write_py_json_value(&artifact, &mut writer).map_err(AuthoringFailure::Io)?;
+            }
+            out.mark_pushed();
         }
     }
+    Ok(())
+}
 
-    let rendered = canonical_json(&JsonValue::Array(all_artifacts))
-        .map_err(|err| AuthoringFailure::Diagnostics(format_py_error_json(&err)))?;
-    budget
-        .charge_output_bytes("python compile output", rendered.len())
-        .map_err(AuthoringFailure::Io)?;
-    Ok(rendered)
+/// Elaborates pre-loaded Python authoring sources in-process into a bounded JSON artifact array.
+pub(crate) fn compile_python_files(
+    files: &[LoadedFile],
+    org: &str,
+    env: &str,
+    budget: &mut InvocationBudget,
+) -> Result<String, AuthoringFailure> {
+    let mut seen_ids = BTreeSet::new();
+    let mut out = BoundedJsonArray::new();
+    compile_python_files_into(files, org, env, &mut seen_ids, &mut out, budget)?;
+    out.finish("python compile output", budget)
+        .map_err(AuthoringFailure::Io)
 }

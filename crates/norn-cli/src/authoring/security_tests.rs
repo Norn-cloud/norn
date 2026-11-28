@@ -8,9 +8,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Value, json};
 
 use super::atomic_io::write_file_atomic;
-use super::fs_io::{InvocationBudget, is_ts_or_json_support};
+use super::fs_io::{BoundedJsonArray, BoundedJsonWriter, InvocationBudget, is_ts_or_json_support};
 use super::trusted_dir::TrustedDir;
-use super::zero_ci::{ZERO_CI_DIAGNOSTIC_CODE, build_zero_ci_report};
+use super::zero_ci::{
+    ZERO_CI_DIAGNOSTIC_CODE, build_zero_ci_report, find_norn_app_root_from_dir_with_limit,
+};
 use super::{CheckSourceRequest, CompileArgs, execute_check_source, execute_compile};
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -253,6 +255,91 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         tool_root: None,
     });
     assert_eq!(sym_workflows.exit_code, 1);
+    std::fs::remove_dir_all(scratch.path().join(".github"))?;
+
+    // Case 4: `.github` is a regular file -> must fail closed (exit 2), never treated as clean.
+    scratch.write(".github", "regular file masquerading as .github\n")?;
+    let regular_github = execute_check_source(&CheckSourceRequest {
+        source: scratch.path(),
+        context: None,
+        org: None,
+        env: None,
+        forbid_unsafe_zen: false,
+        tool_root: None,
+    });
+    assert_eq!(regular_github.exit_code, 2);
+    assert!(
+        regular_github.stderr.contains("not a directory"),
+        "expected .github not a directory error, got: {}",
+        regular_github.stderr
+    );
+    Ok(())
+}
+
+#[test]
+fn zero_ci_ancestor_search_fails_closed_on_depth_limit_and_non_regular_manifest() -> TestResult {
+    let scratch = SecWorkspace::new("zero-ci-depth")?;
+    let nested = scratch.path().join("a/b/c");
+    std::fs::create_dir_all(&nested)?;
+    let nested_dir = TrustedDir::open(&nested)?;
+
+    // Exhausting ancestor depth without reaching filesystem root must return Err, never Ok(None).
+    let depth_err = find_norn_app_root_from_dir_with_limit(&nested_dir, 1);
+    assert!(
+        depth_err
+            .as_ref()
+            .is_err_and(|msg| msg.contains("exceeded 1 levels")),
+        "expected depth-limit refusal, got: {depth_err:?}"
+    );
+
+    // A non-regular `norn.json` (directory) must fail closed, never be ignored as absent.
+    let dir_manifest = scratch.path().join("a/b/norn.json");
+    std::fs::create_dir_all(&dir_manifest)?;
+    let non_regular_err = find_norn_app_root_from_dir_with_limit(&nested_dir, 4);
+    assert!(
+        non_regular_err
+            .as_ref()
+            .is_err_and(|msg| msg.contains("not a regular file")),
+        "expected non-regular norn.json refusal, got: {non_regular_err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn bounded_json_writer_aborts_mid_serialization_before_exceeding_limit() -> TestResult {
+    let mut budget = InvocationBudget::with_limits(100, 100, 1024, 4096, 32);
+    let mut buf = Vec::new();
+    let oversized = json!({
+        "artifactId": "demo.Large.entity",
+        "payload": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    });
+
+    let write_res = {
+        let mut writer = BoundedJsonWriter::new("test output", &mut buf, &mut budget);
+        serde_json::to_writer(&mut writer, &oversized)
+    };
+    assert!(
+        write_res
+            .as_ref()
+            .is_err_and(|err| err.to_string().contains("output limit")),
+        "expected bounded writer overflow error, got: {write_res:?}"
+    );
+    assert!(
+        buf.len() <= 32,
+        "buffer must never exceed output budget cap, got {} bytes",
+        buf.len()
+    );
+
+    // Streaming JSON array helper must also abort before exceeding output cap.
+    let mut array_budget = InvocationBudget::with_limits(100, 100, 1024, 4096, 24);
+    let mut array = BoundedJsonArray::new();
+    let array_err = array.push_value("test array", &oversized, &mut array_budget);
+    assert!(
+        array_err
+            .as_ref()
+            .is_err_and(|msg| msg.contains("output limit")),
+        "expected BoundedJsonArray overflow error, got: {array_err:?}"
+    );
     Ok(())
 }
 
@@ -268,7 +355,21 @@ fn check_source_combines_ts_and_precompiled_json_pack_dirs() -> TestResult {
         &json!({
             "kind": "question",
             "id": "demo.weekly",
-            "payload": { "name": "demo.weekly" }
+            "payload": {
+                "irVersion": "0.1",
+                "name": "demo.weekly",
+                "objectSet": "shop.Product",
+                "aggregate": [{ "metric": "demo.count" }],
+                "window": {
+                    "start": "2026-07-06T00:00:00Z",
+                    "end": "2026-10-26T00:00:00Z"
+                },
+                "calendar": "iso_utc",
+                "freshness": {
+                    "kind": "live",
+                    "maxAgeMs": 5000
+                }
+            }
         })
         .to_string(),
     )?;
@@ -412,6 +513,120 @@ fn norn_json_sources_refuse_symlink_and_parent_escape() -> TestResult {
         refused.stderr.contains("symlink"),
         "expected symlink refusal, got: {}",
         refused.stderr
+    );
+    Ok(())
+}
+
+#[test]
+fn retained_definitions_refuse_empty_payload_for_all_kinds() -> TestResult {
+    for kind in ["question", "dashboard", "approval"] {
+        let scratch = SecWorkspace::new(&format!("empty-retained-{kind}"))?;
+        scratch.write(
+            &format!("definitions/{kind}.json"),
+            &json!({
+                "kind": kind,
+                "id": format!("demo.empty_{kind}"),
+                "payload": {},
+            })
+            .to_string(),
+        )?;
+        scratch.write(
+            "norn.json",
+            &json!({
+                "format": "norn-project/1",
+                "name": "empty-retained",
+                "sources": ["definitions"],
+                "scope": { "orgId": "local", "environmentId": "dev" },
+            })
+            .to_string(),
+        )?;
+
+        let refused = execute_compile(&CompileArgs {
+            path: scratch.path().to_path_buf(),
+            org: "local".to_owned(),
+            env: "dev".to_owned(),
+            forbid_unsafe_zen: false,
+            out: None,
+            tool_root: None,
+        });
+        assert_eq!(
+            refused.exit_code, 2,
+            "expected empty {kind} payload refusal, got stdout={} stderr={}",
+            refused.stdout, refused.stderr
+        );
+        assert!(
+            refused
+                .stderr
+                .contains(&format!("invalid retained {kind} definition")),
+            "expected structural validation error for {kind}, got: {}",
+            refused.stderr
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn manifest_source_dir_refuses_hidden_symlink_and_hidden_unsupported_file() -> TestResult {
+    use std::os::unix::fs::symlink;
+
+    // Hidden symlink inside a manifest source directory must fail closed, never be skipped.
+    let sym_ws = SecWorkspace::new("hidden-symlink")?;
+    let outside = SecWorkspace::new("hidden-outside")?;
+    let target = outside.write("evil.py", "x = 1\n")?;
+    sym_ws.write("src/ok.py", "x = 1\n")?;
+    symlink(&target, sym_ws.path().join("src/.hidden.py"))?;
+    sym_ws.write(
+        "norn.json",
+        &json!({
+            "format": "norn-project/1",
+            "name": "hidden-sym-app",
+            "sources": ["src"],
+            "scope": { "orgId": "local", "environmentId": "dev" },
+        })
+        .to_string(),
+    )?;
+    let sym_out = execute_compile(&CompileArgs {
+        path: sym_ws.path().to_path_buf(),
+        org: "local".to_owned(),
+        env: "dev".to_owned(),
+        forbid_unsafe_zen: false,
+        out: None,
+        tool_root: None,
+    });
+    assert_eq!(sym_out.exit_code, 2);
+    assert!(
+        sym_out.stderr.contains("symlink"),
+        "expected hidden symlink refusal, got: {}",
+        sym_out.stderr
+    );
+
+    // Unsupported hidden regular file inside a manifest source directory must be refused.
+    let junk_ws = SecWorkspace::new("hidden-junk")?;
+    junk_ws.write("src/.DS_Store", "junk\n")?;
+    junk_ws.write(
+        "norn.json",
+        &json!({
+            "format": "norn-project/1",
+            "name": "hidden-junk-app",
+            "sources": ["src"],
+            "scope": { "orgId": "local", "environmentId": "dev" },
+        })
+        .to_string(),
+    )?;
+    let junk_out = execute_compile(&CompileArgs {
+        path: junk_ws.path().to_path_buf(),
+        org: "local".to_owned(),
+        env: "dev".to_owned(),
+        forbid_unsafe_zen: false,
+        out: None,
+        tool_root: None,
+    });
+    assert_eq!(junk_out.exit_code, 2);
+    assert!(
+        junk_out.stderr.contains("unsupported file"),
+        "expected unsupported hidden file refusal, got: {}",
+        junk_out.stderr
     );
     Ok(())
 }

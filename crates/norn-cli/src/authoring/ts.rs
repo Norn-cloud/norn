@@ -11,7 +11,7 @@ use norn_authoring::{
     AuthoringProgram, BoundedVfs, CompilerLimits, DashboardsCompileOutcome,
     DefinitionsCompileOptions, DefinitionsCompileOutcome, EnvelopeOptions, FlowCompileOptions,
     FlowCompileOutcome, PINNED_EFFECT_DIST_PREFIX, Profile, ProfileChecker, ProfileDiagnostic,
-    QuestionsCompileOutcome, canonical_json, compile_dashboards_vfs, compile_definitions_program,
+    QuestionsCompileOutcome, compile_dashboards_vfs, compile_definitions_program,
     compile_flow_program, compile_questions_vfs,
 };
 use serde_json::{Value, json};
@@ -19,13 +19,21 @@ use serde_json::{Value, json};
 use super::AuthoringFailure;
 use super::atomic_io::write_file_atomic;
 use super::fs_io::{
-    InvocationBudget, SourceLang, classify_source_file, discover_tool_root, display_posix_path,
-    is_ts_or_json_support,
+    BoundedJsonArray, BoundedJsonWriter, InvocationBudget, SourceLang, classify_source_file,
+    discover_tool_root, display_posix_path, is_ts_or_json_support,
 };
 use super::trusted_dir::{TrustedDir, open_regular_file_pinned};
 
 const MAX_LOCAL_IMPORTS: usize = 128;
 const MAX_LOCAL_IMPORT_DEPTH: usize = 16;
+
+/// Shared compilation options for `TypeScript` authoring modules.
+pub(crate) struct TsCompileOptions<'a> {
+    pub(crate) org: &'a str,
+    pub(crate) env: &'a str,
+    pub(crate) forbid_unsafe_zen: bool,
+    pub(crate) tool_root: Option<&'a Path>,
+}
 
 /// FD-pinned target passed to [`compile_ts_targets`].
 pub(crate) enum TsCompileTarget<'a> {
@@ -359,14 +367,19 @@ fn open_single_ts_file_pinned(
     open_regular_file_pinned(path, budget).map_err(AuthoringFailure::Io)
 }
 
+struct ArtifactSink<'a> {
+    seen_ids: &'a mut BTreeSet<String>,
+    out: &'a mut BoundedJsonArray,
+    budget: &'a mut InvocationBudget,
+}
+
 fn append_unique_artifact(
-    artifact: Value,
+    artifact: &Value,
     source_path: &str,
-    seen_ids: &mut BTreeSet<String>,
-    out: &mut Vec<Value>,
+    sink: &mut ArtifactSink<'_>,
 ) -> Result<(), AuthoringFailure> {
     if let Some(id) = artifact.get("artifactId").and_then(Value::as_str)
-        && !seen_ids.insert(id.to_owned())
+        && !sink.seen_ids.insert(id.to_owned())
     {
         let refused = json!({
             "ok": false,
@@ -379,8 +392,9 @@ fn append_unique_artifact(
         .to_string();
         return Err(AuthoringFailure::Diagnostics(refused));
     }
-    out.push(artifact);
-    Ok(())
+    sink.out
+        .push_value("typescript compile output", artifact, sink.budget)
+        .map_err(AuthoringFailure::Io)
 }
 
 struct FlowCollectConfig<'a> {
@@ -396,8 +410,7 @@ fn collect_module_artifacts(
     vpath: &str,
     source_path: &str,
     outcome: DefinitionsCompileOutcome,
-    seen_ids: &mut BTreeSet<String>,
-    artifacts: &mut Vec<Value>,
+    sink: &mut ArtifactSink<'_>,
 ) -> Result<Vec<Value>, AuthoringFailure> {
     let mut failures = Vec::new();
     match outcome {
@@ -405,9 +418,9 @@ fn collect_module_artifacts(
             failures.push(json!({ "file": source_path, "diagnostics": diagnostics }));
         }
         DefinitionsCompileOutcome::Ok(out) => {
-            let before_count = artifacts.len();
+            let before_count = sink.out.len();
             for artifact in out.artifacts {
-                append_unique_artifact(artifact, source_path, seen_ids, artifacts)?;
+                append_unique_artifact(&artifact, source_path, sink)?;
             }
             if out.flows > 0 {
                 let flow_opts = FlowCompileOptions {
@@ -429,7 +442,7 @@ fn collect_module_artifacts(
                     match flow_outcome {
                         FlowCompileOutcome::Ok(flow_out) => {
                             for artifact in flow_out.artifacts {
-                                append_unique_artifact(artifact, source_path, seen_ids, artifacts)?;
+                                append_unique_artifact(&artifact, source_path, sink)?;
                             }
                         }
                         FlowCompileOutcome::Err { diagnostics } => {
@@ -438,9 +451,7 @@ fn collect_module_artifacts(
                         }
                     }
                 }
-            } else if artifacts.len() == before_count
-                && out.retained.is_empty()
-                && cfg.single_module
+            } else if sink.out.len() == before_count && out.retained.is_empty() && cfg.single_module
             {
                 failures.push(json!({
                     "file": source_path,
@@ -455,14 +466,12 @@ fn collect_module_artifacts(
     Ok(failures)
 }
 
-fn run_ts_program_compilation(
+fn run_ts_program_compilation_into(
     mounted: MountedTsContext,
-    org: &str,
-    env: &str,
-    forbid_unsafe_zen: bool,
+    opts: &TsCompileOptions<'_>,
     single_module: bool,
-    budget: &mut InvocationBudget,
-) -> Result<String, AuthoringFailure> {
+    sink: &mut ArtifactSink<'_>,
+) -> Result<(), AuthoringFailure> {
     let root_slices: Vec<&str> = mounted.root_vpaths.iter().map(String::as_str).collect();
     let checker = ProfileChecker::new(mounted.profile.clone());
     let mut program = AuthoringProgram::new(mounted.vfs, &root_slices, mounted.profile)
@@ -472,8 +481,8 @@ fn run_ts_program_compilation(
     }
 
     let mut scope = BTreeMap::new();
-    scope.insert("environmentId".to_owned(), env.to_owned());
-    scope.insert("orgId".to_owned(), org.to_owned());
+    scope.insert("environmentId".to_owned(), opts.env.to_owned());
+    scope.insert("orgId".to_owned(), opts.org.to_owned());
 
     let outcomes = compile_definitions_program(&checker, &program, &root_slices, |vpath| {
         let source_path = mounted
@@ -488,7 +497,7 @@ fn run_ts_program_compilation(
                 registry_package_path: None,
             },
             allow_empty: true,
-            forbid_unsafe_zen: Some(forbid_unsafe_zen),
+            forbid_unsafe_zen: Some(opts.forbid_unsafe_zen),
             tool_root: "/".to_owned(),
             limits: CompilerLimits::default(),
         }
@@ -499,11 +508,9 @@ fn run_ts_program_compilation(
         checker: &checker,
         program: &program,
         scope: &scope,
-        forbid_unsafe_zen,
+        forbid_unsafe_zen: opts.forbid_unsafe_zen,
         single_module,
     };
-    let mut artifacts = Vec::new();
-    let mut seen_ids = BTreeSet::new();
     let mut failures = Vec::new();
     for (vpath, outcome) in mounted.root_vpaths.iter().zip(outcomes) {
         let source_path = mounted
@@ -515,8 +522,7 @@ fn run_ts_program_compilation(
             vpath,
             source_path,
             outcome,
-            &mut seen_ids,
-            &mut artifacts,
+            sink,
         )?);
     }
 
@@ -528,24 +534,17 @@ fn run_ts_program_compilation(
         .to_string();
         return Err(AuthoringFailure::Diagnostics(doc));
     }
-
-    let rendered = canonical_json(&Value::Array(artifacts))
-        .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    budget
-        .charge_output_bytes("typescript compile output", rendered.len())
-        .map_err(AuthoringFailure::Io)?;
-    Ok(rendered)
+    Ok(())
 }
 
-/// Compiles one `TypeScript` file or a trusted directory's top-level `TypeScript` modules into canonical JSON IR.
-pub(crate) fn compile_ts_targets(
+/// Compiles `TypeScript` targets and streams each emitted artifact directly into `out` under `budget`.
+pub(crate) fn compile_ts_targets_into(
     target: TsCompileTarget<'_>,
-    org: &str,
-    env: &str,
-    forbid_unsafe_zen: bool,
-    tool_root: Option<&Path>,
+    opts: &TsCompileOptions<'_>,
+    seen_ids: &mut BTreeSet<String>,
+    out: &mut BoundedJsonArray,
     budget: &mut InvocationBudget,
-) -> Result<String, AuthoringFailure> {
+) -> Result<(), AuthoringFailure> {
     let single_module = match &target {
         TsCompileTarget::SingleFile { .. } => true,
         TsCompileTarget::Directory { root_rel_paths, .. } => root_rel_paths.len() == 1,
@@ -561,15 +560,33 @@ pub(crate) fn compile_ts_targets(
             file_name,
             display_path,
             content,
-            tool_root,
+            opts.tool_root,
             budget,
         )?,
         TsCompileTarget::Directory {
             root_dir,
             root_rel_paths,
-        } => mount_ts_files_and_support(root_dir, &root_rel_paths, tool_root, budget)?,
+        } => mount_ts_files_and_support(root_dir, &root_rel_paths, opts.tool_root, budget)?,
     };
-    run_ts_program_compilation(mounted, org, env, forbid_unsafe_zen, single_module, budget)
+    let mut sink = ArtifactSink {
+        seen_ids,
+        out,
+        budget,
+    };
+    run_ts_program_compilation_into(mounted, opts, single_module, &mut sink)
+}
+
+/// Compiles one `TypeScript` target into a bounded JSON artifact array.
+pub(crate) fn compile_ts_targets(
+    target: TsCompileTarget<'_>,
+    opts: &TsCompileOptions<'_>,
+    budget: &mut InvocationBudget,
+) -> Result<String, AuthoringFailure> {
+    let mut seen_ids = BTreeSet::new();
+    let mut out = BoundedJsonArray::new();
+    compile_ts_targets_into(target, opts, &mut seen_ids, &mut out, budget)?;
+    out.finish("typescript compile output", budget)
+        .map_err(AuthoringFailure::Io)
 }
 
 /// Runs `ProfileChecker` on a single `TypeScript` file and returns `(reports_json, all_clean)`.
@@ -593,11 +610,14 @@ pub(crate) fn run_profile(
         .check_vfs(mounted.vfs, &root_slices, mounted.effect_dist_prefix)
         .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     let clean = reports.iter().all(|report| report.diagnostics.is_empty());
-    let rendered =
-        serde_json::to_string(&reports).map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    budget
-        .charge_output_bytes("profile output", rendered.len())
-        .map_err(AuthoringFailure::Io)?;
+    let mut buf = Vec::new();
+    {
+        let mut writer = BoundedJsonWriter::new("profile output", &mut buf, &mut budget);
+        serde_json::to_writer(&mut writer, &reports)
+            .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+    }
+    let rendered = String::from_utf8(buf)
+        .map_err(|err| AuthoringFailure::Io(format!("profile output: invalid UTF-8: {err}")))?;
     Ok((rendered, clean))
 }
 
@@ -632,10 +652,14 @@ pub(crate) fn run_question(
     .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     match outcome {
         QuestionsCompileOutcome::Ok { questions } => {
-            let rendered = canonical_json(&Value::Array(questions))
-                .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-            budget
-                .charge_output_bytes("question output", rendered.len())
+            let mut array = BoundedJsonArray::new();
+            for question in &questions {
+                array
+                    .push_value("question output", question, &mut budget)
+                    .map_err(AuthoringFailure::Io)?;
+            }
+            let rendered = array
+                .finish("question output", &mut budget)
                 .map_err(AuthoringFailure::Io)?;
             if let Some(out_path) = out {
                 write_file_atomic(out_path, &rendered).map_err(AuthoringFailure::Io)?;
@@ -681,10 +705,14 @@ pub(crate) fn run_dashboard(
     .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     match outcome {
         DashboardsCompileOutcome::Ok { dashboards } => {
-            let rendered = canonical_json(&Value::Array(dashboards))
-                .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-            budget
-                .charge_output_bytes("dashboard output", rendered.len())
+            let mut array = BoundedJsonArray::new();
+            for dashboard in &dashboards {
+                array
+                    .push_value("dashboard output", dashboard, &mut budget)
+                    .map_err(AuthoringFailure::Io)?;
+            }
+            let rendered = array
+                .finish("dashboard output", &mut budget)
                 .map_err(AuthoringFailure::Io)?;
             if let Some(out_path) = out {
                 write_file_atomic(out_path, &rendered).map_err(AuthoringFailure::Io)?;

@@ -1,6 +1,6 @@
 //! Bounded, symlink-safe filesystem primitives and [`InvocationBudget`] for native Rust authoring.
 
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 /// Maximum single authoring source file size (`4 MiB`).
@@ -108,15 +108,42 @@ impl InvocationBudget {
         Ok(())
     }
 
-    /// Returns the maximum bytes that may be read from the next single file.
-    pub(crate) fn remaining_file_read_limit(&self) -> u64 {
-        let remaining_total = self.max_bytes_read.saturating_sub(self.bytes_read);
-        self.max_file_bytes.min(remaining_total)
+    /// Fast-fails if a reported file length already exceeds per-file or remaining invocation limits.
+    pub(crate) fn check_file_size_hint(
+        &self,
+        path: &Path,
+        reported_len: u64,
+    ) -> Result<(), String> {
+        if reported_len > self.max_file_bytes {
+            return Err(format!(
+                "{}: exceeds {} byte authoring source limit",
+                path.display(),
+                self.max_file_bytes
+            ));
+        }
+        if self
+            .bytes_read
+            .checked_add(reported_len)
+            .is_none_or(|total| total > self.max_bytes_read)
+        {
+            return Err(format!(
+                "{}: invocation exceeds {} byte read limit",
+                path.display(),
+                self.max_bytes_read
+            ));
+        }
+        Ok(())
     }
 
-    /// Charges the actual bytes read from a single file descriptor.
-    pub(crate) fn charge_bytes_read(&mut self, path: &Path, actual: u64) -> Result<(), String> {
-        if actual > self.max_file_bytes {
+    /// Charges a streamed chunk against both per-file and invocation-wide byte limits
+    /// *before* copying the chunk into memory.
+    pub(crate) fn charge_read_chunk(
+        &mut self,
+        path: &Path,
+        file_bytes_so_far: u64,
+        chunk_bytes: u64,
+    ) -> Result<(), String> {
+        if file_bytes_so_far > self.max_file_bytes {
             return Err(format!(
                 "{}: exceeds {} byte authoring source limit",
                 path.display(),
@@ -125,7 +152,7 @@ impl InvocationBudget {
         }
         let next = self
             .bytes_read
-            .checked_add(actual)
+            .checked_add(chunk_bytes)
             .filter(|&total| total <= self.max_bytes_read)
             .ok_or_else(|| {
                 format!(
@@ -167,15 +194,6 @@ impl InvocationBudget {
     }
 }
 
-/// Regular filesystem entry kind after a no-follow open.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum EntryKind {
-    /// Regular file.
-    File,
-    /// Directory.
-    Directory,
-}
-
 /// Supported native authoring languages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SourceLang {
@@ -192,8 +210,125 @@ pub(crate) enum ZeroCiStatus {
     Absent,
     /// `.github/workflows` exists (directory, non-directory, or symlink).
     Present(String),
-    /// Fail-closed inspection refusal (`ELOOP`, `EACCES`, or other OS error).
+    /// Fail-closed inspection refusal (`ELOOP`, `ENOTDIR`, `EACCES`, or other OS error).
     Error(String),
+}
+
+/// Streaming [`std::io::Write`] sink that charges every slice against an
+/// [`InvocationBudget`] *before* copying bytes into the output buffer.
+pub(crate) struct BoundedJsonWriter<'a> {
+    label: &'a str,
+    out: &'a mut Vec<u8>,
+    budget: &'a mut InvocationBudget,
+}
+
+impl<'a> BoundedJsonWriter<'a> {
+    /// Creates a bounded streaming writer charging output bytes under `label`.
+    pub(crate) fn new(
+        label: &'a str,
+        out: &'a mut Vec<u8>,
+        budget: &'a mut InvocationBudget,
+    ) -> Self {
+        Self { label, out, budget }
+    }
+}
+
+impl std::io::Write for BoundedJsonWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.budget
+            .charge_output_bytes(self.label, buf.len())
+            .map_err(std::io::Error::other)?;
+        self.out.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Streaming JSON array accumulator backed by [`BoundedJsonWriter`].
+///
+/// Serializes each element directly into the bounded byte buffer as soon as it is
+/// produced, aborting mid-serialization before exceeding `MAX_OUTPUT_BYTES`.
+pub(crate) struct BoundedJsonArray {
+    out: Vec<u8>,
+    count: usize,
+}
+
+impl BoundedJsonArray {
+    /// Creates an empty streaming JSON array accumulator.
+    pub(crate) const fn new() -> Self {
+        Self {
+            out: Vec::new(),
+            count: 0,
+        }
+    }
+
+    /// Returns the number of elements streamed so far.
+    pub(crate) const fn len(&self) -> usize {
+        self.count
+    }
+
+    /// Returns `true` when no elements have been streamed yet.
+    pub(crate) const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Borrows a [`BoundedJsonWriter`] targeting this accumulator's output buffer.
+    pub(crate) fn writer<'a>(
+        &'a mut self,
+        label: &'a str,
+        budget: &'a mut InvocationBudget,
+    ) -> BoundedJsonWriter<'a> {
+        BoundedJsonWriter::new(label, &mut self.out, budget)
+    }
+
+    /// Writes `[` for the first element or `,` for subsequent elements through [`BoundedJsonWriter`].
+    pub(crate) fn push_prefix(
+        &mut self,
+        label: &str,
+        budget: &mut InvocationBudget,
+    ) -> Result<(), String> {
+        let prefix: &[u8] = if self.count == 0 { b"[" } else { b"," };
+        let mut writer = self.writer(label, budget);
+        writer.write_all(prefix).map_err(|err| err.to_string())
+    }
+
+    /// Increments the streamed element count after writing an element body.
+    pub(crate) fn mark_pushed(&mut self) {
+        self.count = self.count.saturating_add(1);
+    }
+
+    /// Streams one `serde_json::Value` element directly through [`BoundedJsonWriter`].
+    pub(crate) fn push_value(
+        &mut self,
+        label: &str,
+        value: &serde_json::Value,
+        budget: &mut InvocationBudget,
+    ) -> Result<(), String> {
+        self.push_prefix(label, budget)?;
+        {
+            let mut writer = self.writer(label, budget);
+            serde_json::to_writer(&mut writer, value).map_err(|err| err.to_string())?;
+        }
+        self.mark_pushed();
+        Ok(())
+    }
+
+    /// Closes the JSON array (`[]\n` or `]\n`) through [`BoundedJsonWriter`] and returns UTF-8 text.
+    pub(crate) fn finish(
+        mut self,
+        label: &str,
+        budget: &mut InvocationBudget,
+    ) -> Result<String, String> {
+        let suffix: &[u8] = if self.count == 0 { b"[]\n" } else { b"]\n" };
+        {
+            let mut writer = BoundedJsonWriter::new(label, &mut self.out, budget);
+            writer.write_all(suffix).map_err(|err| err.to_string())?;
+        }
+        String::from_utf8(self.out).map_err(|err| format!("{label}: invalid UTF-8: {err}"))
+    }
 }
 
 /// A regular file already opened and read directly from a trusted descriptor.
@@ -267,9 +402,10 @@ pub(crate) fn should_skip_dir(name: &str) -> bool {
     name.starts_with('.') || name == "node_modules" || name == "target"
 }
 
-/// Reads an already-opened regular file directly from its descriptor, charging actual bytes read.
+/// Reads an already-opened regular file directly from its descriptor in fixed-size chunks,
+/// charging every chunk against `budget` *before* copying bytes into memory.
 pub(crate) fn read_opened_file_budgeted(
-    file: std::fs::File,
+    mut file: std::fs::File,
     display_path: &Path,
     budget: &mut InvocationBudget,
 ) -> Result<String, String> {
@@ -279,17 +415,28 @@ pub(crate) fn read_opened_file_budgeted(
     if !meta.file_type().is_file() {
         return Err(format!("{}: not a regular file", display_path.display()));
     }
-    let read_cap = budget.remaining_file_read_limit();
-    if meta.len() > read_cap {
-        budget.charge_bytes_read(display_path, meta.len())?;
-    }
+    budget.check_file_size_hint(display_path, meta.len())?;
+
     let mut bytes = Vec::new();
-    file.take(read_cap.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|err| format!("{}: {err}", display_path.display()))?;
-    let actual =
-        u64::try_from(bytes.len()).map_err(|err| format!("{}: {err}", display_path.display()))?;
-    budget.charge_bytes_read(display_path, actual)?;
+    let mut file_bytes: u64 = 0;
+    let mut chunk = [0_u8; 16_384];
+    loop {
+        let count = match file.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read_len) => read_len,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(format!("{}: {err}", display_path.display())),
+        };
+        let count_u64 =
+            u64::try_from(count).map_err(|err| format!("{}: {err}", display_path.display()))?;
+        file_bytes = file_bytes
+            .checked_add(count_u64)
+            .ok_or_else(|| format!("{}: file size overflow", display_path.display()))?;
+        budget.charge_read_chunk(display_path, file_bytes, count_u64)?;
+        if let Some(slice) = chunk.get(..count) {
+            bytes.extend_from_slice(slice);
+        }
+    }
     String::from_utf8(bytes)
         .map_err(|err| format!("{}: invalid UTF-8: {err}", display_path.display()))
 }
@@ -407,61 +554,6 @@ pub(crate) fn open_entry_no_follow<P: rustix::path::Arg>(
                 format!("{}: {err}", display_path.display())
             }
         })
-}
-
-/// Inspects `path` component-by-component without following symlinks or blocking on FIFOs.
-#[cfg(unix)]
-pub(crate) fn inspect_path_no_follow(path: &Path) -> Result<EntryKind, String> {
-    use std::os::fd::AsFd as _;
-    use std::os::unix::ffi::OsStrExt as _;
-
-    let shown = path.display();
-    let raw = path.as_os_str().as_bytes();
-    let must_be_dir = raw.ends_with(b"/") || raw.ends_with(b"/.");
-    let Some(final_name) = path.file_name() else {
-        let _dir_fd = open_dir_components_no_follow(path)?;
-        return Ok(EntryKind::Directory);
-    };
-    let parent = path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let parent_fd = open_dir_components_no_follow(parent)?;
-    let opened = open_entry_no_follow(parent_fd.as_fd(), final_name, path)?;
-    let kind = opened
-        .metadata()
-        .map_err(|err| format!("{shown}: {err}"))?
-        .file_type();
-    if kind.is_dir() {
-        return Ok(EntryKind::Directory);
-    }
-    if kind.is_file() {
-        if must_be_dir {
-            return Err(format!("{shown}: not a directory"));
-        }
-        return Ok(EntryKind::File);
-    }
-    Err(format!("{shown}: not a regular file or directory"))
-}
-
-/// Inspects `path` without following symlinks (non-Unix fallback).
-#[cfg(not(unix))]
-pub(crate) fn inspect_path_no_follow(path: &Path) -> Result<EntryKind, String> {
-    let shown = path.display();
-    if let Some(parent) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-        verify_no_symlink_ancestors_non_unix(parent)?;
-    }
-    let meta = std::fs::symlink_metadata(path).map_err(|err| format!("{shown}: {err}"))?;
-    if meta.file_type().is_symlink() {
-        return Err(format!("{shown}: symlinks are refused"));
-    }
-    if meta.is_dir() {
-        return Ok(EntryKind::Directory);
-    }
-    if meta.is_file() {
-        return Ok(EntryKind::File);
-    }
-    Err(format!("{shown}: not a regular file or directory"))
 }
 
 /// Verifies no ancestor directory of `dir` is a symlink (non-Unix fallback).

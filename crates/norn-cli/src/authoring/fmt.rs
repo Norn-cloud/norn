@@ -1,19 +1,28 @@
 //! Native Rust `norn fmt [--check] <path>` for `TypeScript` and Python authoring sources.
 //!
 //! Reads every target directly from a trusted FD-pinned descriptor under an
-//! [`InvocationBudget`] and atomically writes modified files through their
-//! verified parent directory fd (never reopening raw pathnames).
+//! [`InvocationBudget`] and atomically writes modified files directly through
+//! the retained parent directory descriptor (never reopening pathnames).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::json;
 
+use super::atomic_io::write_file_atomic_in_trusted_dir;
 use super::fs_io::{
-    EntryKind, InvocationBudget, SourceLang, classify_source_file, display_posix_path,
-    inspect_path_no_follow, is_formattable_file,
+    InvocationBudget, SourceLang, classify_source_file, display_posix_path, is_formattable_file,
+    read_opened_file_budgeted,
 };
-use super::trusted_dir::{TrustedDir, open_regular_file_pinned};
+use super::trusted_dir::{PinnedSourceTarget, TrustedDir, open_source_target_pinned};
 use super::{CommandOutput, FmtArgs};
+
+struct PendingFmtWrite {
+    parent: Arc<TrustedDir>,
+    file_name: String,
+    display_path: PathBuf,
+    formatted: String,
+}
 
 fn format_one(file: &Path, lang: SourceLang, source: &str) -> Result<String, String> {
     match lang {
@@ -60,48 +69,60 @@ fn format_one(file: &Path, lang: SourceLang, source: &str) -> Result<String, Str
     }
 }
 
-fn execute_fmt_single_file(args: &FmtArgs, budget: &mut InvocationBudget) -> CommandOutput {
-    let Some(lang) = classify_source_file(&args.path) else {
+fn execute_fmt_single_file(
+    args: &FmtArgs,
+    parent_dir: &TrustedDir,
+    file_name: &str,
+    display_path: &Path,
+    opened: std::fs::File,
+    budget: &mut InvocationBudget,
+) -> CommandOutput {
+    let Some(lang) = classify_source_file(display_path) else {
         return CommandOutput::usage_or_io_error(format!(
             "{}: expected a .ts, .tsx, or .py authoring file",
-            args.path.display()
+            display_path.display()
         ));
     };
-    let (parent_dir, file_name, before) = match open_regular_file_pinned(&args.path, budget) {
-        Ok(loaded) => loaded,
+    if let Err(err) = budget.charge_accepted_file(display_path) {
+        return CommandOutput::usage_or_io_error(err);
+    }
+    let before = match read_opened_file_budgeted(opened, display_path, budget) {
+        Ok(content) => content,
         Err(err) => return CommandOutput::usage_or_io_error(err),
     };
-    let after = match format_one(&args.path, lang, &before) {
+    let after = match format_one(display_path, lang, &before) {
         Ok(formatted) => formatted,
         Err(diag_json) => return CommandOutput::refused(diag_json),
     };
     if after == before {
         return CommandOutput::ok(String::new());
     }
-    let shown = display_posix_path(&args.path);
+    let shown = display_posix_path(display_path);
     if let Err(err) = budget.charge_output_bytes(&shown, after.len()) {
         return CommandOutput::usage_or_io_error(err);
     }
     if args.check {
         return CommandOutput::refused(shown);
     }
-    if let Err(err) = parent_dir.write_rel_file_atomic(Path::new(&file_name), &args.path, &after) {
+    if let Err(err) = write_file_atomic_in_trusted_dir(parent_dir, file_name, display_path, &after)
+    {
         return CommandOutput::usage_or_io_error(err);
     }
     CommandOutput::ok(shown)
 }
 
-fn execute_fmt_directory(args: &FmtArgs, budget: &mut InvocationBudget) -> CommandOutput {
-    let root_dir = match TrustedDir::open(&args.path) {
-        Ok(dir) => dir,
-        Err(err) => return CommandOutput::usage_or_io_error(err),
-    };
-    let files = match root_dir.walk_files(is_formattable_file, budget) {
+fn execute_fmt_directory(
+    args: &FmtArgs,
+    root_dir: TrustedDir,
+    budget: &mut InvocationBudget,
+) -> CommandOutput {
+    let root_shared = Arc::new(root_dir);
+    let files = match root_shared.walk_files_pinned(is_formattable_file, budget) {
         Ok(list) => list,
         Err(err) => return CommandOutput::usage_or_io_error(err),
     };
 
-    let mut pending: Vec<(PathBuf, PathBuf, String)> = Vec::new();
+    let mut pending: Vec<PendingFmtWrite> = Vec::new();
     let mut changed = Vec::new();
     for loaded in files {
         let Some(lang) = classify_source_file(&loaded.display_path) else {
@@ -119,12 +140,22 @@ fn execute_fmt_directory(args: &FmtArgs, budget: &mut InvocationBudget) -> Comma
             return CommandOutput::usage_or_io_error(err);
         }
         changed.push(shown);
-        pending.push((loaded.rel_path, loaded.display_path, after));
+        pending.push(PendingFmtWrite {
+            parent: loaded.parent,
+            file_name: loaded.file_name,
+            display_path: loaded.display_path,
+            formatted: after,
+        });
     }
 
     if !args.check {
-        for (rel_path, display_path, after) in &pending {
-            if let Err(err) = root_dir.write_rel_file_atomic(rel_path, display_path, after) {
+        for item in &pending {
+            if let Err(err) = write_file_atomic_in_trusted_dir(
+                &item.parent,
+                &item.file_name,
+                &item.display_path,
+                &item.formatted,
+            ) {
                 return CommandOutput::usage_or_io_error(err);
             }
         }
@@ -141,9 +172,23 @@ fn execute_fmt_directory(args: &FmtArgs, budget: &mut InvocationBudget) -> Comma
 /// Executes `norn fmt [--check] <path>`.
 pub(crate) fn execute_fmt(args: &FmtArgs) -> CommandOutput {
     let mut budget = InvocationBudget::new();
-    match inspect_path_no_follow(&args.path) {
-        Ok(EntryKind::File) => execute_fmt_single_file(args, &mut budget),
-        Ok(EntryKind::Directory) => execute_fmt_directory(args, &mut budget),
+    match open_source_target_pinned(&args.path) {
+        Ok(PinnedSourceTarget::File {
+            parent_dir,
+            file_name,
+            display_path,
+            opened,
+        }) => execute_fmt_single_file(
+            args,
+            &parent_dir,
+            &file_name,
+            &display_path,
+            opened,
+            &mut budget,
+        ),
+        Ok(PinnedSourceTarget::Directory(root_dir)) => {
+            execute_fmt_directory(args, root_dir, &mut budget)
+        }
         Err(err) => CommandOutput::usage_or_io_error(err),
     }
 }

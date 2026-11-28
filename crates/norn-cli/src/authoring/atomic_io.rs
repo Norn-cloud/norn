@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::fs_io::MAX_OUTPUT_BYTES;
+use super::trusted_dir::TrustedDir;
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -110,6 +111,25 @@ pub(crate) fn write_file_atomic_in_dir(
     Ok(())
 }
 
+/// Atomically writes `content` to `final_name` inside an already-pinned [`TrustedDir`].
+pub(crate) fn write_file_atomic_in_trusted_dir(
+    parent: &TrustedDir,
+    final_name: &str,
+    display_path: &Path,
+    content: &str,
+) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        write_file_atomic_in_dir(parent.as_fd(), final_name, display_path, content)
+    }
+    #[cfg(not(unix))]
+    {
+        validate_single_file_name(final_name, display_path)?;
+        let target = parent.display_path().join(final_name);
+        write_file_atomic(&target, content)
+    }
+}
+
 /// Atomically writes `content` to `path`, refusing symlinks along parent directories or the target.
 #[cfg(unix)]
 pub(crate) fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
@@ -168,13 +188,23 @@ pub(crate) fn write_file_atomic(path: &Path, content: &str) -> Result<(), String
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     super::fs_io::verify_no_symlink_ancestors_non_unix(parent)?;
-    if let Ok(meta) = std::fs::symlink_metadata(path) {
-        if meta.file_type().is_symlink() {
-            return Err(format!("{}: refusing to overwrite symlink", path.display()));
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                return Err(format!("{}: refusing to overwrite symlink", path.display()));
+            }
+            if meta.is_dir() {
+                return Err(format!("{}: target path is a directory", path.display()));
+            }
+            if !meta.is_file() {
+                return Err(format!(
+                    "{}: target path is not a regular file",
+                    path.display()
+                ));
+            }
         }
-        if meta.is_dir() {
-            return Err(format!("{}: target path is a directory", path.display()));
-        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("{}: {err}", path.display())),
     }
     let seq = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp_name = format!(".{final_name}.norn-tmp-{}-{seq}", std::process::id());

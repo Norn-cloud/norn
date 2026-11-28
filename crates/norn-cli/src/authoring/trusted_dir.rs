@@ -1,7 +1,8 @@
 //! FD-pinned directory handle ([`TrustedDir`]) for traversal, source reads,
-//! and atomic relative writes.
+//! and single-open target pinning.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 #[cfg(not(unix))]
 use super::fs_io::verify_no_symlink_ancestors_non_unix;
@@ -15,10 +16,36 @@ use super::fs_io::{
 };
 
 /// A trusted directory handle pinned to an `OwnedFd` on Unix (or verified path on non-Unix).
+#[derive(Debug)]
 pub(crate) struct TrustedDir {
     #[cfg(unix)]
     fd: std::os::fd::OwnedFd,
     display_path: PathBuf,
+}
+
+/// A regular file read from a trusted directory together with its retained parent handle.
+pub(crate) struct PinnedLoadedFile {
+    /// Retained parent directory handle from which this file was opened.
+    pub(crate) parent: Arc<TrustedDir>,
+    /// Final UTF-8 file name inside [`Self::parent`].
+    pub(crate) file_name: String,
+    /// Logical display path (used for diagnostics and stdout reporting).
+    pub(crate) display_path: PathBuf,
+    /// UTF-8 contents read directly from the opened descriptor.
+    pub(crate) content: String,
+}
+
+/// Single-open FD-pinned CLI source target (either a directory or a pinned regular file).
+pub(crate) enum PinnedSourceTarget {
+    /// Verified directory descriptor.
+    Directory(TrustedDir),
+    /// Verified regular file opened directly from its pinned parent directory descriptor.
+    File {
+        parent_dir: TrustedDir,
+        file_name: String,
+        display_path: PathBuf,
+        opened: std::fs::File,
+    },
 }
 
 impl TrustedDir {
@@ -33,6 +60,27 @@ impl TrustedDir {
     pub(crate) fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
         use std::os::fd::AsFd as _;
         self.fd.as_fd()
+    }
+
+    /// Duplicates the underlying pinned directory descriptor (`F_DUPFD_CLOEXEC` on Unix).
+    pub(crate) fn try_clone(&self) -> Result<Self, String> {
+        #[cfg(unix)]
+        {
+            let dup = self
+                .fd
+                .try_clone()
+                .map_err(|err| format!("{}: {err}", self.display_path.display()))?;
+            Ok(Self {
+                fd: dup,
+                display_path: self.display_path.clone(),
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(Self {
+                display_path: self.display_path.clone(),
+            })
+        }
     }
     /// Opens `dir` component-by-component without following symlinks.
     pub(crate) fn open(dir: &Path) -> Result<Self, String> {
@@ -294,56 +342,10 @@ impl TrustedDir {
         read_opened_file_budgeted(opened, &walked, budget).map(Some)
     }
 
-    /// Atomically writes `content` to `rel_file` under `self` by resolving parents via `openat`.
-    pub(crate) fn write_rel_file_atomic(
-        &self,
-        rel_file: &Path,
-        display_path: &Path,
-        content: &str,
-    ) -> Result<(), String> {
-        let Some((parent_segs, final_seg)) =
-            split_rel_components(rel_file, false, &self.display_path)?
-        else {
-            return Err(format!(
-                "{}: empty relative output path",
-                display_path.display()
-            ));
-        };
-        let final_name = final_seg.to_str().ok_or_else(|| {
-            format!(
-                "{}: output path must have a UTF-8 file name",
-                display_path.display()
-            )
-        })?;
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsFd as _;
-            if parent_segs.is_empty() {
-                return super::atomic_io::write_file_atomic_in_dir(
-                    self.fd.as_fd(),
-                    final_name,
-                    display_path,
-                    content,
-                );
-            }
-            let rel_parent: PathBuf = parent_segs.iter().collect();
-            let parent_dir = self.open_subdir_rel(&rel_parent)?;
-            super::atomic_io::write_file_atomic_in_dir(
-                parent_dir.fd.as_fd(),
-                final_name,
-                display_path,
-                content,
-            )
-        }
-        #[cfg(not(unix))]
-        {
-            let target = self.display_path.join(rel_file);
-            let _unused = (parent_segs, final_name, display_path);
-            super::atomic_io::write_file_atomic(&target, content)
-        }
-    }
-
-    /// Reads all non-hidden top-level regular files directly from `self` in sorted name order.
+    /// Reads all top-level regular files directly from `self` in sorted name order.
+    ///
+    /// Inspects every non-`.`/`..` entry (including hidden dotfiles/dotdirs) without
+    /// following symlinks so hidden symlinks and special files always fail closed.
     pub(crate) fn read_top_level_files(
         &self,
         budget: &mut InvocationBudget,
@@ -361,9 +363,6 @@ impl TrustedDir {
                         self.display_path.display()
                     )
                 })?;
-                if name.starts_with('.') {
-                    continue;
-                }
                 let child = self.display_path.join(name);
                 let opened = open_entry_no_follow(self.fd.as_fd(), entry.as_c_str(), &child)?;
                 let kind = opened
@@ -390,39 +389,68 @@ impl TrustedDir {
         }
     }
 
-    /// Recursively walks `self`, skipping hidden entries, `node_modules`, and `target`,
-    /// reading accepted regular files directly from their opened descriptors.
+    /// Recursively walks `self`, verifying every entry's type without following symlinks
+    /// and reading accepted regular files directly from their opened descriptors.
     pub(crate) fn walk_files(
         &self,
         accept: fn(&str, &Path) -> bool,
         budget: &mut InvocationBudget,
     ) -> Result<Vec<LoadedFile>, String> {
+        let root = Arc::new(self.try_clone()?);
         let mut files = Vec::new();
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsFd as _;
-            walk_unix_dir(
-                self.fd.as_fd(),
-                &self.display_path,
-                Path::new(""),
-                0,
-                accept,
-                budget,
-                &mut files,
-            )?;
-        }
-        #[cfg(not(unix))]
-        {
-            walk_non_unix_dir(
-                &self.display_path,
-                Path::new(""),
-                0,
-                accept,
-                budget,
-                &mut files,
-            )?;
-        }
+        walk_dir_shared(
+            &root,
+            accept,
+            budget,
+            &mut |_parent, _name, display_path, rel_path, content| {
+                files.push(LoadedFile {
+                    display_path,
+                    rel_path,
+                    content,
+                });
+            },
+        )?;
         Ok(files)
+    }
+
+    /// Recursively walks `self`, retaining the exact opened parent [`TrustedDir`] handle
+    /// alongside each accepted regular file so callers can write back without reopening paths.
+    pub(crate) fn walk_files_pinned(
+        self: &Arc<Self>,
+        accept: fn(&str, &Path) -> bool,
+        budget: &mut InvocationBudget,
+    ) -> Result<Vec<PinnedLoadedFile>, String> {
+        let mut files = Vec::new();
+        walk_dir_shared(
+            self,
+            accept,
+            budget,
+            &mut |parent, name, display_path, _rel_path, content| {
+                files.push(PinnedLoadedFile {
+                    parent: Arc::clone(parent),
+                    file_name: name.to_owned(),
+                    display_path,
+                    content,
+                });
+            },
+        )?;
+        Ok(files)
+    }
+}
+
+fn walk_dir_shared(
+    root: &Arc<TrustedDir>,
+    accept: fn(&str, &Path) -> bool,
+    budget: &mut InvocationBudget,
+    on_file: &mut dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String),
+) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        walk_unix_dir(root, Path::new(""), 0, accept, budget, on_file)
+    }
+    #[cfg(not(unix))]
+    {
+        walk_non_unix_dir(root, Path::new(""), 0, accept, budget, on_file)
     }
 }
 
@@ -492,32 +520,27 @@ fn read_sorted_dir_names_budgeted(
 
 #[cfg(unix)]
 fn walk_unix_dir(
-    dir_fd: std::os::fd::BorrowedFd<'_>,
-    dir_display: &Path,
+    dir: &Arc<TrustedDir>,
     rel_prefix: &Path,
     depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
-    out: &mut Vec<LoadedFile>,
+    on_file: &mut dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String),
 ) -> Result<(), String> {
-    use std::os::fd::AsFd as _;
-
+    let dir_display = dir.display_path();
     if depth > MAX_WALK_DEPTH {
         return Err(format!(
             "{}: directory nesting exceeds {MAX_WALK_DEPTH}",
             dir_display.display()
         ));
     }
-    for entry in read_sorted_dir_names_budgeted(dir_fd, dir_display, budget)? {
+    for entry in read_sorted_dir_names_budgeted(dir.as_fd(), dir_display, budget)? {
         let name = entry
             .to_str()
             .map_err(|err| format!("non-UTF-8 name under {}: {err}", dir_display.display()))?;
-        if name.starts_with('.') {
-            continue;
-        }
         let child_display = dir_display.join(name);
         let child_rel = rel_prefix.join(name);
-        let opened = open_entry_no_follow(dir_fd, entry.as_c_str(), &child_display)?;
+        let opened = open_entry_no_follow(dir.as_fd(), entry.as_c_str(), &child_display)?;
         let kind = opened
             .metadata()
             .map_err(|err| format!("{}: {err}", child_display.display()))?
@@ -526,14 +549,17 @@ fn walk_unix_dir(
             if should_skip_dir(name) {
                 continue;
             }
+            let child_dir = Arc::new(TrustedDir::from_fd(
+                std::os::fd::OwnedFd::from(opened),
+                child_display,
+            ));
             walk_unix_dir(
-                opened.as_fd(),
-                &child_display,
+                &child_dir,
                 &child_rel,
                 depth.saturating_add(1),
                 accept,
                 budget,
-                out,
+                on_file,
             )?;
         } else if kind.is_file() {
             if !accept(name, &child_display) {
@@ -541,11 +567,7 @@ fn walk_unix_dir(
             }
             budget.charge_accepted_file(&child_display)?;
             let content = read_opened_file_budgeted(opened, &child_display, budget)?;
-            out.push(LoadedFile {
-                display_path: child_display,
-                rel_path: child_rel,
-                content,
-            });
+            on_file(dir, name, child_display, child_rel, content);
         } else {
             return Err(format!("{}: not a regular file", child_display.display()));
         }
@@ -571,13 +593,10 @@ fn read_top_level_files_non_unix(
         let Some(name) = raw_name.to_str() else {
             return Err(format!("non-UTF-8 name under {}", dir.display()));
         };
-        if name.starts_with('.') {
-            continue;
-        }
         let child = entry.path();
-        let kind = entry
-            .file_type()
-            .map_err(|err| format!("{}: {err}", child.display()))?;
+        let kind = std::fs::symlink_metadata(&child)
+            .map_err(|err| format!("{}: {err}", child.display()))?
+            .file_type();
         if kind.is_symlink() {
             return Err(format!("{}: symlinks are refused", child.display()));
         }
@@ -600,34 +619,34 @@ fn read_top_level_files_non_unix(
 
 #[cfg(not(unix))]
 fn walk_non_unix_dir(
-    dir: &Path,
+    dir: &Arc<TrustedDir>,
     rel_prefix: &Path,
     depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
-    out: &mut Vec<LoadedFile>,
+    on_file: &mut dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String),
 ) -> Result<(), String> {
+    let dir_path = dir.display_path();
     if depth > MAX_WALK_DEPTH {
         return Err(format!(
             "{}: directory nesting exceeds {MAX_WALK_DEPTH}",
-            dir.display()
+            dir_path.display()
         ));
     }
     let mut entries = Vec::new();
-    for item in std::fs::read_dir(dir).map_err(|err| format!("{}: {err}", dir.display()))? {
-        let entry = item.map_err(|err| format!("{}: {err}", dir.display()))?;
-        budget.charge_scanned_entry(dir)?;
+    for item in
+        std::fs::read_dir(dir_path).map_err(|err| format!("{}: {err}", dir_path.display()))?
+    {
+        let entry = item.map_err(|err| format!("{}: {err}", dir_path.display()))?;
+        budget.charge_scanned_entry(dir_path)?;
         entries.push(entry);
     }
     entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let raw_name = entry.file_name();
         let Some(name) = raw_name.to_str() else {
-            return Err(format!("non-UTF-8 name under {}", dir.display()));
+            return Err(format!("non-UTF-8 name under {}", dir_path.display()));
         };
-        if name.starts_with('.') {
-            continue;
-        }
         let child = entry.path();
         let child_rel = rel_prefix.join(name);
         let meta = std::fs::symlink_metadata(&child)
@@ -640,13 +659,16 @@ fn walk_non_unix_dir(
             if should_skip_dir(name) {
                 continue;
             }
+            let child_dir = Arc::new(TrustedDir {
+                display_path: child,
+            });
             walk_non_unix_dir(
-                &child,
+                &child_dir,
                 &child_rel,
                 depth.saturating_add(1),
                 accept,
                 budget,
-                out,
+                on_file,
             )?;
         } else if kind.is_file() {
             if !accept(name, &child) {
@@ -656,11 +678,7 @@ fn walk_non_unix_dir(
             let opened =
                 std::fs::File::open(&child).map_err(|err| format!("{}: {err}", child.display()))?;
             let content = read_opened_file_budgeted(opened, &child, budget)?;
-            out.push(LoadedFile {
-                display_path: child,
-                rel_path: child_rel,
-                content,
-            });
+            on_file(dir, name, child, child_rel, content);
         } else {
             return Err(format!("{}: not a regular file", child.display()));
         }
@@ -668,28 +686,110 @@ fn walk_non_unix_dir(
     Ok(())
 }
 
+/// Opens and pins `path` ONCE without following symlinks, returning either a pinned
+/// [`TrustedDir`] (for directories) or a pinned parent [`TrustedDir`] plus opened regular [`std::fs::File`].
+pub(crate) fn open_source_target_pinned(path: &Path) -> Result<PinnedSourceTarget, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let raw = path.as_os_str().as_bytes();
+        let must_be_dir = raw.ends_with(b"/") || raw.ends_with(b"/.");
+        let Some(final_name) = path.file_name() else {
+            return Ok(PinnedSourceTarget::Directory(TrustedDir::open(path)?));
+        };
+        let parent = path
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let parent_dir = TrustedDir::open(parent)?;
+        let opened = open_entry_no_follow(parent_dir.as_fd(), final_name, path)?;
+        let kind = opened
+            .metadata()
+            .map_err(|err| format!("{}: {err}", path.display()))?
+            .file_type();
+        if kind.is_dir() {
+            return Ok(PinnedSourceTarget::Directory(TrustedDir::from_fd(
+                std::os::fd::OwnedFd::from(opened),
+                path.to_path_buf(),
+            )));
+        }
+        if kind.is_file() {
+            if must_be_dir {
+                return Err(format!("{}: not a directory", path.display()));
+            }
+            let file_name = final_name.to_str().ok_or_else(|| {
+                format!("{}: path must end with a UTF-8 file name", path.display())
+            })?;
+            return Ok(PinnedSourceTarget::File {
+                parent_dir,
+                file_name: file_name.to_owned(),
+                display_path: path.to_path_buf(),
+                opened,
+            });
+        }
+        Err(format!(
+            "{}: not a regular file or directory",
+            path.display()
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        if let Some(parent) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            verify_no_symlink_ancestors_non_unix(parent)?;
+        }
+        let meta =
+            std::fs::symlink_metadata(path).map_err(|err| format!("{}: {err}", path.display()))?;
+        if meta.file_type().is_symlink() {
+            return Err(format!("{}: symlinks are refused", path.display()));
+        }
+        if meta.is_dir() {
+            return Ok(PinnedSourceTarget::Directory(TrustedDir::open(path)?));
+        }
+        if meta.is_file() {
+            let file_name = path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .ok_or_else(|| {
+                    format!("{}: path must end with a UTF-8 file name", path.display())
+                })?;
+            let parent = path
+                .parent()
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let parent_dir = TrustedDir::open(parent)?;
+            let opened =
+                std::fs::File::open(path).map_err(|err| format!("{}: {err}", path.display()))?;
+            return Ok(PinnedSourceTarget::File {
+                parent_dir,
+                file_name: file_name.to_owned(),
+                display_path: path.to_path_buf(),
+                opened,
+            });
+        }
+        Err(format!(
+            "{}: not a regular file or directory",
+            path.display()
+        ))
+    }
+}
+
 /// Opens a single regular file through its verified parent directory `OwnedFd` and reads its content.
 pub(crate) fn open_regular_file_pinned(
     path: &Path,
     budget: &mut InvocationBudget,
 ) -> Result<(TrustedDir, String, String), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt as _;
-        let raw = path.as_os_str().as_bytes();
-        if raw.ends_with(b"/") || raw.ends_with(b"/.") {
-            return Err(format!("{}: not a regular file", path.display()));
+    match open_source_target_pinned(path)? {
+        PinnedSourceTarget::File {
+            parent_dir,
+            file_name,
+            display_path,
+            opened,
+        } => {
+            budget.charge_accepted_file(&display_path)?;
+            let content = read_opened_file_budgeted(opened, &display_path, budget)?;
+            Ok((parent_dir, file_name, content))
         }
+        PinnedSourceTarget::Directory(_) => Err(format!("{}: not a regular file", path.display())),
     }
-    let file_name = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .ok_or_else(|| format!("{}: path must end with a UTF-8 file name", path.display()))?;
-    let parent = path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let parent_dir = TrustedDir::open(parent)?;
-    let content = parent_dir.read_regular_file_rel(Path::new(file_name), budget)?;
-    Ok((parent_dir, file_name.to_owned(), content))
 }

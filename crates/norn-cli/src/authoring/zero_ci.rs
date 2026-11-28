@@ -1,21 +1,43 @@
 //! Fail-closed downstream Norn app zero-CI enforcement and `norn-checker-abi/check@1` reporting.
 //!
-//! Checks `.github` and `.github/workflows` relative to the app root's `OwnedFd` using
-//! `openat(..., O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)` only when an enclosing regular
-//! `norn.json` exists (the Norn monorepo root has no `norn.json`, so no spoofable
-//! directory-name heuristic is needed).
+//! Checks `.github` and `.github/workflows` relative to an already-pinned app root
+//! [`TrustedDir`] using `openat(..., O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)` only when
+//! an enclosing regular `norn.json` exists (the Norn monorepo root has no `norn.json`,
+//! so no spoofable directory-name heuristic is needed).
 
 use std::path::Path;
 
 use serde_json::{Value, json};
 
+use super::fs_io::ZeroCiStatus;
 #[cfg(unix)]
 use super::fs_io::final_dir_flags;
-use super::fs_io::{EntryKind, ZeroCiStatus, inspect_path_no_follow};
 use super::trusted_dir::TrustedDir;
 
 /// Diagnostic code emitted when a downstream Norn app contains `.github/workflows`.
 pub(crate) const ZERO_CI_DIAGNOSTIC_CODE: &str = "NORN-APP-ZERO-CI";
+
+/// Maximum number of parent directory steps climbed when searching for `norn.json`.
+pub(crate) const MAX_ANCESTOR_DEPTH: usize = 64;
+
+/// Result of locating the enclosing downstream Norn app root from a pinned directory handle.
+#[derive(Debug)]
+pub(crate) enum AppRootMatch {
+    /// The starting pinned directory itself contains a regular `norn.json`.
+    SameAsStart,
+    /// A pinned ancestor directory contains a regular `norn.json`.
+    Ancestor(TrustedDir),
+}
+
+impl AppRootMatch {
+    /// Borrows the pinned app root directory handle.
+    pub(crate) fn as_dir<'a>(&'a self, start_dir: &'a TrustedDir) -> &'a TrustedDir {
+        match self {
+            Self::SameAsStart => start_dir,
+            Self::Ancestor(dir) => dir,
+        }
+    }
+}
 
 /// Result of enforcing zero-CI policy for `norn check --source`.
 pub(crate) enum ZeroCiOutcome {
@@ -23,7 +45,7 @@ pub(crate) enum ZeroCiOutcome {
     Clean,
     /// Downstream app defines `.github/workflows`; contains a `norn-checker-abi/check@1` report.
     Refused(String),
-    /// Fail-closed inspection error (`ELOOP`, `EACCES`, or other OS error).
+    /// Fail-closed inspection error (`ELOOP`, `ENOTDIR`, `EACCES`, or other OS error).
     IoError(String),
 }
 
@@ -65,14 +87,9 @@ pub(crate) fn build_zero_ci_report(rel_path: &str) -> String {
     .to_string()
 }
 
-/// Checks whether `path` belongs to a downstream Norn app (`norn.json`) with `.github/workflows`.
-pub(crate) fn check_zero_ci_app_dir(path: &Path) -> ZeroCiOutcome {
-    let app_root = match find_norn_app_root(path) {
-        Ok(Some(root)) => root,
-        Ok(None) => return ZeroCiOutcome::Clean,
-        Err(err) => return ZeroCiOutcome::IoError(err),
-    };
-    match inspect_workflows_zero_ci(&app_root) {
+/// Enforces zero-CI policy against an already-pinned downstream Norn app root [`TrustedDir`].
+pub(crate) fn check_zero_ci_app_root(app_root: &TrustedDir) -> ZeroCiOutcome {
+    match inspect_workflows_zero_ci(app_root) {
         ZeroCiStatus::Absent => ZeroCiOutcome::Clean,
         ZeroCiStatus::Present(rel_path) => ZeroCiOutcome::Refused(build_zero_ci_report(&rel_path)),
         ZeroCiStatus::Error(err) => ZeroCiOutcome::IoError(err),
@@ -110,27 +127,18 @@ fn inspect_workflows_zero_ci_unix(
             ));
         }
         Err(err) if err == Errno::NOTDIR => {
-            return match statat(root_fd, ".github", AtFlags::SYMLINK_NOFOLLOW) {
-                Ok(stat) => match FileType::from_raw_mode(stat.st_mode) {
-                    FileType::RegularFile => ZeroCiStatus::Absent,
-                    FileType::Symlink => ZeroCiStatus::Error(format!(
-                        "{}: symlinks are refused",
-                        github_display.display()
-                    )),
-                    FileType::Directory
-                    | FileType::Fifo
-                    | FileType::Socket
-                    | FileType::CharacterDevice
-                    | FileType::BlockDevice
-                    | FileType::Unknown => ZeroCiStatus::Error(format!(
-                        "{}: .github is not a directory",
-                        github_display.display()
-                    )),
-                },
-                Err(stat_err) => {
-                    ZeroCiStatus::Error(format!("{}: {stat_err}", github_display.display()))
-                }
-            };
+            if let Ok(stat) = statat(root_fd, ".github", AtFlags::SYMLINK_NOFOLLOW)
+                && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+            {
+                return ZeroCiStatus::Error(format!(
+                    "{}: symlinks are refused",
+                    github_display.display()
+                ));
+            }
+            return ZeroCiStatus::Error(format!(
+                "{}: .github is not a directory",
+                github_display.display()
+            ));
         }
         Err(err) => return ZeroCiStatus::Error(format!("{}: {err}", github_display.display())),
     };
@@ -162,7 +170,10 @@ fn inspect_workflows_zero_ci_non_unix(root: &Path) -> ZeroCiStatus {
                 return ZeroCiStatus::Error(format!("{}: symlinks are refused", github.display()));
             }
             if !meta.is_dir() {
-                return ZeroCiStatus::Absent;
+                return ZeroCiStatus::Error(format!(
+                    "{}: .github is not a directory",
+                    github.display()
+                ));
             }
         }
     }
@@ -174,58 +185,63 @@ fn inspect_workflows_zero_ci_non_unix(root: &Path) -> ZeroCiStatus {
     }
 }
 
-/// Climbs from `path` using FD-relative `..` opens to locate the nearest enclosing
-/// downstream Norn app directory containing a regular `norn.json`.
 #[cfg(unix)]
-fn find_norn_app_root(path: &Path) -> Result<Option<TrustedDir>, String> {
-    use rustix::fs::{AtFlags, FileType, Mode, fstat, openat, statat};
+fn check_norn_json_in_dir_unix(
+    dir_fd: std::os::fd::BorrowedFd<'_>,
+    dir_display: &Path,
+) -> Result<bool, String> {
+    use rustix::fs::{AtFlags, FileType, statat};
     use rustix::io::Errno;
+
+    let candidate = dir_display.join("norn.json");
+    match statat(dir_fd, "norn.json", AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) => match FileType::from_raw_mode(stat.st_mode) {
+            FileType::RegularFile => Ok(true),
+            FileType::Symlink => Err(format!("{}: symlinks are refused", candidate.display())),
+            FileType::Directory
+            | FileType::Fifo
+            | FileType::Socket
+            | FileType::CharacterDevice
+            | FileType::BlockDevice
+            | FileType::Unknown => Err(format!(
+                "{}: norn.json is not a regular file",
+                candidate.display()
+            )),
+        },
+        Err(err) if err == Errno::NOENT => Ok(false),
+        Err(err) => Err(format!("{}: {err}", candidate.display())),
+    }
+}
+
+/// Climbs from an already-pinned [`TrustedDir`] using FD-relative `..` opens to locate
+/// the nearest enclosing downstream Norn app directory containing a regular `norn.json`.
+pub(crate) fn find_norn_app_root_from_dir(
+    start_dir: &TrustedDir,
+) -> Result<Option<AppRootMatch>, String> {
+    find_norn_app_root_from_dir_with_limit(start_dir, MAX_ANCESTOR_DEPTH)
+}
+
+/// Bounded ancestor `norn.json` discovery failing closed on every OS error, non-regular
+/// `norn.json`, or depth-limit exhaustion (returns `Ok(None)` only on reaching filesystem root).
+#[cfg(unix)]
+pub(crate) fn find_norn_app_root_from_dir_with_limit(
+    start_dir: &TrustedDir,
+    max_depth: usize,
+) -> Result<Option<AppRootMatch>, String> {
+    use rustix::fs::{Mode, fstat, openat};
     use std::os::fd::AsFd as _;
 
-    let start_dir = match inspect_path_no_follow(path)? {
-        EntryKind::Directory => TrustedDir::open(path)?,
-        EntryKind::File => {
-            let parent = path
-                .parent()
-                .filter(|dir| !dir.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            TrustedDir::open(parent)?
-        }
-    };
+    if check_norn_json_in_dir_unix(start_dir.as_fd(), start_dir.display_path())? {
+        return Ok(Some(AppRootMatch::SameAsStart));
+    }
 
-    let mut current = start_dir;
-    for _step in 0..=64_usize {
-        match statat(current.as_fd(), "norn.json", AtFlags::SYMLINK_NOFOLLOW) {
-            Ok(stat) => match FileType::from_raw_mode(stat.st_mode) {
-                FileType::RegularFile => return Ok(Some(current)),
-                FileType::Symlink => {
-                    return Err(format!(
-                        "{}: symlinks are refused",
-                        current.display_path().join("norn.json").display()
-                    ));
-                }
-                FileType::Directory
-                | FileType::Fifo
-                | FileType::Socket
-                | FileType::CharacterDevice
-                | FileType::BlockDevice
-                | FileType::Unknown => {}
-            },
-            Err(err) if err == Errno::NOENT => {}
-            Err(err) => {
-                return Err(format!(
-                    "{}: {err}",
-                    current.display_path().join("norn.json").display()
-                ));
-            }
-        }
+    let mut ancestor: Option<TrustedDir> = None;
+    for _step in 0..max_depth {
+        let current = ancestor.as_ref().unwrap_or(start_dir);
         let cur_stat = fstat(current.as_fd())
             .map_err(|err| format!("{}: {err}", current.display_path().display()))?;
-        let parent_fd = match openat(current.as_fd(), "..", final_dir_flags(), Mode::empty()) {
-            Ok(fd) => fd,
-            Err(err) if err == Errno::ACCES => return Ok(None),
-            Err(err) => return Err(format!("{}: {err}", current.display_path().display())),
-        };
+        let parent_fd = openat(current.as_fd(), "..", final_dir_flags(), Mode::empty())
+            .map_err(|err| format!("{}: {err}", current.display_path().display()))?;
         let parent_stat = fstat(parent_fd.as_fd())
             .map_err(|err| format!("{}: {err}", current.display_path().display()))?;
         if parent_stat.st_dev == cur_stat.st_dev && parent_stat.st_ino == cur_stat.st_ino {
@@ -236,36 +252,57 @@ fn find_norn_app_root(path: &Path) -> Result<Option<TrustedDir>, String> {
             .parent()
             .filter(|dir| !dir.as_os_str().is_empty())
             .map_or_else(|| current.display_path().join(".."), Path::to_path_buf);
-        current = TrustedDir::from_fd(parent_fd, next_display);
+        let next_dir = TrustedDir::from_fd(parent_fd, next_display);
+        if check_norn_json_in_dir_unix(next_dir.as_fd(), next_dir.display_path())? {
+            return Ok(Some(AppRootMatch::Ancestor(next_dir)));
+        }
+        ancestor = Some(next_dir);
     }
-    Ok(None)
+
+    Err(format!(
+        "{}: ancestor norn.json search exceeded {max_depth} levels",
+        start_dir.display_path().display()
+    ))
 }
 
+/// Bounded ancestor `norn.json` discovery (non-Unix fallback).
 #[cfg(not(unix))]
-fn find_norn_app_root(path: &Path) -> Result<Option<TrustedDir>, String> {
-    let start_path = match inspect_path_no_follow(path)? {
-        EntryKind::Directory => path.to_path_buf(),
-        EntryKind::File => path
-            .parent()
-            .filter(|dir| !dir.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf(),
-    };
+pub(crate) fn find_norn_app_root_from_dir_with_limit(
+    start_dir: &TrustedDir,
+    max_depth: usize,
+) -> Result<Option<AppRootMatch>, String> {
+    let start_path = start_dir.display_path();
     let resolved = if start_path.is_absolute() {
-        start_path
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(start_path)
+        start_path.to_path_buf()
     } else {
-        start_path
+        let cwd =
+            std::env::current_dir().map_err(|err| format!("{}: {err}", start_path.display()))?;
+        cwd.join(start_path)
     };
-    for ancestor in resolved.ancestors() {
+    for (step, ancestor) in resolved.ancestors().enumerate() {
+        if step > max_depth {
+            return Err(format!(
+                "{}: ancestor norn.json search exceeded {max_depth} levels",
+                start_path.display()
+            ));
+        }
         let candidate = ancestor.join("norn.json");
         match std::fs::symlink_metadata(&candidate) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(format!("{}: symlinks are refused", candidate.display()));
             }
-            Ok(meta) if meta.is_file() => return Ok(Some(TrustedDir::open(ancestor)?)),
-            Ok(_) => {}
+            Ok(meta) if meta.is_file() => {
+                if step == 0 {
+                    return Ok(Some(AppRootMatch::SameAsStart));
+                }
+                return Ok(Some(AppRootMatch::Ancestor(TrustedDir::open(ancestor)?)));
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "{}: norn.json is not a regular file",
+                    candidate.display()
+                ));
+            }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(format!("{}: {err}", candidate.display())),
         }
